@@ -82,6 +82,27 @@ class EmnistCNN(nn.Module):
         return self.network(images)
 
 
+class TinyEmnistCNN(nn.Module):
+    def __init__(self, num_classes: int) -> None:
+        super().__init__()
+        self.network = nn.Sequential(
+            nn.Conv2d(1, 24, kernel_size=5, padding=2),
+            nn.ReLU(inplace=True),
+            nn.MaxPool2d(2),
+            nn.Conv2d(24, 48, kernel_size=3, padding=1),
+            nn.ReLU(inplace=True),
+            nn.MaxPool2d(2),
+            nn.Flatten(),
+            nn.Linear(48 * 7 * 7, 256),
+            nn.ReLU(inplace=True),
+            nn.Dropout(0.35),
+            nn.Linear(256, num_classes),
+        )
+
+    def forward(self, images: torch.Tensor) -> torch.Tensor:
+        return self.network(images)
+
+
 def emnist_transform(augment: bool = False) -> transforms.Compose:
     steps = [transforms.Lambda(lambda image: ImageOps.mirror(image.rotate(-90, expand=True)))]
     if augment:
@@ -152,7 +173,12 @@ def train(epochs: int, batch_size: int, split: str, model_type: str, augment: bo
     torch.manual_seed(42)
 
     train_loader, test_loader, labels = make_loaders(batch_size, split, augment)
-    model_class = EmnistCNN if model_type == "cnn" else EmnistMLP
+    model_classes = {
+        "mlp": EmnistMLP,
+        "tinycnn": TinyEmnistCNN,
+        "cnn": EmnistCNN,
+    }
+    model_class = model_classes[model_type]
     model = model_class(num_classes=len(labels)).to(device)
     criterion = nn.CrossEntropyLoss()
     optimizer = torch.optim.AdamW(model.parameters(), lr=0.001, weight_decay=0.0005)
@@ -224,7 +250,7 @@ def main() -> None:
     parser.add_argument("--epochs", type=int, default=8)
     parser.add_argument("--batch-size", type=int, default=2048)
     parser.add_argument("--split", choices=["balanced", "letters"], default="balanced")
-    parser.add_argument("--model", choices=["mlp", "cnn"], default="mlp")
+    parser.add_argument("--model", choices=["mlp", "tinycnn", "cnn"], default="mlp")
     parser.add_argument("--augment", action="store_true")
     args = parser.parse_args()
     train(
