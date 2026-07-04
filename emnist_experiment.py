@@ -82,25 +82,37 @@ class EmnistCNN(nn.Module):
         return self.network(images)
 
 
-def emnist_transform() -> transforms.Compose:
-    return transforms.Compose(
+def emnist_transform(augment: bool = False) -> transforms.Compose:
+    steps = [transforms.Lambda(lambda image: ImageOps.mirror(image.rotate(-90, expand=True)))]
+    if augment:
+        steps.append(
+            transforms.RandomAffine(
+                degrees=8,
+                translate=(0.06, 0.06),
+                scale=(0.92, 1.08),
+                shear=6,
+                fill=0,
+            )
+        )
+    steps.extend(
         [
-            transforms.Lambda(lambda image: ImageOps.mirror(image.rotate(-90, expand=True))),
             transforms.ToTensor(),
             transforms.Normalize((EMNIST_MEAN,), (EMNIST_STD,)),
         ]
     )
+    return transforms.Compose(steps)
 
 
-def make_loaders(batch_size: int, split: str) -> tuple[DataLoader, DataLoader, list[str]]:
-    transform = emnist_transform()
+def make_loaders(batch_size: int, split: str, augment: bool) -> tuple[DataLoader, DataLoader, list[str]]:
+    train_transform = emnist_transform(augment=augment)
+    test_transform = emnist_transform(augment=False)
     target_transform = (lambda label: label - 1) if split == "letters" else None
     train_dataset = datasets.EMNIST(
         DATA_ROOT,
         split=split,
         train=True,
         download=True,
-        transform=transform,
+        transform=train_transform,
         target_transform=target_transform,
     )
     test_dataset = datasets.EMNIST(
@@ -108,7 +120,7 @@ def make_loaders(batch_size: int, split: str) -> tuple[DataLoader, DataLoader, l
         split=split,
         train=False,
         download=True,
-        transform=transform,
+        transform=test_transform,
         target_transform=target_transform,
     )
     train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=0)
@@ -133,13 +145,13 @@ def evaluate(model: nn.Module, loader: DataLoader, criterion: nn.Module, device:
     return loss_total / max(len(loader), 1), 100.0 * correct / max(total, 1)
 
 
-def train(epochs: int, batch_size: int, split: str, model_type: str) -> list[ExperimentMetrics]:
+def train(epochs: int, batch_size: int, split: str, model_type: str, augment: bool) -> list[ExperimentMetrics]:
     device = get_device()
     if device.type == "mps":
         device = torch.device("cpu")
     torch.manual_seed(42)
 
-    train_loader, test_loader, labels = make_loaders(batch_size, split)
+    train_loader, test_loader, labels = make_loaders(batch_size, split, augment)
     model_class = EmnistCNN if model_type == "cnn" else EmnistMLP
     model = model_class(num_classes=len(labels)).to(device)
     criterion = nn.CrossEntropyLoss()
@@ -193,12 +205,14 @@ def train(epochs: int, batch_size: int, split: str, model_type: str) -> list[Exp
             "test_accuracy": best_accuracy,
             "split": split,
             "model_type": model_type,
+            "augment": augment,
         },
         WEIGHTS_PATH,
     )
     payload = {
         "split": split,
         "model_type": model_type,
+        "augment": augment,
         "history": [asdict(item) for item in history],
     }
     METRICS_PATH.write_text(json.dumps(payload, indent=2), encoding="utf-8")
@@ -211,8 +225,15 @@ def main() -> None:
     parser.add_argument("--batch-size", type=int, default=2048)
     parser.add_argument("--split", choices=["balanced", "letters"], default="balanced")
     parser.add_argument("--model", choices=["mlp", "cnn"], default="mlp")
+    parser.add_argument("--augment", action="store_true")
     args = parser.parse_args()
-    train(epochs=args.epochs, batch_size=args.batch_size, split=args.split, model_type=args.model)
+    train(
+        epochs=args.epochs,
+        batch_size=args.batch_size,
+        split=args.split,
+        model_type=args.model,
+        augment=args.augment,
+    )
 
 
 if __name__ == "__main__":
