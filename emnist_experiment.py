@@ -51,6 +51,37 @@ class EmnistMLP(nn.Module):
         return self.network(images)
 
 
+class EmnistCNN(nn.Module):
+    def __init__(self, num_classes: int) -> None:
+        super().__init__()
+        self.network = nn.Sequential(
+            nn.Conv2d(1, 32, kernel_size=3, padding=1, bias=False),
+            nn.BatchNorm2d(32),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(32, 32, kernel_size=3, padding=1, bias=False),
+            nn.BatchNorm2d(32),
+            nn.ReLU(inplace=True),
+            nn.MaxPool2d(2),
+            nn.Dropout2d(0.1),
+            nn.Conv2d(32, 64, kernel_size=3, padding=1, bias=False),
+            nn.BatchNorm2d(64),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(64, 64, kernel_size=3, padding=1, bias=False),
+            nn.BatchNorm2d(64),
+            nn.ReLU(inplace=True),
+            nn.MaxPool2d(2),
+            nn.Dropout2d(0.15),
+            nn.Flatten(),
+            nn.Linear(64 * 7 * 7, 512),
+            nn.ReLU(inplace=True),
+            nn.Dropout(0.4),
+            nn.Linear(512, num_classes),
+        )
+
+    def forward(self, images: torch.Tensor) -> torch.Tensor:
+        return self.network(images)
+
+
 def emnist_transform() -> transforms.Compose:
     return transforms.Compose(
         [
@@ -61,13 +92,29 @@ def emnist_transform() -> transforms.Compose:
     )
 
 
-def make_loaders(batch_size: int) -> tuple[DataLoader, DataLoader, list[str]]:
+def make_loaders(batch_size: int, split: str) -> tuple[DataLoader, DataLoader, list[str]]:
     transform = emnist_transform()
-    train_dataset = datasets.EMNIST(DATA_ROOT, split="balanced", train=True, download=True, transform=transform)
-    test_dataset = datasets.EMNIST(DATA_ROOT, split="balanced", train=False, download=True, transform=transform)
+    target_transform = (lambda label: label - 1) if split == "letters" else None
+    train_dataset = datasets.EMNIST(
+        DATA_ROOT,
+        split=split,
+        train=True,
+        download=True,
+        transform=transform,
+        target_transform=target_transform,
+    )
+    test_dataset = datasets.EMNIST(
+        DATA_ROOT,
+        split=split,
+        train=False,
+        download=True,
+        transform=transform,
+        target_transform=target_transform,
+    )
     train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=0)
     test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False, num_workers=0)
-    return train_loader, test_loader, list(train_dataset.classes)
+    labels = list(train_dataset.classes[1:]) if split == "letters" else list(train_dataset.classes)
+    return train_loader, test_loader, labels
 
 
 def evaluate(model: nn.Module, loader: DataLoader, criterion: nn.Module, device: torch.device) -> tuple[float, float]:
@@ -86,14 +133,15 @@ def evaluate(model: nn.Module, loader: DataLoader, criterion: nn.Module, device:
     return loss_total / max(len(loader), 1), 100.0 * correct / max(total, 1)
 
 
-def train(epochs: int, batch_size: int) -> list[ExperimentMetrics]:
+def train(epochs: int, batch_size: int, split: str, model_type: str) -> list[ExperimentMetrics]:
     device = get_device()
     if device.type == "mps":
         device = torch.device("cpu")
     torch.manual_seed(42)
 
-    train_loader, test_loader, labels = make_loaders(batch_size)
-    model = EmnistMLP(num_classes=len(labels)).to(device)
+    train_loader, test_loader, labels = make_loaders(batch_size, split)
+    model_class = EmnistCNN if model_type == "cnn" else EmnistMLP
+    model = model_class(num_classes=len(labels)).to(device)
     criterion = nn.CrossEntropyLoss()
     optimizer = torch.optim.AdamW(model.parameters(), lr=0.001, weight_decay=0.0005)
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=epochs)
@@ -138,8 +186,22 @@ def train(epochs: int, batch_size: int) -> list[ExperimentMetrics]:
             flush=True,
         )
 
-    torch.save({"model_state_dict": best_state, "labels": labels, "test_accuracy": best_accuracy}, WEIGHTS_PATH)
-    METRICS_PATH.write_text(json.dumps([asdict(item) for item in history], indent=2), encoding="utf-8")
+    torch.save(
+        {
+            "model_state_dict": best_state,
+            "labels": labels,
+            "test_accuracy": best_accuracy,
+            "split": split,
+            "model_type": model_type,
+        },
+        WEIGHTS_PATH,
+    )
+    payload = {
+        "split": split,
+        "model_type": model_type,
+        "history": [asdict(item) for item in history],
+    }
+    METRICS_PATH.write_text(json.dumps(payload, indent=2), encoding="utf-8")
     return history
 
 
@@ -147,8 +209,10 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Run an EMNIST balanced alphabet/digit baseline.")
     parser.add_argument("--epochs", type=int, default=8)
     parser.add_argument("--batch-size", type=int, default=2048)
+    parser.add_argument("--split", choices=["balanced", "letters"], default="balanced")
+    parser.add_argument("--model", choices=["mlp", "cnn"], default="mlp")
     args = parser.parse_args()
-    train(epochs=args.epochs, batch_size=args.batch_size)
+    train(epochs=args.epochs, batch_size=args.batch_size, split=args.split, model_type=args.model)
 
 
 if __name__ == "__main__":
