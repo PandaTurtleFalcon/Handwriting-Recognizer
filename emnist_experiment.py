@@ -9,7 +9,7 @@ from pathlib import Path
 import torch
 from PIL import ImageOps
 from torch import nn
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, TensorDataset
 from torchvision import datasets, transforms
 
 from mnist_model import get_device
@@ -125,6 +125,23 @@ def emnist_transform(augment: bool = False) -> transforms.Compose:
 
 
 def make_loaders(batch_size: int, split: str, augment: bool) -> tuple[DataLoader, DataLoader, list[str]]:
+    if not augment:
+        train_images, train_targets, labels = build_or_load_emnist_cache(split, train=True)
+        test_images, test_targets, _ = build_or_load_emnist_cache(split, train=False)
+        train_loader = DataLoader(
+            TensorDataset(train_images, train_targets),
+            batch_size=batch_size,
+            shuffle=True,
+            num_workers=0,
+        )
+        test_loader = DataLoader(
+            TensorDataset(test_images, test_targets),
+            batch_size=batch_size,
+            shuffle=False,
+            num_workers=0,
+        )
+        return train_loader, test_loader, labels
+
     train_transform = emnist_transform(augment=augment)
     test_transform = emnist_transform(augment=False)
     target_transform = (lambda label: label - 1) if split == "letters" else None
@@ -148,6 +165,35 @@ def make_loaders(batch_size: int, split: str, augment: bool) -> tuple[DataLoader
     test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False, num_workers=0)
     labels = list(train_dataset.classes[1:]) if split == "letters" else list(train_dataset.classes)
     return train_loader, test_loader, labels
+
+
+def build_or_load_emnist_cache(split: str, train: bool) -> tuple[torch.Tensor, torch.Tensor, list[str]]:
+    cache_path = DATA_ROOT / f"cache_{split}_{'train' if train else 'test'}.pt"
+    if cache_path.exists():
+        cache = torch.load(cache_path, weights_only=True, map_location="cpu")
+        return cache["images"], cache["targets"], list(cache["labels"])
+
+    transform = emnist_transform(augment=False)
+    target_transform = (lambda label: label - 1) if split == "letters" else None
+    dataset = datasets.EMNIST(
+        DATA_ROOT,
+        split=split,
+        train=train,
+        download=True,
+        transform=transform,
+        target_transform=target_transform,
+    )
+    labels = list(dataset.classes[1:]) if split == "letters" else list(dataset.classes)
+    images = []
+    targets = []
+    for image, target in dataset:
+        images.append(image)
+        targets.append(int(target))
+    image_tensor = torch.stack(images)
+    target_tensor = torch.tensor(targets, dtype=torch.long)
+    cache_path.parent.mkdir(parents=True, exist_ok=True)
+    torch.save({"images": image_tensor, "targets": target_tensor, "labels": labels}, cache_path)
+    return image_tensor, target_tensor, labels
 
 
 def evaluate(model: nn.Module, loader: DataLoader, criterion: nn.Module, device: torch.device) -> tuple[float, float]:
