@@ -101,8 +101,27 @@ class WebAppRenderingTests(unittest.TestCase):
         with patch.object(main, "predict_digits", return_value=[]):
             results = main.classify_files([("blank.png", png_bytes())], model=object(), device=object())
 
-        self.assertEqual(results[0]["error"], "No digit-like marks were detected.")
+        self.assertEqual(results[0]["error"], "No handwriting-like marks were detected.")
         self.assertIn("preview", results[0])
+
+    def test_character_mode_uses_character_predictor(self) -> None:
+        fake_predictions = [
+            {"label": "A", "confidence": 0.88, "x": 1, "y": 1, "width": 20, "height": 20, "row": 1}
+        ]
+        previous_kind = main.MnistWebHandler.recognizer_kind
+        previous_labels = main.MnistWebHandler.labels
+        main.MnistWebHandler.recognizer_kind = "characters"
+        main.MnistWebHandler.labels = ["A"]
+        try:
+            with patch.object(main, "predict_digits") as mock_digits:
+                with patch.object(main, "predict_characters", return_value=fake_predictions):
+                    results = main.classify_files([("letter.png", png_bytes())], model=object(), device=object())
+        finally:
+            main.MnistWebHandler.recognizer_kind = previous_kind
+            main.MnistWebHandler.labels = previous_labels
+
+        mock_digits.assert_not_called()
+        self.assertEqual(results[0]["sequence"], "A")
 
 
 if __name__ == "__main__":

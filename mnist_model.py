@@ -245,7 +245,8 @@ def load_model(weights_path: Path = WEIGHTS_PATH, device: torch.device | None = 
 def _foreground_from_image(image: Image.Image) -> np.ndarray:
     grayscale = ImageOps.grayscale(image)
     array = np.asarray(grayscale, dtype=np.float32) / 255.0
-    if array.mean() > 0.5:
+    border = np.concatenate((array[0, :], array[-1, :], array[:, 0], array[:, -1]))
+    if float(np.median(border)) > 0.5:
         array = 1.0 - array
     array[array < 0.18] = 0.0
     return array
@@ -367,7 +368,77 @@ def _refine_digit_boxes(mask: np.ndarray, boxes: list[tuple[int, int, int, int]]
     return _trim_overlapping_boxes(mask, split_boxes)
 
 
-def segment_digit_regions(image: Image.Image) -> list[DigitRegion]:
+def _box_ink_area(mask: np.ndarray, box: tuple[int, int, int, int]) -> int:
+    x0, y0, x1, y1 = box
+    return int(mask[y0:y1, x0:x1].sum())
+
+
+def _gap_between_boxes(first: tuple[int, int, int, int], second: tuple[int, int, int, int]) -> float:
+    first_x0, first_y0, first_x1, first_y1 = first
+    second_x0, second_y0, second_x1, second_y1 = second
+    horizontal_gap = max(first_x0 - second_x1, second_x0 - first_x1, 0)
+    vertical_gap = max(first_y0 - second_y1, second_y0 - first_y1, 0)
+    return float(np.hypot(horizontal_gap, vertical_gap))
+
+
+def _merge_small_mark_boxes(mask: np.ndarray, boxes: list[tuple[int, int, int, int]]) -> list[tuple[int, int, int, int]]:
+    if len(boxes) <= 1:
+        return boxes
+
+    areas = [_box_ink_area(mask, box) for box in boxes]
+    median_area = float(np.median(areas))
+    small_area_limit = max(18.0, median_area * 0.35)
+    merged_boxes: list[tuple[int, int, int, int]] = []
+    consumed: set[int] = set()
+
+    for index, box in enumerate(boxes):
+        if index in consumed:
+            continue
+        x0, y0, x1, y1 = box
+        area = areas[index]
+        width = x1 - x0
+        height = y1 - y0
+        is_small = area <= small_area_limit or min(width, height) <= 7
+        if is_small:
+            continue
+
+        merged = box
+        center_x = (x0 + x1) / 2.0
+        for mark_index, mark_box in enumerate(boxes):
+            if mark_index == index or mark_index in consumed:
+                continue
+            mark_area = areas[mark_index]
+            mx0, my0, mx1, my1 = mark_box
+            mark_width = mx1 - mx0
+            mark_height = my1 - my0
+            mark_is_small = mark_area <= small_area_limit or min(mark_width, mark_height) <= 7
+            if not mark_is_small:
+                continue
+            mark_center_x = (mx0 + mx1) / 2.0
+            horizontal_limit = max(width, mark_width, 12) * 0.75
+            vertical_limit = max(height, mark_height, 14) * 0.85
+            if abs(center_x - mark_center_x) > horizontal_limit:
+                continue
+            if _gap_between_boxes(box, mark_box) > vertical_limit:
+                continue
+            merged = (min(merged[0], mx0), min(merged[1], my0), max(merged[2], mx1), max(merged[3], my1))
+            consumed.add(mark_index)
+
+        consumed.add(index)
+        merged_boxes.append(merged)
+
+    for index, box in enumerate(boxes):
+        if index not in consumed:
+            merged_boxes.append(box)
+    return _sort_boxes_reading_order(merged_boxes)
+
+
+def segment_digit_regions(
+    image: Image.Image,
+    split_wide: bool = True,
+    min_component_pixels: int = 12,
+    merge_marks: bool = False,
+) -> list[DigitRegion]:
     foreground = _foreground_from_image(image)
     mask = foreground > 0.18
     if int(mask.sum()) < 20:
@@ -379,13 +450,13 @@ def segment_digit_regions(image: Image.Image) -> list[DigitRegion]:
 
     for label in range(1, count + 1):
         ys, xs = np.where(labeled == label)
-        if len(xs) < 12:
+        if len(xs) < min_component_pixels:
             continue
         dx0, dx1 = int(xs.min()), int(xs.max()) + 1
         dy0, dy1 = int(ys.min()), int(ys.max()) + 1
         original_component = mask[dy0:dy1, dx0:dx1] & (labeled[dy0:dy1, dx0:dx1] == label)
         original_ys, original_xs = np.where(original_component)
-        if len(original_xs) < 12:
+        if len(original_xs) < min_component_pixels:
             continue
         x0, x1 = dx0 + int(original_xs.min()), dx0 + int(original_xs.max()) + 1
         y0, y1 = dy0 + int(original_ys.min()), dy0 + int(original_ys.max()) + 1
@@ -395,7 +466,10 @@ def segment_digit_regions(image: Image.Image) -> list[DigitRegion]:
             continue
         boxes.append((x0, y0, x1, y1))
 
-    boxes = _refine_digit_boxes(mask, boxes)
+    if split_wide:
+        boxes = _refine_digit_boxes(mask, boxes)
+    if merge_marks:
+        boxes = _merge_small_mark_boxes(mask, boxes)
     rows = _group_boxes_by_reading_order(boxes)
     digits: list[DigitRegion] = []
     for row_index, row in enumerate(rows, start=1):

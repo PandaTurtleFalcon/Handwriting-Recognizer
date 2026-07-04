@@ -13,6 +13,9 @@ from urllib.parse import urlparse
 
 from PIL import Image, ImageOps, UnidentifiedImageError
 
+from character_model import METRICS_PATH as CHARACTER_METRICS_PATH
+from character_model import WEIGHTS_PATH as CHARACTER_WEIGHTS_PATH
+from character_model import load_character_model, predict_characters
 from mnist_model import METRICS_PATH, WEIGHTS_PATH, get_device, load_model, predict_digits
 
 
@@ -261,6 +264,8 @@ code {
 class MnistWebHandler(BaseHTTPRequestHandler):
     model = None
     device = None
+    labels = None
+    recognizer_kind = "digits"
 
     def log_message(self, format: str, *args: object) -> None:
         print(f"{self.address_string()} - {format % args}")
@@ -271,7 +276,7 @@ class MnistWebHandler(BaseHTTPRequestHandler):
             self._send_html(render_page())
             return
         if parsed.path == "/health":
-            self._send_json({"ok": True, "model_loaded": self.model is not None})
+            self._send_json({"ok": True, "model_loaded": self.model is not None, "recognizer": self.recognizer_kind})
             return
         self.send_error(HTTPStatus.NOT_FOUND)
 
@@ -302,7 +307,7 @@ class MnistWebHandler(BaseHTTPRequestHandler):
         except Exception as exc:
             print(f"Prediction failed: {exc!r}")
             self._send_html(
-                render_page(error="Prediction failed. Check that the upload is a valid digit image and try again."),
+                render_page(error="Prediction failed. Check that the upload is a valid handwriting image and try again."),
                 HTTPStatus.INTERNAL_SERVER_ERROR,
             )
 
@@ -363,12 +368,15 @@ def classify_files(files: list[tuple[str, bytes]], model, device) -> list[dict[s
             continue
 
         image = ImageOps.exif_transpose(image).convert("RGB")
-        predictions = predict_digits(model, image, device)
+        if MnistWebHandler.recognizer_kind == "characters" and MnistWebHandler.labels is not None:
+            predictions = predict_characters(model, MnistWebHandler.labels, image, device)
+        else:
+            predictions = predict_digits(model, image, device)
         if not predictions:
             results.append(
                 {
                     "filename": filename,
-                    "error": "No digit-like marks were detected.",
+                    "error": "No handwriting-like marks were detected.",
                     "preview": image_to_data_url(image),
                     "image_width": image.width,
                     "image_height": image.height,
@@ -376,7 +384,7 @@ def classify_files(files: list[tuple[str, bytes]], model, device) -> list[dict[s
             )
             continue
 
-        sequence = "".join(str(item["digit"]) for item in predictions)
+        sequence = "".join(prediction_value(item) for item in predictions)
         row_sequences = build_row_sequences(predictions)
         results.append(
             {
@@ -398,9 +406,13 @@ def build_row_sequences(predictions: list[dict[str, object]]) -> list[str]:
         row = int(prediction.get("row", 1))
         rows.setdefault(row, []).append(prediction)
     return [
-        "".join(str(item.get("digit", "")) for item in sorted(items, key=lambda item: float(item.get("x", 0))))
+        "".join(prediction_value(item) for item in sorted(items, key=lambda item: float(item.get("x", 0))))
         for _, items in sorted(rows.items())
     ]
+
+
+def prediction_value(prediction: dict[str, object]) -> str:
+    return str(prediction.get("label", prediction.get("digit", "")))
 
 
 def image_to_data_url(image: Image.Image) -> str:
@@ -418,6 +430,11 @@ def render_page(results: list[dict[str, object]] | None = None, error: str | Non
     if metrics:
         best = max(metrics, key=lambda item: item.get("test_accuracy", 0))
         metrics_text = f"Best test accuracy: {best['test_accuracy']:.2f}%"
+    if CHARACTER_WEIGHTS_PATH.exists():
+        character_metrics = read_metrics(CHARACTER_METRICS_PATH)
+        if character_metrics:
+            best = max(character_metrics, key=lambda item: item.get("validation_accuracy", 0))
+            metrics_text = f"Character validation accuracy: {best['validation_accuracy']:.2f}%"
 
     result_html = ""
     if error:
@@ -427,7 +444,7 @@ def render_page(results: list[dict[str, object]] | None = None, error: str | Non
     else:
         result_html = (
             '<section class="empty-panel">'
-            "<p>Upload image files containing handwritten digits. A single image can contain multiple separated digits, "
+            "<p>Upload image files containing handwritten characters. A single image can contain multiple separated letters, numbers, or punctuation, "
             "and the app will read them in row order.</p>"
             "</section>"
         )
@@ -437,15 +454,15 @@ def render_page(results: list[dict[str, object]] | None = None, error: str | Non
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>MNIST Digit Sorter</title>
+  <title>Handwriting Recognizer</title>
   <style>{PAGE_CSS}</style>
 </head>
 <body>
   <main>
     <div class="topbar">
       <div>
-        <h1>MNIST Digit Sorter</h1>
-        <p>PyTorch CNN predictions for uploaded handwritten digit images.</p>
+        <h1>Handwriting Recognizer</h1>
+        <p>PyTorch CNN predictions for uploaded handwritten characters.</p>
       </div>
       <div class="badge">{html.escape(metrics_text)}</div>
     </div>
@@ -454,14 +471,14 @@ def render_page(results: list[dict[str, object]] | None = None, error: str | Non
         <form action="/predict" method="post" enctype="multipart/form-data">
           <div class="upload-zone">
             <div>
-              <label for="images"><strong>Choose digit images</strong></label>
+              <label for="images"><strong>Choose handwriting images</strong></label>
               <p id="upload-help" class="hint">PNG, JPG, or WEBP. Multiple files are okay.</p>
               <input id="images" name="images" type="file" accept="image/png,image/jpeg,image/webp" aria-describedby="upload-help" multiple required>
             </div>
           </div>
-          <button type="submit">Recognize digits</button>
+          <button type="submit">Recognize handwriting</button>
         </form>
-        <p class="hint">This is trained on MNIST digits 0-9, so it is for handwritten numbers rather than general letters.</p>
+        <p class="hint">The expanded recognizer reads digits, English letters, and common punctuation when <code>character_cnn.pt</code> is trained.</p>
       </section>
       <section aria-live="polite">
         {result_html}
@@ -484,7 +501,7 @@ def render_result(result: dict[str, object]) -> str:
     predictions = result.get("predictions", [])
     digit_cards = []
     for index, prediction in enumerate(predictions, start=1):
-        digit = html.escape(str(prediction["digit"]))
+        digit = html.escape(prediction_value(prediction))
         confidence = float(prediction["confidence"]) * 100
         digit_cards.append(
             f'<div class="digit"><strong><span class="digit-index">#{index}</span> {digit}</strong><span>confidence {confidence:.1f}%</span></div>'
@@ -517,6 +534,7 @@ def render_overlays(result: dict[str, object], predictions: object) -> str:
     preview = html.escape(str(result.get("preview", "")), quote=True)
     if not preview:
         return ""
+    prediction_kind = "character" if MnistWebHandler.recognizer_kind == "characters" else "digit"
     image_width = float(result.get("image_width", 1))
     image_height = float(result.get("image_height", 1))
     boxes = []
@@ -529,42 +547,48 @@ def render_overlays(result: dict[str, object], predictions: object) -> str:
         top = 100.0 * float(prediction.get("y", 0)) / image_height
         width = 100.0 * float(prediction.get("width", 0)) / image_width
         height = 100.0 * float(prediction.get("height", 0)) / image_height
-        digit = html.escape(str(prediction.get("digit", "")))
+        digit = html.escape(prediction_value(prediction))
         confidence = 100.0 * float(prediction.get("confidence", 0))
         boxes.append(
             '<div class="digit-box" '
             f'tabindex="0" title="Prediction #{index}: {digit}, confidence {confidence:.1f}%" '
-            f'aria-label="Prediction {index}: digit {digit}, confidence {confidence:.1f} percent" '
+            f'aria-label="Prediction {index}: {prediction_kind} {digit}, confidence {confidence:.1f} percent" '
             f'style="left:{left:.3f}%;top:{top:.3f}%;width:{width:.3f}%;height:{height:.3f}%;">'
             f'<span aria-hidden="true">#{index}</span></div>'
         )
     return (
         '<div class="preview-wrap">'
-        f'<img src="{preview}" alt="Uploaded digit image with prediction boxes">'
+        f'<img src="{preview}" alt="Uploaded handwriting image with prediction boxes">'
         f"{''.join(boxes)}"
         "</div>"
     )
 
 
-def read_metrics() -> list[dict[str, float]]:
-    if not METRICS_PATH.exists():
+def read_metrics(path=METRICS_PATH) -> list[dict[str, float]]:
+    if not path.exists():
         return []
     try:
-        return json.loads(METRICS_PATH.read_text(encoding="utf-8"))
+        return json.loads(path.read_text(encoding="utf-8"))
     except json.JSONDecodeError:
         return []
 
 
 def run(host: str = HOST, port: int = PORT) -> None:
-    if not WEIGHTS_PATH.exists():
+    if CHARACTER_WEIGHTS_PATH.exists():
+        MnistWebHandler.device = get_device()
+        MnistWebHandler.model, MnistWebHandler.labels = load_character_model(device=MnistWebHandler.device)
+        MnistWebHandler.recognizer_kind = "characters"
+    elif WEIGHTS_PATH.exists():
+        MnistWebHandler.device = get_device()
+        MnistWebHandler.model = load_model(device=MnistWebHandler.device)
+        MnistWebHandler.labels = None
+        MnistWebHandler.recognizer_kind = "digits"
+    else:
         raise SystemExit(
-            f"Missing {WEIGHTS_PATH.name}. Train first with: python3 mnist_model.py --epochs 6"
+            f"Missing model weights. Train first with: python3 character_model.py or python3 mnist_model.py"
         )
-
-    MnistWebHandler.device = get_device()
-    MnistWebHandler.model = load_model(device=MnistWebHandler.device)
     server = ThreadingHTTPServer((host, port), MnistWebHandler)
-    print(f"MNIST Digit Sorter running at http://{host}:{port}")
+    print(f"Handwriting Recognizer ({MnistWebHandler.recognizer_kind}) running at http://{host}:{port}")
     server.serve_forever()
 
 

@@ -57,6 +57,40 @@ class MnistPreprocessingTests(unittest.TestCase):
 
         self.assertEqual(regions, [])
 
+    def test_segment_regions_supports_light_ink_on_dark_background(self) -> None:
+        image = Image.new("L", (80, 80), 0)
+        draw = ImageDraw.Draw(image)
+        draw.line((40, 12, 40, 64), fill=255, width=7)
+
+        regions = segment_digit_regions(image)
+
+        self.assertEqual(len(regions), 1)
+        self.assertLess(regions[0].image.size[0], 40)
+        self.assertGreater(np.asarray(regions[0].image).sum(), 0)
+
+    def test_character_segmentation_keeps_wide_shape_together(self) -> None:
+        image = Image.new("L", (96, 72), 255)
+        draw = ImageDraw.Draw(image)
+        draw.arc((18, 8, 70, 42), start=195, end=25, fill=0, width=6)
+        draw.line((68, 26, 24, 62), fill=0, width=6)
+        draw.line((24, 62, 78, 62), fill=0, width=6)
+
+        regions = segment_digit_regions(image, split_wide=False, min_component_pixels=4, merge_marks=True)
+
+        self.assertEqual(len(regions), 1)
+
+    def test_character_segmentation_merges_punctuation_dot(self) -> None:
+        image = Image.new("L", (80, 96), 255)
+        draw = ImageDraw.Draw(image)
+        draw.arc((20, 10, 60, 48), start=205, end=40, fill=0, width=5)
+        draw.line((52, 32, 40, 56), fill=0, width=5)
+        draw.ellipse((38, 76, 46, 84), fill=0)
+
+        regions = segment_digit_regions(image, split_wide=False, min_component_pixels=4, merge_marks=True)
+
+        self.assertEqual(len(regions), 1)
+        self.assertGreater(regions[0].box[3], 80)
+
     def test_messy_connected_27_segments_and_predicts(self) -> None:
         if not Path(WEIGHTS_PATH).exists():
             self.skipTest("trained weights are not available")
