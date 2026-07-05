@@ -86,16 +86,18 @@ class TinyEmnistCNN(nn.Module):
     def __init__(self, num_classes: int) -> None:
         super().__init__()
         self.network = nn.Sequential(
-            nn.Conv2d(1, 24, kernel_size=5, padding=2),
+            nn.Conv2d(1, 24, kernel_size=5, padding=2, bias=False),
+            nn.BatchNorm2d(24),
             nn.ReLU(inplace=True),
             nn.MaxPool2d(2),
-            nn.Conv2d(24, 48, kernel_size=3, padding=1),
+            nn.Conv2d(24, 48, kernel_size=3, padding=1, bias=False),
+            nn.BatchNorm2d(48),
             nn.ReLU(inplace=True),
             nn.MaxPool2d(2),
             nn.Flatten(),
             nn.Linear(48 * 7 * 7, 256),
             nn.ReLU(inplace=True),
-            nn.Dropout(0.35),
+            nn.Dropout(0.3),
             nn.Linear(256, num_classes),
         )
 
@@ -241,6 +243,8 @@ def save_experiment(
     split: str,
     model_type: str,
     augment: bool,
+    learning_rate: float,
+    seed: int,
 ) -> None:
     if best_state is not None:
         torch.save(
@@ -251,6 +255,8 @@ def save_experiment(
                 "split": split,
                 "model_type": model_type,
                 "augment": augment,
+                "learning_rate": learning_rate,
+                "seed": seed,
             },
             WEIGHTS_PATH,
         )
@@ -258,16 +264,26 @@ def save_experiment(
         "split": split,
         "model_type": model_type,
         "augment": augment,
+        "learning_rate": learning_rate,
+        "seed": seed,
         "history": [asdict(item) for item in history],
     }
     METRICS_PATH.write_text(json.dumps(payload, indent=2), encoding="utf-8")
 
 
-def train(epochs: int, batch_size: int, split: str, model_type: str, augment: bool) -> list[ExperimentMetrics]:
+def train(
+    epochs: int,
+    batch_size: int,
+    split: str,
+    model_type: str,
+    augment: bool,
+    learning_rate: float,
+    seed: int,
+) -> list[ExperimentMetrics]:
     device = get_device()
     if device.type == "mps":
         device = torch.device("cpu")
-    torch.manual_seed(42)
+    torch.manual_seed(seed)
 
     train_loader, test_loader, labels = make_loaders(batch_size, split, augment)
     model_classes = {
@@ -279,7 +295,7 @@ def train(epochs: int, batch_size: int, split: str, model_type: str, augment: bo
     model_class = model_classes[model_type]
     model = model_class(num_classes=len(labels)).to(device)
     criterion = nn.CrossEntropyLoss()
-    optimizer = torch.optim.AdamW(model.parameters(), lr=0.001, weight_decay=0.0005)
+    optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate, weight_decay=0.0005)
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=epochs)
 
     history: list[ExperimentMetrics] = []
@@ -321,7 +337,7 @@ def train(epochs: int, batch_size: int, split: str, model_type: str, augment: bo
             f"test_acc={metrics.test_accuracy:.2f}%",
             flush=True,
         )
-        save_experiment(history, best_state, best_accuracy, labels, split, model_type, augment)
+        save_experiment(history, best_state, best_accuracy, labels, split, model_type, augment, learning_rate, seed)
 
     return history
 
@@ -333,6 +349,8 @@ def main() -> None:
     parser.add_argument("--split", choices=["balanced", "letters"], default="balanced")
     parser.add_argument("--model", choices=["mlp", "tinycnn", "widecnn", "cnn"], default="mlp")
     parser.add_argument("--augment", action="store_true")
+    parser.add_argument("--learning-rate", type=float, default=0.001)
+    parser.add_argument("--seed", type=int, default=42)
     args = parser.parse_args()
     train(
         epochs=args.epochs,
@@ -340,6 +358,8 @@ def main() -> None:
         split=args.split,
         model_type=args.model,
         augment=args.augment,
+        learning_rate=args.learning_rate,
+        seed=args.seed,
     )
 
 
