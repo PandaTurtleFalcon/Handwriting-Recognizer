@@ -103,6 +103,27 @@ class TinyEmnistCNN(nn.Module):
         return self.network(images)
 
 
+class WideEmnistCNN(nn.Module):
+    def __init__(self, num_classes: int) -> None:
+        super().__init__()
+        self.network = nn.Sequential(
+            nn.Conv2d(1, 32, kernel_size=5, padding=2),
+            nn.ReLU(inplace=True),
+            nn.MaxPool2d(2),
+            nn.Conv2d(32, 72, kernel_size=3, padding=1),
+            nn.ReLU(inplace=True),
+            nn.MaxPool2d(2),
+            nn.Flatten(),
+            nn.Linear(72 * 7 * 7, 384),
+            nn.ReLU(inplace=True),
+            nn.Dropout(0.3),
+            nn.Linear(384, num_classes),
+        )
+
+    def forward(self, images: torch.Tensor) -> torch.Tensor:
+        return self.network(images)
+
+
 def emnist_transform(augment: bool = False) -> transforms.Compose:
     steps = [transforms.Lambda(lambda image: ImageOps.mirror(image.rotate(-90, expand=True)))]
     if augment:
@@ -212,6 +233,36 @@ def evaluate(model: nn.Module, loader: DataLoader, criterion: nn.Module, device:
     return loss_total / max(len(loader), 1), 100.0 * correct / max(total, 1)
 
 
+def save_experiment(
+    history: list[ExperimentMetrics],
+    best_state: dict[str, torch.Tensor] | None,
+    best_accuracy: float,
+    labels: list[str],
+    split: str,
+    model_type: str,
+    augment: bool,
+) -> None:
+    if best_state is not None:
+        torch.save(
+            {
+                "model_state_dict": best_state,
+                "labels": labels,
+                "test_accuracy": best_accuracy,
+                "split": split,
+                "model_type": model_type,
+                "augment": augment,
+            },
+            WEIGHTS_PATH,
+        )
+    payload = {
+        "split": split,
+        "model_type": model_type,
+        "augment": augment,
+        "history": [asdict(item) for item in history],
+    }
+    METRICS_PATH.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+
+
 def train(epochs: int, batch_size: int, split: str, model_type: str, augment: bool) -> list[ExperimentMetrics]:
     device = get_device()
     if device.type == "mps":
@@ -222,6 +273,7 @@ def train(epochs: int, batch_size: int, split: str, model_type: str, augment: bo
     model_classes = {
         "mlp": EmnistMLP,
         "tinycnn": TinyEmnistCNN,
+        "widecnn": WideEmnistCNN,
         "cnn": EmnistCNN,
     }
     model_class = model_classes[model_type]
@@ -269,25 +321,8 @@ def train(epochs: int, batch_size: int, split: str, model_type: str, augment: bo
             f"test_acc={metrics.test_accuracy:.2f}%",
             flush=True,
         )
+        save_experiment(history, best_state, best_accuracy, labels, split, model_type, augment)
 
-    torch.save(
-        {
-            "model_state_dict": best_state,
-            "labels": labels,
-            "test_accuracy": best_accuracy,
-            "split": split,
-            "model_type": model_type,
-            "augment": augment,
-        },
-        WEIGHTS_PATH,
-    )
-    payload = {
-        "split": split,
-        "model_type": model_type,
-        "augment": augment,
-        "history": [asdict(item) for item in history],
-    }
-    METRICS_PATH.write_text(json.dumps(payload, indent=2), encoding="utf-8")
     return history
 
 
@@ -296,7 +331,7 @@ def main() -> None:
     parser.add_argument("--epochs", type=int, default=8)
     parser.add_argument("--batch-size", type=int, default=2048)
     parser.add_argument("--split", choices=["balanced", "letters"], default="balanced")
-    parser.add_argument("--model", choices=["mlp", "tinycnn", "cnn"], default="mlp")
+    parser.add_argument("--model", choices=["mlp", "tinycnn", "widecnn", "cnn"], default="mlp")
     parser.add_argument("--augment", action="store_true")
     args = parser.parse_args()
     train(
