@@ -13,9 +13,11 @@ from urllib.parse import urlparse
 
 from PIL import Image, ImageOps, UnidentifiedImageError
 
+from alnum_model import METRICS_PATH as ALNUM_METRICS_PATH
+from alnum_model import WEIGHTS_PATH as ALNUM_WEIGHTS_PATH
 from character_model import METRICS_PATH as CHARACTER_METRICS_PATH
 from character_model import WEIGHTS_PATH as CHARACTER_WEIGHTS_PATH
-from character_model import load_character_model, load_letter_model, predict_characters
+from character_model import load_alnum_model, load_character_model, load_letter_model, predict_characters
 from emnist_experiment import METRICS_PATH as LETTER_METRICS_PATH
 from emnist_experiment import WEIGHTS_PATH as LETTER_WEIGHTS_PATH
 from mnist_model import METRICS_PATH, WEIGHTS_PATH, get_device, load_model, predict_digits
@@ -269,6 +271,8 @@ class MnistWebHandler(BaseHTTPRequestHandler):
     labels = None
     letter_model = None
     letter_labels = None
+    alnum_model = None
+    alnum_labels = None
     recognizer_kind = "digits"
 
     def log_message(self, format: str, *args: object) -> None:
@@ -380,6 +384,8 @@ def classify_files(files: list[tuple[str, bytes]], model, device) -> list[dict[s
                 device,
                 letter_model=MnistWebHandler.letter_model,
                 letter_labels=MnistWebHandler.letter_labels,
+                alnum_model=MnistWebHandler.alnum_model,
+                alnum_labels=MnistWebHandler.alnum_labels,
             )
         else:
             predictions = predict_digits(model, image, device)
@@ -441,13 +447,25 @@ def render_page(results: list[dict[str, object]] | None = None, error: str | Non
     if metrics:
         best = max(metrics, key=lambda item: item.get("test_accuracy", 0))
         metrics_text = f"Best test accuracy: {best['test_accuracy']:.2f}%"
+    if ALNUM_WEIGHTS_PATH.exists():
+        alnum_metrics = read_metrics(ALNUM_METRICS_PATH)
+        if isinstance(alnum_metrics, dict):
+            history = alnum_metrics.get("history", [])
+            if history:
+                best = max(history, key=lambda item: item.get("test_accuracy", 0))
+                metrics_text = (
+                    f"Combined test accuracy: {best['test_accuracy']:.2f}% "
+                    f"(digits {best.get('digit_test_accuracy', 0):.2f}%, "
+                    f"letters {best.get('letter_test_accuracy', 0):.2f}%)"
+                )
     if LETTER_WEIGHTS_PATH.exists():
         letter_metrics = read_metrics(LETTER_METRICS_PATH)
         if isinstance(letter_metrics, dict):
             history = letter_metrics.get("history", [])
             if history:
                 best = max(history, key=lambda item: item.get("test_accuracy", 0))
-                metrics_text = f"Alphabet test accuracy: {best['test_accuracy']:.2f}%"
+                if not ALNUM_WEIGHTS_PATH.exists():
+                    metrics_text = f"Alphabet test accuracy: {best['test_accuracy']:.2f}%"
     if CHARACTER_WEIGHTS_PATH.exists():
         character_metrics = read_metrics(CHARACTER_METRICS_PATH)
         if character_metrics and not LETTER_WEIGHTS_PATH.exists():
@@ -598,6 +616,7 @@ def run(host: str = HOST, port: int = PORT) -> None:
         MnistWebHandler.device = get_device()
         MnistWebHandler.model, MnistWebHandler.labels = load_character_model(device=MnistWebHandler.device)
         MnistWebHandler.letter_model, MnistWebHandler.letter_labels = load_letter_model(device=MnistWebHandler.device)
+        MnistWebHandler.alnum_model, MnistWebHandler.alnum_labels = load_alnum_model(device=MnistWebHandler.device)
         MnistWebHandler.recognizer_kind = "characters"
     elif WEIGHTS_PATH.exists():
         MnistWebHandler.device = get_device()
@@ -605,6 +624,8 @@ def run(host: str = HOST, port: int = PORT) -> None:
         MnistWebHandler.labels = None
         MnistWebHandler.letter_model = None
         MnistWebHandler.letter_labels = None
+        MnistWebHandler.alnum_model = None
+        MnistWebHandler.alnum_labels = None
         MnistWebHandler.recognizer_kind = "digits"
     else:
         raise SystemExit(

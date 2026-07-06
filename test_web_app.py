@@ -112,11 +112,16 @@ class WebAppRenderingTests(unittest.TestCase):
         previous_labels = main.MnistWebHandler.labels
         previous_letter_model = main.MnistWebHandler.letter_model
         previous_letter_labels = main.MnistWebHandler.letter_labels
+        previous_alnum_model = main.MnistWebHandler.alnum_model
+        previous_alnum_labels = main.MnistWebHandler.alnum_labels
         letter_model = object()
+        alnum_model = object()
         main.MnistWebHandler.recognizer_kind = "characters"
         main.MnistWebHandler.labels = ["A"]
         main.MnistWebHandler.letter_model = letter_model
         main.MnistWebHandler.letter_labels = ["A"]
+        main.MnistWebHandler.alnum_model = alnum_model
+        main.MnistWebHandler.alnum_labels = ["0", "A"]
         try:
             with patch.object(main, "predict_digits") as mock_digits:
                 with patch.object(main, "predict_characters", return_value=fake_predictions) as mock_characters:
@@ -126,10 +131,14 @@ class WebAppRenderingTests(unittest.TestCase):
             main.MnistWebHandler.labels = previous_labels
             main.MnistWebHandler.letter_model = previous_letter_model
             main.MnistWebHandler.letter_labels = previous_letter_labels
+            main.MnistWebHandler.alnum_model = previous_alnum_model
+            main.MnistWebHandler.alnum_labels = previous_alnum_labels
 
         mock_digits.assert_not_called()
         self.assertIs(mock_characters.call_args.kwargs["letter_model"], letter_model)
         self.assertEqual(mock_characters.call_args.kwargs["letter_labels"], ["A"])
+        self.assertIs(mock_characters.call_args.kwargs["alnum_model"], alnum_model)
+        self.assertEqual(mock_characters.call_args.kwargs["alnum_labels"], ["0", "A"])
         self.assertEqual(results[0]["sequence"], "A")
 
 

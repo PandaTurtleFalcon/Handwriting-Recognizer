@@ -16,6 +16,10 @@ from torch import nn
 from torch.utils.data import DataLoader, Dataset, Subset, TensorDataset, WeightedRandomSampler
 from torchvision import transforms
 
+from alnum_model import EMNIST_MEAN as ALNUM_MEAN
+from alnum_model import EMNIST_STD as ALNUM_STD
+from alnum_model import WEIGHTS_PATH as ALNUM_WEIGHTS_PATH
+from alnum_model import load_alnum_model
 from emnist_experiment import EMNIST_MEAN, EMNIST_STD, WEIGHTS_PATH as EMNIST_WEIGHTS_PATH
 from emnist_experiment import EmnistCNN, TinyEmnistCNN, WideEmnistCNN
 from mnist_model import WEIGHTS_PATH as DIGIT_WEIGHTS_PATH
@@ -387,6 +391,13 @@ def tensor_from_letter_region(region: DigitRegion, device: torch.device) -> torc
     return torch.from_numpy(array).unsqueeze(0).unsqueeze(0).to(device)
 
 
+def tensor_from_alnum_region(region: DigitRegion, device: torch.device) -> torch.Tensor:
+    normalized = normalize_character_image(region.image).resize((28, 28), Image.Resampling.LANCZOS)
+    array = np.asarray(normalized, dtype=np.float32) / 255.0
+    array = (array - ALNUM_MEAN) / ALNUM_STD
+    return torch.from_numpy(array).unsqueeze(0).unsqueeze(0).to(device)
+
+
 def _nearest_exemplar_label(model: nn.Module, tensor: torch.Tensor) -> tuple[int, float] | None:
     exemplars = getattr(model, "character_exemplars", None)
     targets = getattr(model, "character_exemplar_targets", None)
@@ -420,6 +431,18 @@ def _letter_prediction(
     probabilities = torch.softmax(letter_model(tensor), dim=1).squeeze(0)
     confidence, label_index = torch.max(probabilities, dim=0)
     return letter_labels[int(label_index.item())], float(confidence.item())
+
+
+def _alnum_prediction(
+    alnum_model: nn.Module,
+    alnum_labels: list[str],
+    region: DigitRegion,
+    device: torch.device,
+) -> tuple[str, float]:
+    tensor = tensor_from_alnum_region(region, device)
+    probabilities = torch.softmax(alnum_model(tensor), dim=1).squeeze(0)
+    confidence, label_index = torch.max(probabilities, dim=0)
+    return alnum_labels[int(label_index.item())], float(confidence.item())
 
 
 def _load_digit_model_for_fallback(device: torch.device) -> nn.Module | None:
@@ -666,6 +689,8 @@ def predict_characters(
     device: torch.device | None = None,
     letter_model: nn.Module | None = None,
     letter_labels: list[str] | None = None,
+    alnum_model: nn.Module | None = None,
+    alnum_labels: list[str] | None = None,
 ) -> list[dict[str, float | int | str]]:
     selected_device = device or next(model.parameters()).device
     regions = segment_digit_regions(image, split_wide=False, min_component_pixels=4, merge_marks=True)
@@ -689,12 +714,38 @@ def predict_characters(
             letter_match = None
             if (
                 punctuation_label is None
-                and
-                letter_model is not None
+                and letter_model is not None
                 and letter_labels is not None
                 and _looks_like_letter_region(region, label, confidence_value)
             ):
                 letter_match = _letter_prediction(letter_model, letter_labels, region, selected_device)
+
+            alnum_was_used = False
+            if punctuation_label is None and alnum_model is not None and alnum_labels is not None:
+                alnum_match = _alnum_prediction(alnum_model, alnum_labels, region, selected_device)
+                alnum_label, alnum_confidence = alnum_match
+                letter_confidence = letter_match[1] if letter_match is not None else 0.0
+                if (
+                    alnum_confidence >= 0.55
+                    and not (alnum_label.isdigit() and letter_confidence >= 0.9)
+                    and (
+                        confidence_value < 0.86
+                        or not str(label).isalnum()
+                        or (
+                            str(label).isdigit()
+                            and alnum_label.isdigit()
+                            and alnum_confidence >= confidence_value - 0.05
+                        )
+                        or (
+                            str(label).isalpha()
+                            and alnum_label.isalpha()
+                            and alnum_confidence >= confidence_value - 0.05
+                        )
+                    )
+                ):
+                    label = alnum_label
+                    confidence_value = max(confidence_value, alnum_confidence)
+                    alnum_was_used = True
 
             digit_match = None
             digit_was_used = False
