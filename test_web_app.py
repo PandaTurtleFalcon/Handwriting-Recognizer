@@ -8,6 +8,8 @@ import main
 
 
 def png_bytes() -> bytes:
+    """Create a tiny valid PNG for upload tests."""
+
     image = Image.new("RGB", (32, 32), "white")
     buffer = io.BytesIO()
     image.save(buffer, format="PNG")
@@ -15,6 +17,8 @@ def png_bytes() -> bytes:
 
 
 def multipart_body(file_count: int) -> tuple[str, bytes]:
+    """Build a minimal multipart body with the requested number of files."""
+
     boundary = "test-boundary"
     chunks = []
     for index in range(file_count):
@@ -32,7 +36,11 @@ def multipart_body(file_count: int) -> tuple[str, bytes]:
 
 
 class WebAppRenderingTests(unittest.TestCase):
+    """Regression tests for upload parsing, classification dispatch, and HTML."""
+
     def test_build_row_sequences_groups_digits_by_row(self) -> None:
+        """Predictions should be grouped into one string per visual row."""
+
         predictions = [
             {"digit": 2, "row": 2, "x": 10},
             {"digit": 1, "row": 1, "x": 20},
@@ -43,6 +51,8 @@ class WebAppRenderingTests(unittest.TestCase):
         self.assertEqual(main.build_row_sequences(predictions), ["01", "23"])
 
     def test_render_result_maps_boxes_to_numbered_cards(self) -> None:
+        """Rendered boxes and cards should use matching prediction numbers."""
+
         result = {
             "filename": "digits.png",
             "sequence": "01",
@@ -63,6 +73,8 @@ class WebAppRenderingTests(unittest.TestCase):
         self.assertIn('<span class="digit-index">#2</span> 1', html)
 
     def test_valid_image_with_bad_extension_is_decoded_by_content(self) -> None:
+        """Image content should matter more than filename extension."""
+
         fake_predictions = [
             {"digit": 8, "confidence": 0.9, "x": 1, "y": 1, "width": 20, "height": 20, "row": 1}
         ]
@@ -73,6 +85,8 @@ class WebAppRenderingTests(unittest.TestCase):
         self.assertIn("preview", results[0])
 
     def test_parse_multipart_accepts_case_insensitive_content_type(self) -> None:
+        """Multipart content type parsing should be case-insensitive."""
+
         content_type, body = multipart_body(1)
 
         files = main.parse_multipart_files(content_type, body)
@@ -81,12 +95,16 @@ class WebAppRenderingTests(unittest.TestCase):
         self.assertEqual(files[0][0], "digit0.png")
 
     def test_parse_multipart_rejects_too_many_files(self) -> None:
+        """Large batches should fail before prediction work starts."""
+
         content_type, body = multipart_body(main.MAX_FILES + 1)
 
         with self.assertRaisesRegex(ValueError, "fewer files"):
             main.parse_multipart_files(content_type, body)
 
     def test_large_image_is_rejected_before_prediction(self) -> None:
+        """Oversized images should be rejected before model inference."""
+
         image = Image.new("RGB", (2100, 2100), "white")
         buffer = io.BytesIO()
         image.save(buffer, format="PNG")
@@ -98,6 +116,8 @@ class WebAppRenderingTests(unittest.TestCase):
         mock_predict.assert_not_called()
 
     def test_no_predictions_returns_useful_error_with_preview(self) -> None:
+        """Blank uploads should show a useful error and still render preview."""
+
         with patch.object(main, "predict_digits", return_value=[]):
             results = main.classify_files([("blank.png", png_bytes())], model=object(), device=object())
 
@@ -105,6 +125,8 @@ class WebAppRenderingTests(unittest.TestCase):
         self.assertIn("preview", results[0])
 
     def test_character_mode_uses_character_predictor(self) -> None:
+        """Character mode should dispatch to the expanded recognizer stack."""
+
         fake_predictions = [
             {"label": "A", "confidence": 0.88, "x": 1, "y": 1, "width": 20, "height": 20, "row": 1}
         ]

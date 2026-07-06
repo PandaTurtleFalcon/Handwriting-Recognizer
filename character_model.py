@@ -1,3 +1,11 @@
+"""Expanded handwritten character recognizer and prediction arbitration.
+
+The original app began as MNIST digit recognition. This module extends it to
+letters and punctuation by combining a curated character model, the combined
+MNIST+EMNIST alphanumeric model, an alphabet-only model, digit fallback logic,
+and shape-based punctuation post-processing.
+"""
+
 from __future__ import annotations
 
 import argparse
@@ -47,6 +55,8 @@ _DIGIT_MODEL: nn.Module | None = None
 
 @dataclass(frozen=True)
 class CharacterEpochMetrics:
+    """Metrics captured during curated character-model training."""
+
     epoch: int
     train_loss: float
     train_accuracy: float
@@ -56,6 +66,8 @@ class CharacterEpochMetrics:
 
 
 class CharacterDataset(Dataset):
+    """Dataset wrapper around curated UNIPEN-style character image folders."""
+
     def __init__(self, root: Path, transform=None) -> None:
         self.root = root
         self.transform = transform
@@ -79,6 +91,8 @@ class CharacterDataset(Dataset):
 
 
 class CharacterCNN(nn.Module):
+    """Small MLP-style classifier for curated character glyphs."""
+
     def __init__(self, num_classes: int) -> None:
         super().__init__()
         self.network = nn.Sequential(
@@ -97,6 +111,8 @@ class CharacterCNN(nn.Module):
 
 
 def train_transform() -> transforms.Compose:
+    """Return the training transform for curated character images."""
+
     return transforms.Compose(
         [
             transforms.Resize((IMAGE_SIZE, IMAGE_SIZE)),
@@ -107,6 +123,8 @@ def train_transform() -> transforms.Compose:
 
 
 def eval_transform() -> transforms.Compose:
+    """Return the deterministic evaluation transform."""
+
     return transforms.Compose(
         [
             transforms.Resize((IMAGE_SIZE, IMAGE_SIZE)),
@@ -117,6 +135,8 @@ def eval_transform() -> transforms.Compose:
 
 
 def normalize_character_image(image: Image.Image) -> Image.Image:
+    """Center and scale one character crop into a 28x28 foreground image."""
+
     regions = segment_digit_regions(image, split_wide=False, min_component_pixels=4, merge_marks=True)
     if regions:
         x0 = min(region.box[0] for region in regions)
@@ -151,6 +171,8 @@ def normalize_character_image(image: Image.Image) -> Image.Image:
 
 
 def character_tensor_from_image(image: Image.Image) -> torch.Tensor:
+    """Convert a character image into the 32x32 curated-model tensor format."""
+
     normalized = normalize_character_image(image)
     array = np.asarray(normalized, dtype=np.float32) / 255.0
     array = (array - CHAR_MEAN) / CHAR_STD
@@ -158,6 +180,8 @@ def character_tensor_from_image(image: Image.Image) -> torch.Tensor:
 
 
 def split_dataset(dataset: CharacterDataset, validation_size: float = 0.15) -> tuple[list[int], list[int]]:
+    """Create a stratified train/validation split for curated characters."""
+
     labels = [label for _, label in dataset.samples]
     indices = list(range(len(dataset)))
     train_indices, validation_indices = train_test_split(
@@ -170,6 +194,8 @@ def split_dataset(dataset: CharacterDataset, validation_size: float = 0.15) -> t
 
 
 def build_or_load_cache(root: Path) -> tuple[torch.Tensor, torch.Tensor, list[str]]:
+    """Cache curated character tensors to avoid repeated PNG decoding."""
+
     if CACHE_PATH.exists():
         cache = torch.load(CACHE_PATH, weights_only=True)
         return cache["images"], cache["targets"], list(cache["labels"])
@@ -193,6 +219,8 @@ def build_character_exemplars(
     exemplars_per_class: int = 80,
     output_path: Path = EXEMPLARS_PATH,
 ) -> None:
+    """Save one exemplar tensor per curated sample for nearest-neighbor fallback."""
+
     images, targets, labels = build_or_load_cache(root)
     selected_indices: list[int] = []
     for label_index in range(len(labels)):
@@ -213,6 +241,8 @@ def build_character_exemplars(
 
 
 def make_loaders(root: Path, batch_size: int) -> tuple[DataLoader, DataLoader, list[str]]:
+    """Build weighted train and validation loaders for curated characters."""
+
     images, targets, labels = build_or_load_cache(root)
     indices = list(range(len(targets)))
     train_indices, validation_indices = train_test_split(
@@ -244,6 +274,8 @@ def make_loaders(root: Path, batch_size: int) -> tuple[DataLoader, DataLoader, l
 
 
 def evaluate(model: nn.Module, loader: DataLoader, criterion: nn.Module, device: torch.device) -> tuple[float, float]:
+    """Evaluate the curated character classifier."""
+
     model.eval()
     loss_total = 0.0
     correct = 0
@@ -266,6 +298,8 @@ def train_character_model(
     min_accuracy: float = 75.0,
     dataset_root: Path = DATASET_ROOT,
 ) -> list[CharacterEpochMetrics]:
+    """Train the curated character model and save weights/labels/exemplars."""
+
     if not dataset_root.exists():
         raise RuntimeError(f"Missing dataset at {dataset_root}")
 
@@ -349,6 +383,8 @@ def train_character_model(
 
 
 def load_character_model(weights_path: Path = WEIGHTS_PATH, device: torch.device | None = None) -> tuple[CharacterCNN, list[str]]:
+    """Load the curated character classifier and optional exemplar bank."""
+
     selected_device = device or get_device()
     checkpoint = torch.load(weights_path, map_location=selected_device, weights_only=True)
     labels = list(checkpoint["labels"])
@@ -367,6 +403,8 @@ def load_letter_model(
     weights_path: Path = EMNIST_WEIGHTS_PATH,
     device: torch.device | None = None,
 ) -> tuple[nn.Module, list[str]] | tuple[None, None]:
+    """Load the alphabet-only EMNIST model when available."""
+
     if not weights_path.exists():
         return None, None
     selected_device = device or get_device()
@@ -381,10 +419,14 @@ def load_letter_model(
 
 
 def tensor_from_character_region(region: DigitRegion, device: torch.device) -> torch.Tensor:
+    """Convert a segmented region for the curated character model."""
+
     return character_tensor_from_image(region.image).unsqueeze(0).to(device)
 
 
 def tensor_from_letter_region(region: DigitRegion, device: torch.device) -> torch.Tensor:
+    """Convert a segmented region for the alphabet-only EMNIST model."""
+
     normalized = normalize_character_image(region.image).resize((28, 28), Image.Resampling.LANCZOS)
     array = np.asarray(normalized, dtype=np.float32) / 255.0
     array = (array - EMNIST_MEAN) / EMNIST_STD
@@ -392,6 +434,8 @@ def tensor_from_letter_region(region: DigitRegion, device: torch.device) -> torc
 
 
 def tensor_from_alnum_region(region: DigitRegion, device: torch.device) -> torch.Tensor:
+    """Convert a segmented region for the combined alphanumeric model."""
+
     normalized = normalize_character_image(region.image).resize((28, 28), Image.Resampling.LANCZOS)
     array = np.asarray(normalized, dtype=np.float32) / 255.0
     array = (array - ALNUM_MEAN) / ALNUM_STD
@@ -399,6 +443,8 @@ def tensor_from_alnum_region(region: DigitRegion, device: torch.device) -> torch
 
 
 def _nearest_exemplar_label(model: nn.Module, tensor: torch.Tensor) -> tuple[int, float] | None:
+    """Find the closest curated exemplar for low-confidence predictions."""
+
     exemplars = getattr(model, "character_exemplars", None)
     targets = getattr(model, "character_exemplar_targets", None)
     if exemplars is None or targets is None:
@@ -410,6 +456,8 @@ def _nearest_exemplar_label(model: nn.Module, tensor: torch.Tensor) -> tuple[int
 
 
 def _looks_like_letter_region(region: DigitRegion, label: str, confidence: float) -> bool:
+    """Decide whether a region is worth sending to the alphabet model."""
+
     x0, y0, x1, y1 = region.box
     width = max(1, x1 - x0)
     height = max(1, y1 - y0)
@@ -427,6 +475,8 @@ def _letter_prediction(
     region: DigitRegion,
     device: torch.device,
 ) -> tuple[str, float]:
+    """Predict one region with the alphabet-only model."""
+
     tensor = tensor_from_letter_region(region, device)
     probabilities = torch.softmax(letter_model(tensor), dim=1).squeeze(0)
     confidence, label_index = torch.max(probabilities, dim=0)
@@ -439,6 +489,8 @@ def _alnum_prediction(
     region: DigitRegion,
     device: torch.device,
 ) -> tuple[str, float]:
+    """Predict one region with the combined digit+letter model."""
+
     tensor = tensor_from_alnum_region(region, device)
     probabilities = torch.softmax(alnum_model(tensor), dim=1).squeeze(0)
     confidence, label_index = torch.max(probabilities, dim=0)
@@ -446,6 +498,8 @@ def _alnum_prediction(
 
 
 def _load_digit_model_for_fallback(device: torch.device) -> nn.Module | None:
+    """Lazily load the digit CNN for ambiguous numeric-looking regions."""
+
     global _DIGIT_MODEL
     if _DIGIT_MODEL is not None:
         return _DIGIT_MODEL
@@ -456,6 +510,8 @@ def _load_digit_model_for_fallback(device: torch.device) -> nn.Module | None:
 
 
 def _digit_fallback_prediction(region: DigitRegion, device: torch.device) -> tuple[str, float] | None:
+    """Ask the MNIST digit model to rescue uncertain digit-like regions."""
+
     x0, y0, x1, y1 = region.box
     width = x1 - x0
     height = y1 - y0
@@ -469,6 +525,8 @@ def _digit_fallback_prediction(region: DigitRegion, device: torch.device) -> tup
 
 
 def _mask_span(mask: np.ndarray) -> float:
+    """Measure how much horizontal space a foreground mask occupies."""
+
     ys, xs = np.where(mask)
     if len(xs) == 0:
         return 0.0
@@ -476,6 +534,8 @@ def _mask_span(mask: np.ndarray) -> float:
 
 
 def _looks_like_seven(region: DigitRegion) -> bool:
+    """Recognize the tall handwritten 7 shape that models confuse with 1."""
+
     mask = _foreground_from_image(region.image) > 0.18
     height, width = mask.shape
     if height <= 0 or width <= 0:
@@ -487,6 +547,8 @@ def _looks_like_seven(region: DigitRegion) -> bool:
 
 
 def _looks_like_one(region: DigitRegion) -> bool:
+    """Recognize a plain vertical 1 that models confuse with L."""
+
     mask = _foreground_from_image(region.image) > 0.18
     height, width = mask.shape
     if height <= 0 or width <= 0:
@@ -498,6 +560,8 @@ def _looks_like_one(region: DigitRegion) -> bool:
 
 
 def _punctuation_shape_label(region: DigitRegion) -> str | None:
+    """Detect punctuation whose geometry is clearer than model logits."""
+
     array = np.asarray(region.image, dtype=np.float32) / 255.0
     mask = array > 0.18
     if mask.mean() > 0.5:
@@ -552,6 +616,8 @@ def _punctuation_shape_label(region: DigitRegion) -> str | None:
 
 
 def _is_i_stem(prediction: dict[str, float | int | str]) -> bool:
+    """Return true when a prediction could be the stem of lowercase i."""
+
     label = str(prediction["label"])
     width = int(prediction["width"])
     height = int(prediction["height"])
@@ -559,6 +625,8 @@ def _is_i_stem(prediction: dict[str, float | int | str]) -> bool:
 
 
 def _is_detached_i_dot(prediction: dict[str, float | int | str]) -> bool:
+    """Return true when a small prediction could be an i dot."""
+
     label = str(prediction["label"])
     width = int(prediction["width"])
     height = int(prediction["height"])
@@ -566,6 +634,8 @@ def _is_detached_i_dot(prediction: dict[str, float | int | str]) -> bool:
 
 
 def _is_detached_colon_dot(prediction: dict[str, float | int | str]) -> bool:
+    """Return true when a small prediction could be one colon dot."""
+
     label = str(prediction["label"])
     width = int(prediction["width"])
     height = int(prediction["height"])
@@ -576,6 +646,8 @@ def _is_dot_above_stem(
     dot: dict[str, float | int | str],
     stem: dict[str, float | int | str],
 ) -> bool:
+    """Check whether a dot sits above and aligned with an i-like stem."""
+
     dot_center_x = float(dot["x"]) + float(dot["width"]) / 2.0
     stem_center_x = float(stem["x"]) + float(stem["width"]) / 2.0
     stem_top = float(stem["y"])
@@ -593,6 +665,8 @@ def _merge_bounds(
     first: dict[str, float | int | str],
     second: dict[str, float | int | str],
 ) -> tuple[int, int, int, int]:
+    """Return the union bounding box for two predictions."""
+
     x0 = min(int(first["x"]), int(second["x"]))
     y0 = min(int(first["y"]), int(second["y"]))
     x1 = max(int(first["x"]) + int(first["width"]), int(second["x"]) + int(second["width"]))
@@ -601,6 +675,8 @@ def _merge_bounds(
 
 
 def _postprocess_colons(predictions: list[dict[str, float | int | str]]) -> list[dict[str, float | int | str]]:
+    """Merge two vertically stacked dot predictions into one colon."""
+
     merged_indexes: set[int] = set()
     replacements: dict[int, dict[str, float | int | str]] = {}
 
@@ -638,6 +714,8 @@ def _postprocess_colons(predictions: list[dict[str, float | int | str]]) -> list
 
 
 def _postprocess_lowercase_i(predictions: list[dict[str, float | int | str]]) -> list[dict[str, float | int | str]]:
+    """Merge a detached dot and skinny stem into lowercase i."""
+
     used_dot_indexes: set[int] = set()
     replacements: dict[int, dict[str, float | int | str]] = {}
 
@@ -692,6 +770,8 @@ def predict_characters(
     alnum_model: nn.Module | None = None,
     alnum_labels: list[str] | None = None,
 ) -> list[dict[str, float | int | str]]:
+    """Segment an image and predict letters, digits, and punctuation."""
+
     selected_device = device or next(model.parameters()).device
     regions = segment_digit_regions(image, split_wide=False, min_component_pixels=4, merge_marks=True)
     predictions: list[dict[str, float | int | str]] = []
@@ -711,6 +791,9 @@ def predict_characters(
                 exemplar_index, distance = exemplar_match
                 label = labels[exemplar_index]
                 confidence_value = max(0.35, min(0.9, 1.0 - distance / 32.0))
+
+            # Score letters before alphanumerics so a confident H is not stolen
+            # by digit-like model guesses such as 4.
             letter_match = None
             if (
                 punctuation_label is None
@@ -720,6 +803,9 @@ def predict_characters(
             ):
                 letter_match = _letter_prediction(letter_model, letter_labels, region, selected_device)
 
+            # The combined model is the primary trained 0-9/A-Z classifier, but
+            # it only overrides when it agrees with the current character type
+            # or when the old curated model was unsure.
             alnum_was_used = False
             if punctuation_label is None and alnum_model is not None and alnum_labels is not None:
                 alnum_match = _alnum_prediction(alnum_model, alnum_labels, region, selected_device)
@@ -747,6 +833,8 @@ def predict_characters(
                     confidence_value = max(confidence_value, alnum_confidence)
                     alnum_was_used = True
 
+            # The digit-only model is kept as a narrow rescue path for cases like
+            # messy 2/7 drawings, where MNIST is still stronger than EMNIST.
             digit_match = None
             digit_was_used = False
             if punctuation_label is None and (not str(label).isalpha() or confidence_value < 0.86):
@@ -790,6 +878,8 @@ def predict_characters(
 
 
 def main() -> None:
+    """CLI entrypoint for curated character-model training."""
+
     parser = argparse.ArgumentParser(description="Train the expanded handwriting character recognizer.")
     parser.add_argument("--epochs", type=int, default=12)
     parser.add_argument("--batch-size", type=int, default=128)

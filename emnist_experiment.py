@@ -1,3 +1,10 @@
+"""Standalone EMNIST experiment runner for alphabet-focused training.
+
+The combined recognizer imports these model architectures and EMNIST cache
+helpers. Keeping this script separate makes it easy to re-run alphabet-only
+baselines when letter accuracy needs to be tuned independently.
+"""
+
 from __future__ import annotations
 
 import argparse
@@ -25,6 +32,8 @@ EMNIST_STD = 0.3248
 
 @dataclass(frozen=True)
 class ExperimentMetrics:
+    """Metrics captured for one EMNIST training epoch."""
+
     epoch: int
     train_accuracy: float
     test_accuracy: float
@@ -34,6 +43,8 @@ class ExperimentMetrics:
 
 
 class EmnistMLP(nn.Module):
+    """Fast fully-connected baseline for quick EMNIST experiments."""
+
     def __init__(self, num_classes: int) -> None:
         super().__init__()
         self.network = nn.Sequential(
@@ -52,6 +63,8 @@ class EmnistMLP(nn.Module):
 
 
 class EmnistCNN(nn.Module):
+    """Compact convolutional model that reached the best alphabet accuracy."""
+
     def __init__(self, num_classes: int) -> None:
         super().__init__()
         self.network = nn.Sequential(
@@ -83,6 +96,8 @@ class EmnistCNN(nn.Module):
 
 
 class TinyEmnistCNN(nn.Module):
+    """Smaller CNN used when speed matters more than peak accuracy."""
+
     def __init__(self, num_classes: int) -> None:
         super().__init__()
         self.network = nn.Sequential(
@@ -106,6 +121,8 @@ class TinyEmnistCNN(nn.Module):
 
 
 class WideEmnistCNN(nn.Module):
+    """Wider CNN variant for experiments with more capacity."""
+
     def __init__(self, num_classes: int) -> None:
         super().__init__()
         self.network = nn.Sequential(
@@ -127,6 +144,8 @@ class WideEmnistCNN(nn.Module):
 
 
 def emnist_transform(augment: bool = False) -> transforms.Compose:
+    """Return the EMNIST transform, including the required orientation fix."""
+
     steps = [transforms.Lambda(lambda image: ImageOps.mirror(image.rotate(-90, expand=True)))]
     if augment:
         steps.append(
@@ -148,6 +167,8 @@ def emnist_transform(augment: bool = False) -> transforms.Compose:
 
 
 def make_loaders(batch_size: int, split: str, augment: bool) -> tuple[DataLoader, DataLoader, list[str]]:
+    """Create train/test loaders for a selected EMNIST split."""
+
     if not augment:
         train_images, train_targets, labels = build_or_load_emnist_cache(split, train=True)
         test_images, test_targets, _ = build_or_load_emnist_cache(split, train=False)
@@ -191,6 +212,8 @@ def make_loaders(batch_size: int, split: str, augment: bool) -> tuple[DataLoader
 
 
 def build_or_load_emnist_cache(split: str, train: bool) -> tuple[torch.Tensor, torch.Tensor, list[str]]:
+    """Load cached EMNIST tensors, or build them from torchvision once."""
+
     cache_path = DATA_ROOT / f"cache_{split}_{'train' if train else 'test'}.pt"
     if cache_path.exists():
         cache = torch.load(cache_path, weights_only=True, map_location="cpu")
@@ -220,6 +243,8 @@ def build_or_load_emnist_cache(split: str, train: bool) -> tuple[torch.Tensor, t
 
 
 def evaluate(model: nn.Module, loader: DataLoader, criterion: nn.Module, device: torch.device) -> tuple[float, float]:
+    """Evaluate an EMNIST model and return loss plus accuracy percentage."""
+
     model.eval()
     loss_total = 0.0
     correct = 0
@@ -247,6 +272,8 @@ def save_experiment(
     seed: int,
     device_name: str,
 ) -> None:
+    """Save the best EMNIST checkpoint and JSON metrics history."""
+
     if best_state is not None:
         torch.save(
             {
@@ -284,6 +311,8 @@ def train(
     seed: int,
     device_name: str,
 ) -> list[ExperimentMetrics]:
+    """Run one EMNIST training experiment with the requested architecture."""
+
     if device_name == "cpu":
         device = torch.device("cpu")
     elif device_name == "mps":
@@ -363,6 +392,8 @@ def train(
 
 
 def main() -> None:
+    """CLI entrypoint for alphabet/digit EMNIST experiments."""
+
     parser = argparse.ArgumentParser(description="Run an EMNIST balanced alphabet/digit baseline.")
     parser.add_argument("--epochs", type=int, default=8)
     parser.add_argument("--batch-size", type=int, default=2048)

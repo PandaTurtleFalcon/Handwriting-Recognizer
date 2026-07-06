@@ -1,3 +1,10 @@
+"""Train, load, segment, and predict handwritten MNIST-style digits.
+
+This file owns the digit-only CNN and the image preprocessing pipeline shared
+by the website and the character recognizer. The segmentation helpers turn an
+uploaded page into ordered bounding boxes before any neural model is called.
+"""
+
 from __future__ import annotations
 
 import argparse
@@ -29,6 +36,8 @@ MNIST_STD = 0.3081
 
 @dataclass(frozen=True)
 class EpochMetrics:
+    """Metrics captured at the end of one MNIST training epoch."""
+
     epoch: int
     train_loss: float
     train_accuracy: float
@@ -40,12 +49,16 @@ class EpochMetrics:
 
 @dataclass(frozen=True)
 class DigitRegion:
+    """A cropped handwriting region plus its original page location."""
+
     image: Image.Image
     box: tuple[int, int, int, int]
     row: int
 
 
 class DigitCNN(nn.Module):
+    """Convolutional network trained on MNIST digits."""
+
     def __init__(self) -> None:
         super().__init__()
         self.features = nn.Sequential(
@@ -79,6 +92,8 @@ class DigitCNN(nn.Module):
 
 
 def get_device() -> torch.device:
+    """Choose the fastest locally available PyTorch device."""
+
     if getattr(torch.backends, "mps", None) is not None and torch.backends.mps.is_available():
         return torch.device("mps")
     if torch.cuda.is_available():
@@ -87,6 +102,8 @@ def get_device() -> torch.device:
 
 
 def find_data_root() -> Path:
+    """Find an existing MNIST data folder before falling back to project data."""
+
     for root in DEFAULT_DATA_ROOTS:
         if (root / "MNIST" / "raw").exists():
             return root
@@ -94,6 +111,8 @@ def find_data_root() -> Path:
 
 
 def build_loaders(data_root: Path, batch_size: int) -> tuple[DataLoader, DataLoader]:
+    """Create augmented training and plain test loaders for MNIST."""
+
     train_transform = transforms.Compose(
         [
             transforms.RandomAffine(
@@ -130,6 +149,8 @@ def build_loaders(data_root: Path, batch_size: int) -> tuple[DataLoader, DataLoa
 
 
 def evaluate(model: nn.Module, loader: DataLoader, criterion: nn.Module, device: torch.device) -> tuple[float, float]:
+    """Evaluate the digit model and return average loss plus accuracy."""
+
     model.eval()
     loss_total = 0.0
     correct = 0
@@ -154,6 +175,8 @@ def train_model(
     weights_path: Path = WEIGHTS_PATH,
     metrics_path: Path = METRICS_PATH,
 ) -> list[EpochMetrics]:
+    """Train the MNIST CNN and save the best checkpoint above the target."""
+
     torch.manual_seed(42)
     np.random.seed(42)
 
@@ -234,6 +257,8 @@ def train_model(
 
 
 def load_model(weights_path: Path = WEIGHTS_PATH, device: torch.device | None = None) -> DigitCNN:
+    """Load the trained digit CNN from disk."""
+
     selected_device = device or get_device()
     checkpoint = torch.load(weights_path, map_location=selected_device, weights_only=True)
     model = DigitCNN().to(selected_device)
@@ -243,6 +268,8 @@ def load_model(weights_path: Path = WEIGHTS_PATH, device: torch.device | None = 
 
 
 def _foreground_from_image(image: Image.Image) -> np.ndarray:
+    """Convert an image into a foreground-ink mask, handling light/dark ink."""
+
     grayscale = ImageOps.grayscale(image)
     array = np.asarray(grayscale, dtype=np.float32) / 255.0
     border = np.concatenate((array[0, :], array[-1, :], array[:, 0], array[:, -1]))
@@ -253,6 +280,8 @@ def _foreground_from_image(image: Image.Image) -> np.ndarray:
 
 
 def _group_boxes_by_reading_order(boxes: list[tuple[int, int, int, int]]) -> list[list[tuple[int, int, int, int]]]:
+    """Group boxes into rows so multi-line uploads read top-to-bottom."""
+
     if not boxes:
         return []
     if len(boxes) == 1:
@@ -277,10 +306,14 @@ def _group_boxes_by_reading_order(boxes: list[tuple[int, int, int, int]]) -> lis
 
 
 def _sort_boxes_reading_order(boxes: list[tuple[int, int, int, int]]) -> list[tuple[int, int, int, int]]:
+    """Sort bounding boxes in human reading order."""
+
     return [box for row in _group_boxes_by_reading_order(boxes) for box in row]
 
 
 def _best_vertical_cut(mask: np.ndarray, left: int, right: int) -> int:
+    """Find the lowest-ink vertical seam for splitting connected digits."""
+
     left = max(0, left)
     right = min(mask.shape[1] - 1, right)
     if right <= left + 2:
@@ -297,6 +330,8 @@ def _best_vertical_cut(mask: np.ndarray, left: int, right: int) -> int:
 
 
 def _trim_overlapping_boxes(mask: np.ndarray, boxes: list[tuple[int, int, int, int]]) -> list[tuple[int, int, int, int]]:
+    """Reduce overlap after splitting so boxes map cleanly to characters."""
+
     if len(boxes) <= 1:
         return boxes
 
@@ -326,6 +361,8 @@ def _trim_overlapping_boxes(mask: np.ndarray, boxes: list[tuple[int, int, int, i
 
 
 def _split_wide_box(mask: np.ndarray, box: tuple[int, int, int, int]) -> list[tuple[int, int, int, int]]:
+    """Split boxes that are much wider than a normal single digit."""
+
     x0, y0, x1, y1 = box
     width = x1 - x0
     height = y1 - y0
@@ -362,6 +399,8 @@ def _split_wide_box(mask: np.ndarray, box: tuple[int, int, int, int]) -> list[tu
 
 
 def _refine_digit_boxes(mask: np.ndarray, boxes: list[tuple[int, int, int, int]]) -> list[tuple[int, int, int, int]]:
+    """Apply digit-specific box cleanup after connected-component detection."""
+
     split_boxes: list[tuple[int, int, int, int]] = []
     for box in boxes:
         split_boxes.extend(_split_wide_box(mask, box))
@@ -369,11 +408,15 @@ def _refine_digit_boxes(mask: np.ndarray, boxes: list[tuple[int, int, int, int]]
 
 
 def _box_ink_area(mask: np.ndarray, box: tuple[int, int, int, int]) -> int:
+    """Count foreground pixels inside a bounding box."""
+
     x0, y0, x1, y1 = box
     return int(mask[y0:y1, x0:x1].sum())
 
 
 def _gap_between_boxes(first: tuple[int, int, int, int], second: tuple[int, int, int, int]) -> float:
+    """Return the horizontal gap between two boxes."""
+
     first_x0, first_y0, first_x1, first_y1 = first
     second_x0, second_y0, second_x1, second_y1 = second
     horizontal_gap = max(first_x0 - second_x1, second_x0 - first_x1, 0)
@@ -382,6 +425,8 @@ def _gap_between_boxes(first: tuple[int, int, int, int], second: tuple[int, int,
 
 
 def _merge_small_mark_boxes(mask: np.ndarray, boxes: list[tuple[int, int, int, int]]) -> list[tuple[int, int, int, int]]:
+    """Attach dots and punctuation marks to the closest parent character."""
+
     if len(boxes) <= 1:
         return boxes
 
@@ -444,6 +489,8 @@ def segment_digit_regions(
     min_component_pixels: int = 12,
     merge_marks: bool = False,
 ) -> list[DigitRegion]:
+    """Segment an uploaded image into ordered handwriting regions."""
+
     foreground = _foreground_from_image(image)
     mask = foreground > 0.18
     if int(mask.sum()) < 20:
@@ -497,10 +544,14 @@ def segment_digit_regions(
 
 
 def segment_digits(image: Image.Image) -> list[Image.Image]:
+    """Return just the cropped digit images for legacy digit-only callers."""
+
     return [region.image for region in segment_digit_regions(image)]
 
 
 def mnist_normalize_image(image: Image.Image) -> Image.Image:
+    """Normalize one cropped digit to the centered 28x28 MNIST format."""
+
     array = _foreground_from_image(image)
     ys, xs = np.where(array > 0.18)
     if len(xs) > 0:
@@ -531,6 +582,8 @@ def mnist_normalize_image(image: Image.Image) -> Image.Image:
 
 
 def tensor_from_digit(image: Image.Image, device: torch.device, thicken: bool = False) -> torch.Tensor:
+    """Convert a cropped digit image into a normalized model tensor."""
+
     normalized = mnist_normalize_image(image)
     array = np.asarray(normalized, dtype=np.float32) / 255.0
     if thicken:
@@ -540,12 +593,16 @@ def tensor_from_digit(image: Image.Image, device: torch.device, thicken: bool = 
 
 
 def _predict_digit_tensor(model: nn.Module, tensor: torch.Tensor) -> tuple[int, float]:
+    """Predict one normalized digit tensor."""
+
     probabilities = torch.softmax(model(tensor), dim=1).squeeze(0)
     confidence, label = torch.max(probabilities, dim=0)
     return int(label.item()), float(confidence.item())
 
 
 def _low_confidence_digit_variants(image: Image.Image) -> list[Image.Image]:
+    """Generate simple crop variants for uncertain digit predictions."""
+
     variants = [image]
     width, height = image.size
     if height > 0 and width / height >= 0.85:
@@ -556,6 +613,8 @@ def _low_confidence_digit_variants(image: Image.Image) -> list[Image.Image]:
 
 
 def _predict_digit_image(model: nn.Module, image: Image.Image, device: torch.device) -> tuple[int, float]:
+    """Predict one cropped digit image, retrying variants when confidence is low."""
+
     label, confidence = _predict_digit_tensor(model, tensor_from_digit(image, device))
     if confidence >= 0.85:
         return label, confidence
@@ -575,6 +634,8 @@ def _predict_digit_image(model: nn.Module, image: Image.Image, device: torch.dev
 
 
 def predict_digits(model: nn.Module, image: Image.Image, device: torch.device | None = None) -> list[dict[str, float | int]]:
+    """Segment and predict every digit in an uploaded image."""
+
     selected_device = device or next(model.parameters()).device
     digit_regions = segment_digit_regions(image)
     predictions: list[dict[str, float | int]] = []
@@ -597,6 +658,8 @@ def predict_digits(model: nn.Module, image: Image.Image, device: torch.device | 
 
 
 def main() -> None:
+    """CLI entrypoint for MNIST digit training."""
+
     parser = argparse.ArgumentParser(description="Train and evaluate the MNIST digit CNN.")
     parser.add_argument("--epochs", type=int, default=6)
     parser.add_argument("--batch-size", type=int, default=128)

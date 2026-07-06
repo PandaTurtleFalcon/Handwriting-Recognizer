@@ -6,7 +6,11 @@ from PIL import Image, ImageDraw
 
 
 class CharacterPostprocessingTests(unittest.TestCase):
+    """Regression tests for model-independent character cleanup rules."""
+
     def test_split_dot_above_stem_becomes_lowercase_i(self) -> None:
+        """A detached dot above a skinny stem should read as lowercase i."""
+
         predictions = [
             {"label": "H", "confidence": 0.97, "x": 40, "y": 55, "width": 90, "height": 120, "row": 1},
             {"label": ":", "confidence": 0.91, "x": 184, "y": 40, "width": 12, "height": 12, "row": 1},
@@ -20,6 +24,8 @@ class CharacterPostprocessingTests(unittest.TestCase):
         self.assertGreaterEqual(float(cleaned[1]["confidence"]), 0.9)
 
     def test_split_colon_dots_are_merged(self) -> None:
+        """Two vertically aligned small dots should become one colon."""
+
         predictions = [
             {"label": "Q", "confidence": 0.80, "x": 50, "y": 30, "width": 14, "height": 14, "row": 1},
             {"label": "Q", "confidence": 0.80, "x": 51, "y": 76, "width": 14, "height": 14, "row": 2},
@@ -31,6 +37,8 @@ class CharacterPostprocessingTests(unittest.TestCase):
         self.assertEqual(len(cleaned), 1)
 
     def test_dot_below_stem_stays_exclamation_mark(self) -> None:
+        """A dot below a vertical stem should stay an exclamation mark."""
+
         image = Image.new("L", (70, 120), 255)
         draw = ImageDraw.Draw(image)
         draw.line((34, 14, 34, 78), fill=0, width=6)
@@ -40,6 +48,8 @@ class CharacterPostprocessingTests(unittest.TestCase):
         self.assertEqual(_punctuation_shape_label(region), "!")
 
     def test_dot_above_stem_is_lowercase_i_shape(self) -> None:
+        """A merged dot-above-stem shape should be classified as i."""
+
         image = Image.new("L", (70, 120), 255)
         draw = ImageDraw.Draw(image)
         draw.ellipse((28, 12, 40, 24), fill=0)
@@ -49,6 +59,8 @@ class CharacterPostprocessingTests(unittest.TestCase):
         self.assertEqual(_punctuation_shape_label(region), "i")
 
     def test_shape_rule_identifies_plain_one(self) -> None:
+        """A plain vertical stroke should remain digit 1, not letter L."""
+
         image = Image.new("L", (80, 180), 255)
         draw = ImageDraw.Draw(image)
         draw.line((38, 12, 38, 166), fill=0, width=6)
@@ -58,6 +70,8 @@ class CharacterPostprocessingTests(unittest.TestCase):
         self.assertFalse(_looks_like_seven(region))
 
     def test_shape_rule_identifies_wide_top_seven(self) -> None:
+        """A tall stroke with a wide top bar should be digit 7."""
+
         image = Image.new("L", (90, 220), 255)
         draw = ImageDraw.Draw(image)
         draw.line((18, 18, 72, 18), fill=0, width=7)

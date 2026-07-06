@@ -1,3 +1,10 @@
+"""Small stdlib web app for uploading and recognizing handwriting images.
+
+The server intentionally avoids a web framework so the project is easy to run:
+`python3 main.py` starts an upload form, predicts every uploaded image, and
+renders the original image with numbered bounding boxes that match the cards.
+"""
+
 from __future__ import annotations
 
 import base64
@@ -266,6 +273,8 @@ code {
 
 
 class MnistWebHandler(BaseHTTPRequestHandler):
+    """HTTP handler that owns loaded model state and request routing."""
+
     model = None
     device = None
     labels = None
@@ -276,9 +285,13 @@ class MnistWebHandler(BaseHTTPRequestHandler):
     recognizer_kind = "digits"
 
     def log_message(self, format: str, *args: object) -> None:
+        """Keep default server logging but route it through stdout."""
+
         print(f"{self.address_string()} - {format % args}")
 
     def do_GET(self) -> None:
+        """Serve the upload page, health check, or a 404."""
+
         parsed = urlparse(self.path)
         if parsed.path == "/":
             self._send_html(render_page())
@@ -289,6 +302,8 @@ class MnistWebHandler(BaseHTTPRequestHandler):
         self.send_error(HTTPStatus.NOT_FOUND)
 
     def do_POST(self) -> None:
+        """Accept multipart uploads and render prediction results."""
+
         parsed = urlparse(self.path)
         if parsed.path != "/predict":
             self.send_error(HTTPStatus.NOT_FOUND)
@@ -320,6 +335,8 @@ class MnistWebHandler(BaseHTTPRequestHandler):
             )
 
     def _send_html(self, body: str, status: HTTPStatus = HTTPStatus.OK) -> None:
+        """Send a UTF-8 HTML response."""
+
         encoded = body.encode("utf-8")
         self.send_response(status)
         self.send_header("Content-Type", "text/html; charset=utf-8")
@@ -328,6 +345,8 @@ class MnistWebHandler(BaseHTTPRequestHandler):
         self.wfile.write(encoded)
 
     def _send_json(self, payload: dict[str, object]) -> None:
+        """Send a compact JSON response."""
+
         encoded = json.dumps(payload).encode("utf-8")
         self.send_response(HTTPStatus.OK)
         self.send_header("Content-Type", "application/json")
@@ -337,6 +356,8 @@ class MnistWebHandler(BaseHTTPRequestHandler):
 
 
 def parse_multipart_files(content_type: str, body: bytes) -> list[tuple[str, bytes]]:
+    """Extract uploaded image files from a multipart/form-data request."""
+
     if not content_type.lower().startswith("multipart/form-data"):
         raise ValueError("Use the upload form to send image files.")
     message_bytes = (
@@ -363,6 +384,8 @@ def parse_multipart_files(content_type: str, body: bytes) -> list[tuple[str, byt
 
 
 def classify_files(files: list[tuple[str, bytes]], model, device) -> list[dict[str, object]]:
+    """Decode images, run the active recognizer, and package render data."""
+
     results: list[dict[str, object]] = []
     for filename, payload in files:
         try:
@@ -418,6 +441,8 @@ def classify_files(files: list[tuple[str, bytes]], model, device) -> list[dict[s
 
 
 def build_row_sequences(predictions: list[dict[str, object]]) -> list[str]:
+    """Build one predicted text string per detected row."""
+
     rows: dict[int, list[dict[str, object]]] = {}
     for prediction in predictions:
         row = int(prediction.get("row", 1))
@@ -429,10 +454,14 @@ def build_row_sequences(predictions: list[dict[str, object]]) -> list[str]:
 
 
 def prediction_value(prediction: dict[str, object]) -> str:
+    """Read either a character label or legacy digit value from a prediction."""
+
     return str(prediction.get("label", prediction.get("digit", "")))
 
 
 def image_to_data_url(image: Image.Image) -> str:
+    """Convert a preview image into an inline browser-safe data URL."""
+
     display_image = image.copy()
     display_image.thumbnail((1200, 900), Image.Resampling.LANCZOS)
     buffer = io.BytesIO()
@@ -442,6 +471,8 @@ def image_to_data_url(image: Image.Image) -> str:
 
 
 def render_page(results: list[dict[str, object]] | None = None, error: str | None = None) -> str:
+    """Render the complete upload/results page."""
+
     metrics = read_metrics()
     metrics_text = "Model not trained yet"
     if metrics:
@@ -528,6 +559,8 @@ def render_page(results: list[dict[str, object]] | None = None, error: str | Non
 
 
 def render_result(result: dict[str, object]) -> str:
+    """Render one uploaded file's prediction panel."""
+
     filename = html.escape(str(result["filename"]))
     if "error" in result:
         overlay_html = render_overlays(result, [])
@@ -559,6 +592,8 @@ def render_result(result: dict[str, object]) -> str:
 
 
 def render_row_sequences(row_sequences: object) -> str:
+    """Render per-row outputs when the upload contains multiple lines."""
+
     if not isinstance(row_sequences, list) or len(row_sequences) <= 1:
         return ""
     rows = "".join(
@@ -569,6 +604,8 @@ def render_row_sequences(row_sequences: object) -> str:
 
 
 def render_overlays(result: dict[str, object], predictions: object) -> str:
+    """Render absolute-positioned prediction boxes over the preview image."""
+
     preview = html.escape(str(result.get("preview", "")), quote=True)
     if not preview:
         return ""
@@ -603,6 +640,8 @@ def render_overlays(result: dict[str, object], predictions: object) -> str:
 
 
 def read_metrics(path=METRICS_PATH):
+    """Read a metrics JSON file, returning an empty list on bad/missing data."""
+
     if not path.exists():
         return []
     try:
@@ -612,6 +651,8 @@ def read_metrics(path=METRICS_PATH):
 
 
 def run(host: str = HOST, port: int = PORT) -> None:
+    """Load the best available recognizer and start the local HTTP server."""
+
     if CHARACTER_WEIGHTS_PATH.exists():
         MnistWebHandler.device = get_device()
         MnistWebHandler.model, MnistWebHandler.labels = load_character_model(device=MnistWebHandler.device)

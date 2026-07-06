@@ -1,3 +1,11 @@
+"""Train and load the combined digit + alphabet recognizer.
+
+This module joins MNIST digits with EMNIST letters into one 36-class dataset
+(`0-9` and `A-Z`). The website still keeps older specialist models around for
+hard edge cases, but this checkpoint is the main high-accuracy alphanumeric
+model shown in the UI badge.
+"""
+
 from __future__ import annotations
 
 import argparse
@@ -33,6 +41,8 @@ MODEL_CLASSES = {
 
 @dataclass(frozen=True)
 class AlnumEpochMetrics:
+    """Metrics captured at the end of each combined training epoch."""
+
     epoch: int
     train_loss: float
     train_accuracy: float
@@ -45,6 +55,8 @@ class AlnumEpochMetrics:
 
 
 def mnist_transform(augment: bool = False) -> transforms.Compose:
+    """Return the MNIST transform using the same normalization as EMNIST."""
+
     steps: list[object] = []
     if augment:
         steps.append(
@@ -66,6 +78,8 @@ def mnist_transform(augment: bool = False) -> transforms.Compose:
 
 
 def build_or_load_mnist_cache(train: bool) -> tuple[torch.Tensor, torch.Tensor]:
+    """Load cached MNIST tensors, or download and cache them on first use."""
+
     cache_path = MNIST_DATA_ROOT / f"cache_mnist_{'train' if train else 'test'}.pt"
     if cache_path.exists():
         cache = torch.load(cache_path, map_location="cpu", weights_only=True)
@@ -95,6 +109,8 @@ def _limit_per_class(
     samples_per_class: int | None,
     seed: int,
 ) -> tuple[torch.Tensor, torch.Tensor]:
+    """Return a deterministic class-balanced subset for faster experiments."""
+
     if samples_per_class is None:
         return images, targets
     generator = torch.Generator().manual_seed(seed)
@@ -116,6 +132,8 @@ def make_cached_loaders(
     samples_per_class: int | None,
     seed: int,
 ) -> tuple[DataLoader, DataLoader, DataLoader, DataLoader]:
+    """Build loaders from cached tensors for repeatable high-speed training."""
+
     mnist_train_images, mnist_train_targets = build_or_load_mnist_cache(train=True)
     mnist_test_images, mnist_test_targets = build_or_load_mnist_cache(train=False)
     letter_train_images, letter_train_targets, _ = build_or_load_emnist_cache("letters", train=True)
@@ -161,6 +179,8 @@ def make_cached_loaders(
 
 
 def make_augmented_loaders(batch_size: int) -> tuple[DataLoader, DataLoader, DataLoader, DataLoader]:
+    """Build loaders with live MNIST augmentation and cached EMNIST letters."""
+
     mnist_train = datasets.MNIST(
         root=str(MNIST_DATA_ROOT),
         train=True,
@@ -200,6 +220,8 @@ def make_augmented_loaders(batch_size: int) -> tuple[DataLoader, DataLoader, Dat
 
 
 def evaluate(model: nn.Module, loader: DataLoader, criterion: nn.Module, device: torch.device) -> tuple[float, float]:
+    """Evaluate a model and return average loss plus accuracy percentage."""
+
     model.eval()
     loss_total = 0.0
     correct = 0
@@ -225,6 +247,8 @@ def save_checkpoint(
     seed: int,
     device: torch.device,
 ) -> None:
+    """Persist the best model weights and the full metrics history."""
+
     if best_state is not None:
         torch.save(
             {
@@ -261,6 +285,8 @@ def load_alnum_model(
     weights_path: Path = WEIGHTS_PATH,
     device: torch.device | None = None,
 ) -> tuple[nn.Module, list[str]] | tuple[None, None]:
+    """Load the trained combined recognizer if its checkpoint exists."""
+
     if not weights_path.exists():
         return None, None
     selected_device = device or get_device()
@@ -285,6 +311,8 @@ def train(
     samples_per_class: int | None,
     device_name: str,
 ) -> list[AlnumEpochMetrics]:
+    """Train a 36-class recognizer until it clears the requested accuracy."""
+
     torch.manual_seed(seed)
     np.random.seed(seed)
     if device_name == "cpu":
@@ -360,6 +388,8 @@ def train(
 
 
 def main() -> None:
+    """CLI entrypoint for training the combined recognizer."""
+
     parser = argparse.ArgumentParser(description="Train a combined MNIST + EMNIST alphanumeric recognizer.")
     parser.add_argument("--epochs", type=int, default=30)
     parser.add_argument("--batch-size", type=int, default=2048)

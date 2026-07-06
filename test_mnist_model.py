@@ -9,7 +9,11 @@ from mnist_model import WEIGHTS_PATH, load_model, mnist_normalize_image, predict
 
 
 class MnistPreprocessingTests(unittest.TestCase):
+    """Regression tests for digit preprocessing, segmentation, and prediction."""
+
     def test_normalized_digit_is_28_by_28_and_nonblank(self) -> None:
+        """Normalization should produce a centered nonblank MNIST tensor image."""
+
         image = Image.new("L", (80, 80), 255)
         draw = ImageDraw.Draw(image)
         draw.line((38, 12, 38, 66), fill=0, width=9)
@@ -22,6 +26,8 @@ class MnistPreprocessingTests(unittest.TestCase):
         self.assertLessEqual(pixels.max(), 255)
 
     def test_segment_digits_splits_separated_components_left_to_right(self) -> None:
+        """Separated marks should become separate crops in left-to-right order."""
+
         image = Image.new("L", (160, 72), 255)
         draw = ImageDraw.Draw(image)
         draw.ellipse((12, 12, 54, 58), outline=0, width=8)
@@ -34,6 +40,8 @@ class MnistPreprocessingTests(unittest.TestCase):
         self.assertGreater(digits[1].size[0] * digits[1].size[1], 0)
 
     def test_segment_regions_keep_boxes_and_read_rows_top_to_bottom(self) -> None:
+        """Detected boxes should preserve coordinates and row order."""
+
         image = Image.new("L", (180, 120), 255)
         draw = ImageDraw.Draw(image)
         draw.rectangle((112, 12, 132, 42), fill=0)
@@ -51,6 +59,8 @@ class MnistPreprocessingTests(unittest.TestCase):
         self.assertEqual([region.row for region in regions], [1, 1, 2, 2])
 
     def test_blank_image_returns_no_regions(self) -> None:
+        """Blank uploads should not produce false handwriting regions."""
+
         image = Image.new("L", (80, 80), 255)
 
         regions = segment_digit_regions(image)
@@ -58,6 +68,8 @@ class MnistPreprocessingTests(unittest.TestCase):
         self.assertEqual(regions, [])
 
     def test_segment_regions_supports_light_ink_on_dark_background(self) -> None:
+        """Foreground detection should work for light ink on dark paper."""
+
         image = Image.new("L", (80, 80), 0)
         draw = ImageDraw.Draw(image)
         draw.line((40, 12, 40, 64), fill=255, width=7)
@@ -69,6 +81,8 @@ class MnistPreprocessingTests(unittest.TestCase):
         self.assertGreater(np.asarray(regions[0].image).sum(), 0)
 
     def test_character_segmentation_keeps_wide_shape_together(self) -> None:
+        """Wide single characters should not always be split like digits."""
+
         image = Image.new("L", (96, 72), 255)
         draw = ImageDraw.Draw(image)
         draw.arc((18, 8, 70, 42), start=195, end=25, fill=0, width=6)
@@ -80,6 +94,8 @@ class MnistPreprocessingTests(unittest.TestCase):
         self.assertEqual(len(regions), 1)
 
     def test_character_segmentation_merges_punctuation_dot(self) -> None:
+        """Question-mark dots should merge with their parent mark."""
+
         image = Image.new("L", (80, 96), 255)
         draw = ImageDraw.Draw(image)
         draw.arc((20, 10, 60, 48), start=205, end=40, fill=0, width=5)
@@ -92,6 +108,8 @@ class MnistPreprocessingTests(unittest.TestCase):
         self.assertGreater(regions[0].box[3], 80)
 
     def test_character_segmentation_merges_exclamation_dot(self) -> None:
+        """Exclamation dots should merge with their vertical stroke."""
+
         image = Image.new("L", (100, 140), 255)
         draw = ImageDraw.Draw(image)
         draw.line((48, 16, 48, 86), fill=0, width=6)
@@ -103,6 +121,8 @@ class MnistPreprocessingTests(unittest.TestCase):
         self.assertGreater(regions[0].box[3] - regions[0].box[1], 90)
 
     def test_messy_connected_27_segments_and_predicts(self) -> None:
+        """The original connected 27 regression should still read correctly."""
+
         if not Path(WEIGHTS_PATH).exists():
             self.skipTest("trained weights are not available")
 
@@ -124,6 +144,8 @@ class MnistPreprocessingTests(unittest.TestCase):
         self.assertEqual("".join(str(item["digit"]) for item in predictions), "27")
 
     def test_broken_top_stroke_15_does_not_fragment(self) -> None:
+        """The original 15 regression should remain two characters."""
+
         if not Path(WEIGHTS_PATH).exists():
             self.skipTest("trained weights are not available")
 
