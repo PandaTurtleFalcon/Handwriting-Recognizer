@@ -20,6 +20,14 @@ The expanded model saves `character_cnn.pt`, `character_exemplars.pt`, `characte
 
 Dataset note: EMNIST is a strong official baseline for handwritten letters and digits, but it does not include punctuation. The expanded recognizer uses the UNIPEN-derived 93-class character dataset from `sueiras/handwritting_characters_database`, which includes digits, uppercase/lowercase English letters, and common punctuation.
 
+For a stronger alphabet benchmark, the EMNIST experiment runner trains an alphabet-only CNN:
+
+```bash
+python3 emnist_experiment.py --split letters --model cnn --epochs 30 --batch-size 2048 --device mps
+```
+
+The checked-in `emnist_experiment.pt` checkpoint reached **95.125% test accuracy** on the EMNIST letters test split.
+
 ## Run
 
 ```bash
