@@ -10,11 +10,14 @@ from pathlib import Path
 import numpy as np
 import torch
 from PIL import Image
+from scipy import ndimage
 from sklearn.model_selection import train_test_split
 from torch import nn
 from torch.utils.data import DataLoader, Dataset, Subset, TensorDataset, WeightedRandomSampler
 from torchvision import transforms
 
+from emnist_experiment import EMNIST_MEAN, EMNIST_STD, WEIGHTS_PATH as EMNIST_WEIGHTS_PATH
+from emnist_experiment import EmnistCNN, TinyEmnistCNN, WideEmnistCNN
 from mnist_model import DigitRegion, get_device, segment_digit_regions
 
 
@@ -29,6 +32,11 @@ IMAGE_SIZE = 32
 CACHE_PATH = PROJECT_DIR / "data" / "unipen_chars" / f"character_cache_segmented_{IMAGE_SIZE}.pt"
 CHAR_MEAN = 0.173
 CHAR_STD = 0.331
+LETTER_MODEL_TYPES = {
+    "cnn": EmnistCNN,
+    "tinycnn": TinyEmnistCNN,
+    "widecnn": WideEmnistCNN,
+}
 
 
 @dataclass(frozen=True)
@@ -349,8 +357,32 @@ def load_character_model(weights_path: Path = WEIGHTS_PATH, device: torch.device
     return model, labels
 
 
+def load_letter_model(
+    weights_path: Path = EMNIST_WEIGHTS_PATH,
+    device: torch.device | None = None,
+) -> tuple[nn.Module, list[str]] | tuple[None, None]:
+    if not weights_path.exists():
+        return None, None
+    selected_device = device or get_device()
+    checkpoint = torch.load(weights_path, map_location=selected_device, weights_only=True)
+    labels = [str(label).upper() for label in checkpoint["labels"]]
+    model_type = str(checkpoint.get("model_type", "cnn"))
+    model_class = LETTER_MODEL_TYPES.get(model_type, EmnistCNN)
+    model = model_class(num_classes=len(labels)).to(selected_device)
+    model.load_state_dict(checkpoint["model_state_dict"])
+    model.eval()
+    return model, labels
+
+
 def tensor_from_character_region(region: DigitRegion, device: torch.device) -> torch.Tensor:
     return character_tensor_from_image(region.image).unsqueeze(0).to(device)
+
+
+def tensor_from_letter_region(region: DigitRegion, device: torch.device) -> torch.Tensor:
+    normalized = normalize_character_image(region.image).resize((28, 28), Image.Resampling.LANCZOS)
+    array = np.asarray(normalized, dtype=np.float32) / 255.0
+    array = (array - EMNIST_MEAN) / EMNIST_STD
+    return torch.from_numpy(array).unsqueeze(0).unsqueeze(0).to(device)
 
 
 def _nearest_exemplar_label(model: nn.Module, tensor: torch.Tensor) -> tuple[int, float] | None:
@@ -364,11 +396,87 @@ def _nearest_exemplar_label(model: nn.Module, tensor: torch.Tensor) -> tuple[int
     return int(targets[int(exemplar_index)].item()), float(distance.item())
 
 
+def _looks_like_letter_region(region: DigitRegion, label: str, confidence: float) -> bool:
+    x0, y0, x1, y1 = region.box
+    width = max(1, x1 - x0)
+    height = max(1, y1 - y0)
+    aspect_ratio = width / height
+    if label.isalpha():
+        return True
+    if label in {"-", "_", "|", "1", "I", "l"} and aspect_ratio >= 0.28:
+        return True
+    return confidence < 0.82 and aspect_ratio >= 0.32 and width * height >= 650
+
+
+def _letter_prediction(
+    letter_model: nn.Module,
+    letter_labels: list[str],
+    region: DigitRegion,
+    device: torch.device,
+) -> tuple[str, float]:
+    tensor = tensor_from_letter_region(region, device)
+    probabilities = torch.softmax(letter_model(tensor), dim=1).squeeze(0)
+    confidence, label_index = torch.max(probabilities, dim=0)
+    return letter_labels[int(label_index.item())], float(confidence.item())
+
+
+def _punctuation_shape_label(region: DigitRegion) -> str | None:
+    array = np.asarray(region.image, dtype=np.float32) / 255.0
+    mask = array > 0.18
+    labeled, count = ndimage.label(mask)
+    components: list[tuple[int, int, int, int, int]] = []
+    for index in range(1, count + 1):
+        ys, xs = np.where(labeled == index)
+        if len(xs) < 6:
+            continue
+        components.append((len(xs), int(xs.min()), int(ys.min()), int(xs.max()) + 1, int(ys.max()) + 1))
+    if len(components) < 2:
+        return None
+
+    components = sorted(components, reverse=True)
+    main_area, main_x0, main_y0, main_x1, main_y1 = components[0]
+    main_width = main_x1 - main_x0
+    main_height = main_y1 - main_y0
+    main_center_x = (main_x0 + main_x1) / 2.0
+    small_components = components[1:]
+
+    if main_height >= 28 and main_height / max(main_width, 1) >= 3.0:
+        for _, x0, y0, x1, y1 in small_components:
+            width = x1 - x0
+            height = y1 - y0
+            center_x = (x0 + x1) / 2.0
+            if width <= 24 and height <= 24 and abs(center_x - main_center_x) <= max(10, main_width * 1.5):
+                if y0 >= main_y1 or y1 <= main_y0:
+                    return "!"
+
+    if len(components) == 2:
+        first, second = sorted(components, key=lambda item: item[2])
+        _, ax0, ay0, ax1, ay1 = first
+        _, bx0, by0, bx1, by1 = second
+        first_width = ax1 - ax0
+        first_height = ay1 - ay0
+        second_width = bx1 - bx0
+        second_height = by1 - by0
+        center_gap = abs(((ax0 + ax1) / 2.0) - ((bx0 + bx1) / 2.0))
+        if (
+            first_width <= 24
+            and first_height <= 24
+            and second_width <= 24
+            and second_height <= 24
+            and center_gap <= 10
+            and by0 > ay1
+        ):
+            return ":"
+    return None
+
+
 def predict_characters(
     model: nn.Module,
     labels: list[str],
     image: Image.Image,
     device: torch.device | None = None,
+    letter_model: nn.Module | None = None,
+    letter_labels: list[str] | None = None,
 ) -> list[dict[str, float | int | str]]:
     selected_device = device or next(model.parameters()).device
     regions = segment_digit_regions(image, split_wide=False, min_component_pixels=4, merge_marks=True)
@@ -379,16 +487,32 @@ def predict_characters(
             probabilities = torch.softmax(model(tensor), dim=1).squeeze(0)
             confidence, label_index = torch.max(probabilities, dim=0)
             label = labels[int(label_index.item())]
+            confidence_value = float(confidence.item())
+            punctuation_label = _punctuation_shape_label(region)
+            if punctuation_label is not None:
+                label = punctuation_label
+                confidence_value = max(confidence_value, 0.92)
             exemplar_match = _nearest_exemplar_label(model, tensor)
-            if exemplar_match is not None and float(confidence.item()) < 0.82:
+            if punctuation_label is None and exemplar_match is not None and confidence_value < 0.82:
                 exemplar_index, distance = exemplar_match
                 label = labels[exemplar_index]
-                confidence = torch.tensor(max(0.35, min(0.9, 1.0 - distance / 32.0)))
+                confidence_value = max(0.35, min(0.9, 1.0 - distance / 32.0))
+            if (
+                punctuation_label is None
+                and
+                letter_model is not None
+                and letter_labels is not None
+                and _looks_like_letter_region(region, label, confidence_value)
+            ):
+                letter_label, letter_confidence = _letter_prediction(letter_model, letter_labels, region, selected_device)
+                if letter_confidence >= 0.45 or not label.isalpha():
+                    label = letter_label
+                    confidence_value = max(confidence_value, letter_confidence)
             x0, y0, x1, y1 = region.box
             predictions.append(
                 {
                     "label": label,
-                    "confidence": float(confidence.item()),
+                    "confidence": confidence_value,
                     "x": x0,
                     "y": y0,
                     "width": x1 - x0,

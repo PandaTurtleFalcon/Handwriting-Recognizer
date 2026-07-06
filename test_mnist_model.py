@@ -91,6 +91,17 @@ class MnistPreprocessingTests(unittest.TestCase):
         self.assertEqual(len(regions), 1)
         self.assertGreater(regions[0].box[3], 80)
 
+    def test_character_segmentation_merges_exclamation_dot(self) -> None:
+        image = Image.new("L", (100, 140), 255)
+        draw = ImageDraw.Draw(image)
+        draw.line((48, 16, 48, 86), fill=0, width=6)
+        draw.ellipse((42, 106, 54, 118), fill=0)
+
+        regions = segment_digit_regions(image, split_wide=False, min_component_pixels=4, merge_marks=True)
+
+        self.assertEqual(len(regions), 1)
+        self.assertGreater(regions[0].box[3] - regions[0].box[1], 90)
+
     def test_messy_connected_27_segments_and_predicts(self) -> None:
         if not Path(WEIGHTS_PATH).exists():
             self.skipTest("trained weights are not available")

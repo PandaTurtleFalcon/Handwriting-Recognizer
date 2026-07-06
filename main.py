@@ -15,7 +15,9 @@ from PIL import Image, ImageOps, UnidentifiedImageError
 
 from character_model import METRICS_PATH as CHARACTER_METRICS_PATH
 from character_model import WEIGHTS_PATH as CHARACTER_WEIGHTS_PATH
-from character_model import load_character_model, predict_characters
+from character_model import load_character_model, load_letter_model, predict_characters
+from emnist_experiment import METRICS_PATH as LETTER_METRICS_PATH
+from emnist_experiment import WEIGHTS_PATH as LETTER_WEIGHTS_PATH
 from mnist_model import METRICS_PATH, WEIGHTS_PATH, get_device, load_model, predict_digits
 
 
@@ -265,6 +267,8 @@ class MnistWebHandler(BaseHTTPRequestHandler):
     model = None
     device = None
     labels = None
+    letter_model = None
+    letter_labels = None
     recognizer_kind = "digits"
 
     def log_message(self, format: str, *args: object) -> None:
@@ -369,7 +373,14 @@ def classify_files(files: list[tuple[str, bytes]], model, device) -> list[dict[s
 
         image = ImageOps.exif_transpose(image).convert("RGB")
         if MnistWebHandler.recognizer_kind == "characters" and MnistWebHandler.labels is not None:
-            predictions = predict_characters(model, MnistWebHandler.labels, image, device)
+            predictions = predict_characters(
+                model,
+                MnistWebHandler.labels,
+                image,
+                device,
+                letter_model=MnistWebHandler.letter_model,
+                letter_labels=MnistWebHandler.letter_labels,
+            )
         else:
             predictions = predict_digits(model, image, device)
         if not predictions:
@@ -430,11 +441,20 @@ def render_page(results: list[dict[str, object]] | None = None, error: str | Non
     if metrics:
         best = max(metrics, key=lambda item: item.get("test_accuracy", 0))
         metrics_text = f"Best test accuracy: {best['test_accuracy']:.2f}%"
+    if LETTER_WEIGHTS_PATH.exists():
+        letter_metrics = read_metrics(LETTER_METRICS_PATH)
+        if isinstance(letter_metrics, dict):
+            history = letter_metrics.get("history", [])
+            if history:
+                best = max(history, key=lambda item: item.get("test_accuracy", 0))
+                metrics_text = f"Alphabet test accuracy: {best['test_accuracy']:.2f}%"
     if CHARACTER_WEIGHTS_PATH.exists():
         character_metrics = read_metrics(CHARACTER_METRICS_PATH)
-        if character_metrics:
+        if character_metrics and not LETTER_WEIGHTS_PATH.exists():
             best = max(character_metrics, key=lambda item: item.get("validation_accuracy", 0))
             metrics_text = f"Character validation accuracy: {best['validation_accuracy']:.2f}%"
+        elif character_metrics:
+            metrics_text = f"{metrics_text} + punctuation"
 
     result_html = ""
     if error:
@@ -564,7 +584,7 @@ def render_overlays(result: dict[str, object], predictions: object) -> str:
     )
 
 
-def read_metrics(path=METRICS_PATH) -> list[dict[str, float]]:
+def read_metrics(path=METRICS_PATH):
     if not path.exists():
         return []
     try:
@@ -577,11 +597,14 @@ def run(host: str = HOST, port: int = PORT) -> None:
     if CHARACTER_WEIGHTS_PATH.exists():
         MnistWebHandler.device = get_device()
         MnistWebHandler.model, MnistWebHandler.labels = load_character_model(device=MnistWebHandler.device)
+        MnistWebHandler.letter_model, MnistWebHandler.letter_labels = load_letter_model(device=MnistWebHandler.device)
         MnistWebHandler.recognizer_kind = "characters"
     elif WEIGHTS_PATH.exists():
         MnistWebHandler.device = get_device()
         MnistWebHandler.model = load_model(device=MnistWebHandler.device)
         MnistWebHandler.labels = None
+        MnistWebHandler.letter_model = None
+        MnistWebHandler.letter_labels = None
         MnistWebHandler.recognizer_kind = "digits"
     else:
         raise SystemExit(

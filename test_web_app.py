@@ -110,17 +110,26 @@ class WebAppRenderingTests(unittest.TestCase):
         ]
         previous_kind = main.MnistWebHandler.recognizer_kind
         previous_labels = main.MnistWebHandler.labels
+        previous_letter_model = main.MnistWebHandler.letter_model
+        previous_letter_labels = main.MnistWebHandler.letter_labels
+        letter_model = object()
         main.MnistWebHandler.recognizer_kind = "characters"
         main.MnistWebHandler.labels = ["A"]
+        main.MnistWebHandler.letter_model = letter_model
+        main.MnistWebHandler.letter_labels = ["A"]
         try:
             with patch.object(main, "predict_digits") as mock_digits:
-                with patch.object(main, "predict_characters", return_value=fake_predictions):
+                with patch.object(main, "predict_characters", return_value=fake_predictions) as mock_characters:
                     results = main.classify_files([("letter.png", png_bytes())], model=object(), device=object())
         finally:
             main.MnistWebHandler.recognizer_kind = previous_kind
             main.MnistWebHandler.labels = previous_labels
+            main.MnistWebHandler.letter_model = previous_letter_model
+            main.MnistWebHandler.letter_labels = previous_letter_labels
 
         mock_digits.assert_not_called()
+        self.assertIs(mock_characters.call_args.kwargs["letter_model"], letter_model)
+        self.assertEqual(mock_characters.call_args.kwargs["letter_labels"], ["A"])
         self.assertEqual(results[0]["sequence"], "A")
 
 

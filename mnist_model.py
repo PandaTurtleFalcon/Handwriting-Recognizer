@@ -398,7 +398,8 @@ def _merge_small_mark_boxes(mask: np.ndarray, boxes: list[tuple[int, int, int, i
         area = areas[index]
         width = x1 - x0
         height = y1 - y0
-        is_small = area <= small_area_limit or min(width, height) <= 7
+        is_tall_stroke = height >= 28 and height / max(width, 1) >= 3.0
+        is_small = area <= small_area_limit and not is_tall_stroke
         if is_small:
             continue
 
@@ -411,7 +412,11 @@ def _merge_small_mark_boxes(mask: np.ndarray, boxes: list[tuple[int, int, int, i
             mx0, my0, mx1, my1 = mark_box
             mark_width = mx1 - mx0
             mark_height = my1 - my0
-            mark_is_small = mark_area <= small_area_limit or min(mark_width, mark_height) <= 7
+            mark_is_small = (
+                mark_area <= small_area_limit
+                or min(mark_width, mark_height) <= 7
+                or (mark_width <= 24 and mark_height <= 24)
+            )
             if not mark_is_small:
                 continue
             mark_center_x = (mx0 + mx1) / 2.0
