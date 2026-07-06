@@ -245,6 +245,7 @@ def save_experiment(
     augment: bool,
     learning_rate: float,
     seed: int,
+    device_name: str,
 ) -> None:
     if best_state is not None:
         torch.save(
@@ -257,6 +258,7 @@ def save_experiment(
                 "augment": augment,
                 "learning_rate": learning_rate,
                 "seed": seed,
+                "device": device_name,
             },
             WEIGHTS_PATH,
         )
@@ -266,6 +268,7 @@ def save_experiment(
         "augment": augment,
         "learning_rate": learning_rate,
         "seed": seed,
+        "device": device_name,
         "history": [asdict(item) for item in history],
     }
     METRICS_PATH.write_text(json.dumps(payload, indent=2), encoding="utf-8")
@@ -279,10 +282,16 @@ def train(
     augment: bool,
     learning_rate: float,
     seed: int,
+    device_name: str,
 ) -> list[ExperimentMetrics]:
-    device = get_device()
-    if device.type == "mps":
+    if device_name == "cpu":
         device = torch.device("cpu")
+    elif device_name == "mps":
+        device = torch.device("mps")
+    else:
+        device = get_device()
+        if device.type == "mps":
+            device = torch.device("cpu")
     torch.manual_seed(seed)
 
     train_loader, test_loader, labels = make_loaders(batch_size, split, augment)
@@ -337,7 +346,18 @@ def train(
             f"test_acc={metrics.test_accuracy:.2f}%",
             flush=True,
         )
-        save_experiment(history, best_state, best_accuracy, labels, split, model_type, augment, learning_rate, seed)
+        save_experiment(
+            history,
+            best_state,
+            best_accuracy,
+            labels,
+            split,
+            model_type,
+            augment,
+            learning_rate,
+            seed,
+            str(device),
+        )
 
     return history
 
@@ -351,6 +371,7 @@ def main() -> None:
     parser.add_argument("--augment", action="store_true")
     parser.add_argument("--learning-rate", type=float, default=0.001)
     parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument("--device", choices=["auto", "cpu", "mps"], default="auto")
     args = parser.parse_args()
     train(
         epochs=args.epochs,
@@ -360,6 +381,7 @@ def main() -> None:
         augment=args.augment,
         learning_rate=args.learning_rate,
         seed=args.seed,
+        device_name=args.device,
     )
 
 
