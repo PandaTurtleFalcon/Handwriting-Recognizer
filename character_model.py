@@ -423,6 +423,8 @@ def _letter_prediction(
 def _punctuation_shape_label(region: DigitRegion) -> str | None:
     array = np.asarray(region.image, dtype=np.float32) / 255.0
     mask = array > 0.18
+    if mask.mean() > 0.5:
+        mask = array < 0.82
     labeled, count = ndimage.label(mask)
     components: list[tuple[int, int, int, int, int]] = []
     for index in range(1, count + 1):
@@ -446,7 +448,9 @@ def _punctuation_shape_label(region: DigitRegion) -> str | None:
             height = y1 - y0
             center_x = (x0 + x1) / 2.0
             if width <= 24 and height <= 24 and abs(center_x - main_center_x) <= max(10, main_width * 1.5):
-                if y0 >= main_y1 or y1 <= main_y0:
+                if y1 <= main_y0:
+                    return "i"
+                if y0 >= main_y1:
                     return "!"
 
     if len(components) == 2:
@@ -468,6 +472,93 @@ def _punctuation_shape_label(region: DigitRegion) -> str | None:
         ):
             return ":"
     return None
+
+
+def _is_i_stem(prediction: dict[str, float | int | str]) -> bool:
+    label = str(prediction["label"])
+    width = int(prediction["width"])
+    height = int(prediction["height"])
+    return label in {"1", "I", "L", "l", "|", "!"} and height >= 28 and height / max(width, 1) >= 2.35
+
+
+def _is_detached_i_dot(prediction: dict[str, float | int | str]) -> bool:
+    label = str(prediction["label"])
+    width = int(prediction["width"])
+    height = int(prediction["height"])
+    return label in {":", ".", "'", "`", "!", "i"} and width <= 36 and height <= 36
+
+
+def _is_dot_above_stem(
+    dot: dict[str, float | int | str],
+    stem: dict[str, float | int | str],
+) -> bool:
+    dot_center_x = float(dot["x"]) + float(dot["width"]) / 2.0
+    stem_center_x = float(stem["x"]) + float(stem["width"]) / 2.0
+    stem_top = float(stem["y"])
+    stem_width = float(stem["width"])
+    stem_height = float(stem["height"])
+    horizontal_slop = max(22.0, stem_width * 1.5)
+    return (
+        float(dot["y"]) + float(dot["height"]) <= stem_top + stem_height * 0.18
+        and abs(dot_center_x - stem_center_x) <= horizontal_slop
+        and stem_top - (float(dot["y"]) + float(dot["height"])) <= max(58.0, stem_height * 0.55)
+    )
+
+
+def _merge_bounds(
+    first: dict[str, float | int | str],
+    second: dict[str, float | int | str],
+) -> tuple[int, int, int, int]:
+    x0 = min(int(first["x"]), int(second["x"]))
+    y0 = min(int(first["y"]), int(second["y"]))
+    x1 = max(int(first["x"]) + int(first["width"]), int(second["x"]) + int(second["width"]))
+    y1 = max(int(first["y"]) + int(first["height"]), int(second["y"]) + int(second["height"]))
+    return x0, y0, x1, y1
+
+
+def _postprocess_lowercase_i(predictions: list[dict[str, float | int | str]]) -> list[dict[str, float | int | str]]:
+    used_dot_indexes: set[int] = set()
+    replacements: dict[int, dict[str, float | int | str]] = {}
+
+    for stem_index, prediction in enumerate(predictions):
+        if not _is_i_stem(prediction):
+            continue
+
+        dot_index = next(
+            (
+                index
+                for index, candidate in enumerate(predictions)
+                if index != stem_index
+                and index not in used_dot_indexes
+                and _is_detached_i_dot(candidate)
+                and _is_dot_above_stem(candidate, prediction)
+            ),
+            None,
+        )
+        if dot_index is None:
+            continue
+
+        dot = predictions[dot_index]
+        x0, y0, x1, y1 = _merge_bounds(prediction, dot)
+        used_dot_indexes.add(dot_index)
+        replacements[stem_index] = {
+            **prediction,
+            "label": "i",
+            "confidence": max(float(prediction["confidence"]), float(dot["confidence"]), 0.9),
+            "x": x0,
+            "y": y0,
+            "width": x1 - x0,
+            "height": y1 - y0,
+            "row": min(int(prediction["row"]), int(dot["row"])),
+        }
+
+    merged: list[dict[str, float | int | str]] = []
+    for index, prediction in enumerate(predictions):
+        if index in used_dot_indexes:
+            continue
+        merged.append(replacements.get(index, prediction))
+
+    return sorted(merged, key=lambda item: (int(item["row"]), int(item["x"])))
 
 
 def predict_characters(
@@ -520,7 +611,7 @@ def predict_characters(
                     "row": region.row,
                 }
             )
-    return predictions
+    return _postprocess_lowercase_i(predictions)
 
 
 def main() -> None:
