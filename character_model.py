@@ -18,7 +18,8 @@ from torchvision import transforms
 
 from emnist_experiment import EMNIST_MEAN, EMNIST_STD, WEIGHTS_PATH as EMNIST_WEIGHTS_PATH
 from emnist_experiment import EmnistCNN, TinyEmnistCNN, WideEmnistCNN
-from mnist_model import DigitRegion, get_device, segment_digit_regions
+from mnist_model import WEIGHTS_PATH as DIGIT_WEIGHTS_PATH
+from mnist_model import DigitRegion, _foreground_from_image, _predict_digit_image, get_device, load_model, segment_digit_regions
 
 
 PROJECT_DIR = Path(__file__).resolve().parent
@@ -37,6 +38,7 @@ LETTER_MODEL_TYPES = {
     "tinycnn": TinyEmnistCNN,
     "widecnn": WideEmnistCNN,
 }
+_DIGIT_MODEL: nn.Module | None = None
 
 
 @dataclass(frozen=True)
@@ -420,6 +422,58 @@ def _letter_prediction(
     return letter_labels[int(label_index.item())], float(confidence.item())
 
 
+def _load_digit_model_for_fallback(device: torch.device) -> nn.Module | None:
+    global _DIGIT_MODEL
+    if _DIGIT_MODEL is not None:
+        return _DIGIT_MODEL
+    if not DIGIT_WEIGHTS_PATH.exists():
+        return None
+    _DIGIT_MODEL = load_model(device=device)
+    return _DIGIT_MODEL
+
+
+def _digit_fallback_prediction(region: DigitRegion, device: torch.device) -> tuple[str, float] | None:
+    x0, y0, x1, y1 = region.box
+    width = x1 - x0
+    height = y1 - y0
+    if width < 20 or height < 34 or width * height < 900:
+        return None
+    digit_model = _load_digit_model_for_fallback(device)
+    if digit_model is None:
+        return None
+    digit, confidence = _predict_digit_image(digit_model, region.image, device)
+    return str(digit), confidence
+
+
+def _mask_span(mask: np.ndarray) -> float:
+    ys, xs = np.where(mask)
+    if len(xs) == 0:
+        return 0.0
+    return float(xs.max() - xs.min() + 1) / max(float(mask.shape[1]), 1.0)
+
+
+def _looks_like_seven(region: DigitRegion) -> bool:
+    mask = _foreground_from_image(region.image) > 0.18
+    height, width = mask.shape
+    if height <= 0 or width <= 0:
+        return False
+    top_span = _mask_span(mask[: max(1, int(height * 0.25)), :])
+    bottom_span = _mask_span(mask[int(height * 0.55) :, :])
+    aspect_ratio = width / max(height, 1)
+    return 0.24 <= aspect_ratio <= 0.62 and top_span >= 0.48 and bottom_span <= 0.22
+
+
+def _looks_like_one(region: DigitRegion) -> bool:
+    mask = _foreground_from_image(region.image) > 0.18
+    height, width = mask.shape
+    if height <= 0 or width <= 0:
+        return False
+    top_span = _mask_span(mask[: max(1, int(height * 0.25)), :])
+    bottom_span = _mask_span(mask[int(height * 0.55) :, :])
+    aspect_ratio = width / max(height, 1)
+    return aspect_ratio <= 0.34 and top_span <= 0.22 and bottom_span <= 0.24
+
+
 def _punctuation_shape_label(region: DigitRegion) -> str | None:
     array = np.asarray(region.image, dtype=np.float32) / 255.0
     mask = array > 0.18
@@ -488,6 +542,13 @@ def _is_detached_i_dot(prediction: dict[str, float | int | str]) -> bool:
     return label in {":", ".", "'", "`", "!", "i"} and width <= 36 and height <= 36
 
 
+def _is_detached_colon_dot(prediction: dict[str, float | int | str]) -> bool:
+    label = str(prediction["label"])
+    width = int(prediction["width"])
+    height = int(prediction["height"])
+    return label in {":", ".", "'", "`", "Q", "O", "0"} and width <= 36 and height <= 36
+
+
 def _is_dot_above_stem(
     dot: dict[str, float | int | str],
     stem: dict[str, float | int | str],
@@ -514,6 +575,43 @@ def _merge_bounds(
     x1 = max(int(first["x"]) + int(first["width"]), int(second["x"]) + int(second["width"]))
     y1 = max(int(first["y"]) + int(first["height"]), int(second["y"]) + int(second["height"]))
     return x0, y0, x1, y1
+
+
+def _postprocess_colons(predictions: list[dict[str, float | int | str]]) -> list[dict[str, float | int | str]]:
+    merged_indexes: set[int] = set()
+    replacements: dict[int, dict[str, float | int | str]] = {}
+
+    for first_index, first in enumerate(predictions):
+        if first_index in merged_indexes or not _is_detached_colon_dot(first):
+            continue
+        first_center_x = float(first["x"]) + float(first["width"]) / 2.0
+        first_bottom = float(first["y"]) + float(first["height"])
+        for second_index, second in enumerate(predictions[first_index + 1 :], start=first_index + 1):
+            if second_index in merged_indexes or not _is_detached_colon_dot(second):
+                continue
+            second_center_x = float(second["x"]) + float(second["width"]) / 2.0
+            vertical_gap = float(second["y"]) - first_bottom
+            if abs(second_center_x - first_center_x) <= 14 and 8 <= vertical_gap <= 80:
+                x0, y0, x1, y1 = _merge_bounds(first, second)
+                merged_indexes.add(second_index)
+                replacements[first_index] = {
+                    **first,
+                    "label": ":",
+                    "confidence": max(float(first["confidence"]), float(second["confidence"]), 0.9),
+                    "x": x0,
+                    "y": y0,
+                    "width": x1 - x0,
+                    "height": y1 - y0,
+                    "row": min(int(first["row"]), int(second["row"])),
+                }
+                break
+
+    merged: list[dict[str, float | int | str]] = []
+    for index, prediction in enumerate(predictions):
+        if index in merged_indexes:
+            continue
+        merged.append(replacements.get(index, prediction))
+    return sorted(merged, key=lambda item: (int(item["row"]), int(item["x"])))
 
 
 def _postprocess_lowercase_i(predictions: list[dict[str, float | int | str]]) -> list[dict[str, float | int | str]]:
@@ -588,6 +686,7 @@ def predict_characters(
                 exemplar_index, distance = exemplar_match
                 label = labels[exemplar_index]
                 confidence_value = max(0.35, min(0.9, 1.0 - distance / 32.0))
+            letter_match = None
             if (
                 punctuation_label is None
                 and
@@ -595,10 +694,35 @@ def predict_characters(
                 and letter_labels is not None
                 and _looks_like_letter_region(region, label, confidence_value)
             ):
-                letter_label, letter_confidence = _letter_prediction(letter_model, letter_labels, region, selected_device)
-                if letter_confidence >= 0.45 or not label.isalpha():
+                letter_match = _letter_prediction(letter_model, letter_labels, region, selected_device)
+
+            digit_match = None
+            digit_was_used = False
+            if punctuation_label is None and (not str(label).isalpha() or confidence_value < 0.86):
+                digit_match = _digit_fallback_prediction(region, selected_device)
+                if digit_match is not None:
+                    digit_label, digit_confidence = digit_match
+                    letter_confidence = letter_match[1] if letter_match is not None else 0.0
+                    if (
+                        digit_confidence >= 0.80
+                        and letter_confidence < 0.9
+                        and (not str(label).isalpha() or confidence_value < 0.82)
+                    ):
+                        label = digit_label
+                        confidence_value = max(confidence_value, digit_confidence)
+                        digit_was_used = True
+
+            if letter_match is not None and not digit_was_used:
+                letter_label, letter_confidence = letter_match
+                if letter_confidence >= 0.45 or not str(label).isalpha():
                     label = letter_label
                     confidence_value = max(confidence_value, letter_confidence)
+            if punctuation_label is None and _looks_like_seven(region) and str(label) in {"1", "7", "I", "L", "l"}:
+                label = "7"
+                confidence_value = max(confidence_value, 0.92)
+            elif punctuation_label is None and _looks_like_one(region) and str(label) in {"1", "I", "L", "l"}:
+                label = "1"
+                confidence_value = max(confidence_value, 0.92)
             x0, y0, x1, y1 = region.box
             predictions.append(
                 {
@@ -611,7 +735,7 @@ def predict_characters(
                     "row": region.row,
                 }
             )
-    return _postprocess_lowercase_i(predictions)
+    return _postprocess_colons(_postprocess_lowercase_i(predictions))
 
 
 def main() -> None:
