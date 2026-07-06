@@ -1,0 +1,5 @@
+{
+  "accuracy": 89.09134615384615,
+  "features": 1296,
+  "classifier": "SGDClassifier(log_loss)"
+}
