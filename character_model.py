@@ -524,6 +524,28 @@ def _digit_fallback_prediction(region: DigitRegion, device: torch.device) -> tup
     return str(digit), confidence
 
 
+def _digit_beats_ambiguous_letter(
+    digit_label: str,
+    digit_confidence: float,
+    current_label: str,
+    current_confidence: float,
+) -> bool:
+    """Return true for known digit/letter pairs where MNIST should win."""
+
+    return (
+        digit_confidence >= 0.985
+        and digit_label == "2"
+        and current_label == "Z"
+        and current_confidence < 0.96
+    ) or (
+        digit_confidence >= 0.94
+        and (
+            (digit_label == "4" and current_label == "Y")
+            or (digit_label == "5" and current_label == "J")
+        )
+    )
+
+
 def _mask_span(mask: np.ndarray) -> float:
     """Measure how much horizontal space a foreground mask occupies."""
 
@@ -838,24 +860,17 @@ def predict_characters(
             digit_match = None
             digit_was_used = False
             if punctuation_label is None and (
-                not str(label).isalpha() or confidence_value < 0.86 or str(label) in {"J", "Z"}
+                not str(label).isalpha() or confidence_value < 0.86 or str(label) in {"J", "Y", "Z"}
             ):
                 digit_match = _digit_fallback_prediction(region, selected_device)
                 if digit_match is not None:
                     digit_label, digit_confidence = digit_match
                     letter_confidence = letter_match[1] if letter_match is not None else 0.0
-                    digit_beats_ambiguous_letter = (
-                        (
-                            digit_confidence >= 0.985
-                            and digit_label == "2"
-                            and str(label) == "Z"
-                            and confidence_value < 0.96
-                        )
-                        or (
-                            digit_confidence >= 0.94
-                            and digit_label == "5"
-                            and str(label) == "J"
-                        )
+                    digit_beats_ambiguous_letter = _digit_beats_ambiguous_letter(
+                        digit_label,
+                        digit_confidence,
+                        str(label),
+                        confidence_value,
                     )
                     if (
                         digit_confidence >= 0.80

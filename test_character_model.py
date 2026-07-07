@@ -1,6 +1,13 @@
 import unittest
 
-from character_model import _looks_like_one, _looks_like_seven, _postprocess_colons, _postprocess_lowercase_i, _punctuation_shape_label
+from character_model import (
+    _digit_beats_ambiguous_letter,
+    _looks_like_one,
+    _looks_like_seven,
+    _postprocess_colons,
+    _postprocess_lowercase_i,
+    _punctuation_shape_label,
+)
 from mnist_model import DigitRegion, segment_digit_regions
 from PIL import Image, ImageDraw
 
@@ -80,6 +87,14 @@ class CharacterPostprocessingTests(unittest.TestCase):
 
         self.assertTrue(_looks_like_seven(region))
         self.assertFalse(_looks_like_one(region))
+
+    def test_digit_rescue_handles_common_letter_confusions(self) -> None:
+        """Confident digit votes should beat known letter lookalikes."""
+
+        self.assertTrue(_digit_beats_ambiguous_letter("4", 0.98, "Y", 0.979))
+        self.assertTrue(_digit_beats_ambiguous_letter("5", 0.95, "J", 0.99))
+        self.assertTrue(_digit_beats_ambiguous_letter("2", 0.99, "Z", 0.94))
+        self.assertFalse(_digit_beats_ambiguous_letter("4", 0.91, "Y", 0.979))
 
 
 if __name__ == "__main__":
