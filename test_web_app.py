@@ -163,6 +163,39 @@ class WebAppRenderingTests(unittest.TestCase):
         self.assertEqual(mock_characters.call_args.kwargs["alnum_labels"], ["0", "A"])
         self.assertEqual(results[0]["sequence"], "A")
 
+    def test_result_cards_show_case_alternatives(self) -> None:
+        """Ambiguous upper/lower predictions should expose both confidences."""
+
+        html = main.render_result(
+            {
+                "filename": "case.png",
+                "sequence": "S",
+                "row_sequences": ["S"],
+                "preview": "data:image/png;base64,",
+                "image_width": 100,
+                "image_height": 100,
+                "predictions": [
+                    {
+                        "label": "S",
+                        "confidence": 0.32,
+                        "x": 1,
+                        "y": 1,
+                        "width": 20,
+                        "height": 20,
+                        "row": 1,
+                        "alternatives": [
+                            {"label": "s", "confidence": 0.58},
+                            {"label": "S", "confidence": 0.32},
+                        ],
+                    }
+                ],
+            }
+        )
+
+        self.assertIn("case:", html)
+        self.assertIn("<b>s</b> 58.0%", html)
+        self.assertIn("<b>S</b> 32.0%", html)
+
 
 if __name__ == "__main__":
     unittest.main()

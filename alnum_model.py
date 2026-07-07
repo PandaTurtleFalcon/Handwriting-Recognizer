@@ -37,6 +37,13 @@ CHARS74K_ENGLISH_HND_URL = "https://drive.google.com/uc?export=download&id=1FCH2
 WEIGHTS_PATH = PROJECT_DIR / "alnum_cnn.pt"
 METRICS_PATH = PROJECT_DIR / "alnum_training_metrics.json"
 LABELS = [str(index) for index in range(10)] + [chr(ord("A") + index) for index in range(26)]
+MIXEDCASE_WEIGHTS_PATH = PROJECT_DIR / "mixedcase_cnn.pt"
+MIXEDCASE_METRICS_PATH = PROJECT_DIR / "mixedcase_training_metrics.json"
+MIXEDCASE_LABELS = (
+    [str(index) for index in range(10)]
+    + [chr(ord("A") + index) for index in range(26)]
+    + [chr(ord("a") + index) for index in range(26)]
+)
 MODEL_CLASSES = {
     "mlp": EmnistMLP,
     "tinycnn": TinyEmnistCNN,
@@ -282,6 +289,25 @@ def build_or_load_emnist_byclass_folded_cache(train: bool) -> tuple[torch.Tensor
     return image_tensor, target_tensor
 
 
+def build_or_load_emnist_byclass_mixedcase_cache(train: bool) -> tuple[torch.Tensor, torch.Tensor]:
+    """Load EMNIST ByClass as 0-9/A-Z/a-z without folding case."""
+
+    cache_path = EMNIST_DATA_ROOT / f"cache_byclass_mixedcase_62_{'train' if train else 'test'}.pt"
+    if cache_path.exists():
+        cache = torch.load(cache_path, map_location="cpu", weights_only=True)
+        return cache["images"], cache["targets"]
+
+    images, raw_targets, raw_labels = build_or_load_emnist_cache("byclass", train=train)
+    if raw_labels[: len(MIXEDCASE_LABELS)] != MIXEDCASE_LABELS:
+        raise RuntimeError("Unexpected EMNIST ByClass label order; refusing to train mixed-case model.")
+    mask = raw_targets < len(MIXEDCASE_LABELS)
+    image_tensor = images[mask]
+    target_tensor = raw_targets[mask].long()
+    cache_path.parent.mkdir(parents=True, exist_ok=True)
+    torch.save({"images": image_tensor, "targets": target_tensor}, cache_path)
+    return image_tensor, target_tensor
+
+
 def _limit_per_class(
     images: torch.Tensor,
     targets: torch.Tensor,
@@ -460,6 +486,63 @@ def make_augmented_loaders(
     return train_loader, test_loader, digit_test_loader, letter_test_loader
 
 
+def _target_range_loader(images: torch.Tensor, targets: torch.Tensor, start: int, stop: int, batch_size: int) -> DataLoader:
+    """Build a loader for a contiguous target range."""
+
+    mask = (targets >= start) & (targets < stop)
+    return DataLoader(TensorDataset(images[mask], targets[mask]), batch_size=batch_size)
+
+
+def make_mixedcase_loaders(
+    batch_size: int,
+    samples_per_class: int | None,
+    seed: int,
+) -> tuple[DataLoader, DataLoader, DataLoader, DataLoader, DataLoader]:
+    """Build loaders for the 62-class digit/upper/lower recognizer."""
+
+    mnist_train_images, mnist_train_targets = build_or_load_mnist_cache(train=True)
+    mnist_test_images, mnist_test_targets = build_or_load_mnist_cache(train=False)
+    byclass_train_images, byclass_train_targets = build_or_load_emnist_byclass_mixedcase_cache(train=True)
+    byclass_test_images, byclass_test_targets = build_or_load_emnist_byclass_mixedcase_cache(train=False)
+
+    mnist_train_images, mnist_train_targets = _limit_per_class(
+        mnist_train_images,
+        mnist_train_targets,
+        samples_per_class,
+        seed,
+    )
+    byclass_train_images, byclass_train_targets = _limit_per_class(
+        byclass_train_images,
+        byclass_train_targets,
+        samples_per_class,
+        seed + 1,
+    )
+
+    train_dataset = ConcatDataset(
+        [
+            TensorDataset(mnist_train_images, mnist_train_targets),
+            TensorDataset(byclass_train_images, byclass_train_targets),
+        ]
+    )
+    test_dataset = ConcatDataset(
+        [
+            TensorDataset(mnist_test_images, mnist_test_targets),
+            TensorDataset(byclass_test_images, byclass_test_targets),
+        ]
+    )
+    train_targets = torch.cat([mnist_train_targets, byclass_train_targets]).numpy()
+    class_counts = np.bincount(train_targets, minlength=len(MIXEDCASE_LABELS))
+    sample_weights = [1.0 / max(class_counts[int(target)], 1) for target in train_targets]
+    sampler = WeightedRandomSampler(sample_weights, num_samples=len(train_targets), replacement=True)
+
+    train_loader = DataLoader(train_dataset, batch_size=batch_size, sampler=sampler, num_workers=0)
+    test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False, num_workers=0)
+    digit_test_loader = DataLoader(TensorDataset(mnist_test_images, mnist_test_targets), batch_size=batch_size)
+    upper_test_loader = _target_range_loader(byclass_test_images, byclass_test_targets, 10, 36, batch_size)
+    lower_test_loader = _target_range_loader(byclass_test_images, byclass_test_targets, 36, 62, batch_size)
+    return train_loader, test_loader, digit_test_loader, upper_test_loader, lower_test_loader
+
+
 def evaluate(model: nn.Module, loader: DataLoader, criterion: nn.Module, device: torch.device) -> tuple[float, float]:
     """Evaluate a model and return average loss plus accuracy percentage."""
 
@@ -557,6 +640,170 @@ def load_alnum_model(
     model.load_state_dict(checkpoint["model_state_dict"])
     model.eval()
     return model, labels
+
+
+def load_mixedcase_model(
+    weights_path: Path = MIXEDCASE_WEIGHTS_PATH,
+    device: torch.device | None = None,
+) -> tuple[nn.Module, list[str]] | tuple[None, None]:
+    """Load the trained mixed-case recognizer if its checkpoint exists."""
+
+    if not weights_path.exists():
+        return None, None
+    selected_device = device or get_device()
+    checkpoint = torch.load(weights_path, map_location=selected_device, weights_only=True)
+    labels = [str(label) for label in checkpoint["labels"]]
+    model_type = str(checkpoint.get("model_type", "cnn"))
+    model_class = MODEL_CLASSES.get(model_type, EmnistCNN)
+    model = model_class(num_classes=len(labels)).to(selected_device)
+    model.load_state_dict(checkpoint["model_state_dict"])
+    model.eval()
+    return model, labels
+
+
+def save_mixedcase_checkpoint(
+    history: list[dict[str, float | int]],
+    best_state: dict[str, torch.Tensor] | None,
+    best_accuracy: float,
+    model_type: str,
+    learning_rate: float,
+    seed: int,
+    device: torch.device,
+    samples_per_class: int | None,
+) -> None:
+    """Persist the best mixed-case weights and metrics."""
+
+    if best_state is not None:
+        torch.save(
+            {
+                "model_state_dict": best_state,
+                "labels": MIXEDCASE_LABELS,
+                "test_accuracy": best_accuracy,
+                "model_type": model_type,
+                "learning_rate": learning_rate,
+                "seed": seed,
+                "device": str(device),
+                "samples_per_class": samples_per_class,
+                "normalization": {"mean": EMNIST_MEAN, "std": EMNIST_STD},
+            },
+            MIXEDCASE_WEIGHTS_PATH,
+        )
+    MIXEDCASE_METRICS_PATH.write_text(
+        json.dumps(
+            {
+                "labels": MIXEDCASE_LABELS,
+                "model_type": model_type,
+                "learning_rate": learning_rate,
+                "seed": seed,
+                "device": str(device),
+                "samples_per_class": samples_per_class,
+                "history": history,
+            },
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+
+
+def train_mixedcase(
+    epochs: int,
+    batch_size: int,
+    min_accuracy: float,
+    learning_rate: float,
+    seed: int,
+    model_type: str,
+    samples_per_class: int | None,
+    device_name: str,
+) -> list[dict[str, float | int]]:
+    """Train a 62-class recognizer that distinguishes uppercase and lowercase."""
+
+    torch.manual_seed(seed)
+    np.random.seed(seed)
+    if device_name == "cpu":
+        device = torch.device("cpu")
+    elif device_name == "mps":
+        if getattr(torch.backends, "mps", None) is None or not torch.backends.mps.is_available():
+            raise RuntimeError("MPS was requested but is not available.")
+        device = torch.device("mps")
+    else:
+        device = get_device()
+
+    train_loader, test_loader, digit_test_loader, upper_test_loader, lower_test_loader = make_mixedcase_loaders(
+        batch_size,
+        samples_per_class,
+        seed,
+    )
+    model = MODEL_CLASSES[model_type](num_classes=len(MIXEDCASE_LABELS)).to(device)
+    criterion = nn.CrossEntropyLoss(label_smoothing=0.03)
+    optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate, weight_decay=0.0005)
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=epochs)
+    history: list[dict[str, float | int]] = []
+    best_accuracy = 0.0
+    best_state = None
+
+    for epoch in range(1, epochs + 1):
+        start = time.time()
+        model.train()
+        train_loss_total = 0.0
+        train_correct = 0
+        train_total = 0
+        for images, targets in train_loader:
+            images = images.to(device)
+            targets = targets.to(device)
+            optimizer.zero_grad(set_to_none=True)
+            outputs = model(images)
+            loss = criterion(outputs, targets)
+            loss.backward()
+            optimizer.step()
+            train_loss_total += loss.item()
+            train_correct += (outputs.argmax(dim=1) == targets).sum().item()
+            train_total += targets.size(0)
+        scheduler.step()
+
+        test_loss, test_accuracy = evaluate(model, test_loader, criterion, device)
+        _, digit_accuracy = evaluate(model, digit_test_loader, criterion, device)
+        _, upper_accuracy = evaluate(model, upper_test_loader, criterion, device)
+        _, lower_accuracy = evaluate(model, lower_test_loader, criterion, device)
+        train_accuracy = 100.0 * train_correct / max(train_total, 1)
+        metrics = {
+            "epoch": epoch,
+            "train_loss": train_loss_total / max(len(train_loader), 1),
+            "train_accuracy": train_accuracy,
+            "test_loss": test_loss,
+            "test_accuracy": test_accuracy,
+            "digit_test_accuracy": digit_accuracy,
+            "upper_test_accuracy": upper_accuracy,
+            "lower_test_accuracy": lower_accuracy,
+            "seconds": time.time() - start,
+            "overfit_gap": train_accuracy - test_accuracy,
+        }
+        history.append(metrics)
+        if test_accuracy > best_accuracy:
+            best_accuracy = test_accuracy
+            best_state = {key: value.detach().cpu() for key, value in model.state_dict().items()}
+        save_mixedcase_checkpoint(
+            history,
+            best_state,
+            best_accuracy,
+            model_type,
+            learning_rate,
+            seed,
+            device,
+            samples_per_class,
+        )
+        print(
+            f"Epoch {epoch}/{epochs} train_acc={train_accuracy:.2f}% "
+            f"test_acc={test_accuracy:.2f}% digits={digit_accuracy:.2f}% "
+            f"upper={upper_accuracy:.2f}% lower={lower_accuracy:.2f}% "
+            f"gap={metrics['overfit_gap']:.2f}%",
+            flush=True,
+        )
+        if best_accuracy >= min_accuracy and epoch >= 8:
+            break
+
+    if best_accuracy < min_accuracy:
+        raise RuntimeError(f"Best mixed-case test accuracy was {best_accuracy:.2f}%, below {min_accuracy:.2f}%.")
+    return history
 
 
 def train(
@@ -698,6 +945,7 @@ def main() -> None:
     """CLI entrypoint for training the combined recognizer."""
 
     parser = argparse.ArgumentParser(description="Train a combined MNIST + EMNIST alphanumeric recognizer.")
+    parser.add_argument("--mixed-case", action="store_true", help="Train the 62-class mixed-case recognizer.")
     parser.add_argument("--epochs", type=int, default=30)
     parser.add_argument("--batch-size", type=int, default=2048)
     parser.add_argument("--min-accuracy", type=float, default=95.0)
@@ -740,6 +988,18 @@ def main() -> None:
         help="Initialize from the existing alphanumeric checkpoint before training.",
     )
     args = parser.parse_args()
+    if args.mixed_case:
+        train_mixedcase(
+            epochs=args.epochs,
+            batch_size=args.batch_size,
+            min_accuracy=args.min_accuracy,
+            learning_rate=args.learning_rate,
+            seed=args.seed,
+            model_type=args.model,
+            samples_per_class=args.samples_per_class,
+            device_name=args.device,
+        )
+        return
     train(
         epochs=args.epochs,
         batch_size=args.batch_size,

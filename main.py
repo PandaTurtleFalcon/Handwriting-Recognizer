@@ -21,7 +21,9 @@ from urllib.parse import urlparse
 from PIL import Image, ImageOps, UnidentifiedImageError
 
 from alnum_model import METRICS_PATH as ALNUM_METRICS_PATH
+from alnum_model import MIXEDCASE_METRICS_PATH, MIXEDCASE_WEIGHTS_PATH
 from alnum_model import WEIGHTS_PATH as ALNUM_WEIGHTS_PATH
+from alnum_model import load_mixedcase_model
 from character_model import METRICS_PATH as CHARACTER_METRICS_PATH
 from character_model import WEIGHTS_PATH as CHARACTER_WEIGHTS_PATH
 from character_model import load_alnum_model, load_character_model, load_letter_model, predict_characters
@@ -252,6 +254,15 @@ input[type="file"]:focus-visible {
 .digit span {
   color: var(--muted);
   font-size: 13px;
+}
+.alternatives {
+  margin-top: 8px;
+  font-size: 13px;
+  line-height: 1.35;
+  color: var(--muted);
+}
+.alternatives b {
+  color: var(--ink);
 }
 .error {
   border-color: #fecaca;
@@ -489,6 +500,18 @@ def render_page(results: list[dict[str, object]] | None = None, error: str | Non
                     f"(digits {best.get('digit_test_accuracy', 0):.2f}%, "
                     f"letters {best.get('letter_test_accuracy', 0):.2f}%)"
                 )
+    if MIXEDCASE_WEIGHTS_PATH.exists():
+        mixedcase_metrics = read_metrics(MIXEDCASE_METRICS_PATH)
+        if isinstance(mixedcase_metrics, dict):
+            history = mixedcase_metrics.get("history", [])
+            if history:
+                best = max(history, key=lambda item: item.get("test_accuracy", 0))
+                metrics_text = (
+                    f"Mixed-case test accuracy: {best['test_accuracy']:.2f}% "
+                    f"(digits {best.get('digit_test_accuracy', 0):.2f}%, "
+                    f"upper {best.get('upper_test_accuracy', 0):.2f}%, "
+                    f"lower {best.get('lower_test_accuracy', 0):.2f}%)"
+                )
     if LETTER_WEIGHTS_PATH.exists():
         letter_metrics = read_metrics(LETTER_METRICS_PATH)
         if isinstance(letter_metrics, dict):
@@ -574,8 +597,21 @@ def render_result(result: dict[str, object]) -> str:
     for index, prediction in enumerate(predictions, start=1):
         digit = html.escape(prediction_value(prediction))
         confidence = float(prediction["confidence"]) * 100
+        alternatives = prediction.get("alternatives", [])
+        alternatives_html = ""
+        if isinstance(alternatives, list) and alternatives:
+            items = []
+            for alternative in alternatives:
+                if not isinstance(alternative, dict):
+                    continue
+                label = html.escape(str(alternative.get("label", "")))
+                alt_confidence = 100.0 * float(alternative.get("confidence", 0))
+                items.append(f"<b>{label}</b> {alt_confidence:.1f}%")
+            if items:
+                alternatives_html = f'<div class="alternatives">case: {" / ".join(items)}</div>'
         digit_cards.append(
-            f'<div class="digit"><strong><span class="digit-index">#{index}</span> {digit}</strong><span>confidence {confidence:.1f}%</span></div>'
+            f'<div class="digit"><strong><span class="digit-index">#{index}</span> {digit}</strong>'
+            f'<span>confidence {confidence:.1f}%</span>{alternatives_html}</div>'
         )
     overlay_html = render_overlays(result, predictions)
     row_html = render_row_sequences(result.get("row_sequences", []))
@@ -657,7 +693,11 @@ def run(host: str = HOST, port: int = PORT) -> None:
         MnistWebHandler.device = get_device()
         MnistWebHandler.model, MnistWebHandler.labels = load_character_model(device=MnistWebHandler.device)
         MnistWebHandler.letter_model, MnistWebHandler.letter_labels = load_letter_model(device=MnistWebHandler.device)
-        MnistWebHandler.alnum_model, MnistWebHandler.alnum_labels = load_alnum_model(device=MnistWebHandler.device)
+        MnistWebHandler.alnum_model, MnistWebHandler.alnum_labels = load_mixedcase_model(
+            device=MnistWebHandler.device
+        )
+        if MnistWebHandler.alnum_model is None:
+            MnistWebHandler.alnum_model, MnistWebHandler.alnum_labels = load_alnum_model(device=MnistWebHandler.device)
         MnistWebHandler.recognizer_kind = "characters"
     elif WEIGHTS_PATH.exists():
         MnistWebHandler.device = get_device()

@@ -6,7 +6,7 @@ import numpy as np
 import torch
 from PIL import Image, ImageDraw
 
-from alnum_model import _chars74k_sample_label
+from alnum_model import MIXEDCASE_LABELS, _chars74k_sample_label
 from extra_alnum_datasets import load_labeled_image_folder
 
 
@@ -50,6 +50,11 @@ class ExtraAlnumDatasetTests(unittest.TestCase):
         self.assertEqual(_chars74k_sample_label(Path("Sample037")), 10)
         self.assertEqual(_chars74k_sample_label(Path("Sample062")), 35)
         self.assertIsNone(_chars74k_sample_label(Path("Sample063")))
+
+    def test_mixedcase_labels_keep_uppercase_and_lowercase_separate(self) -> None:
+        self.assertEqual(len(MIXEDCASE_LABELS), 62)
+        self.assertEqual(MIXEDCASE_LABELS.index("S"), 28)
+        self.assertEqual(MIXEDCASE_LABELS.index("s"), 54)
 
 
 if __name__ == "__main__":

@@ -488,13 +488,67 @@ def _alnum_prediction(
     alnum_labels: list[str],
     region: DigitRegion,
     device: torch.device,
-) -> tuple[str, float]:
+) -> tuple[str, float, list[dict[str, float | str]]]:
     """Predict one region with the combined digit+letter model."""
 
     tensor = tensor_from_alnum_region(region, device)
     probabilities = torch.softmax(alnum_model(tensor), dim=1).squeeze(0)
     confidence, label_index = torch.max(probabilities, dim=0)
-    return alnum_labels[int(label_index.item())], float(confidence.item())
+    top_count = min(5, len(alnum_labels))
+    top_values, top_indexes = torch.topk(probabilities, top_count)
+    alternatives = [
+        {"label": alnum_labels[int(index.item())], "confidence": float(value.item())}
+        for value, index in zip(top_values, top_indexes)
+    ]
+    return alnum_labels[int(label_index.item())], float(confidence.item()), alternatives
+
+
+def _same_letter_different_case(first: str, second: str) -> bool:
+    """Return true when two one-character labels differ only by case."""
+
+    return len(first) == 1 and len(second) == 1 and first.isalpha() and second.isalpha() and first.lower() == second.lower() and first != second
+
+
+def _case_ambiguity_alternatives(alternatives: list[dict[str, float | str]]) -> list[dict[str, float | str]]:
+    """Return same-letter upper/lower alternatives when both are plausible."""
+
+    for first in alternatives:
+        first_label = str(first["label"])
+        if not first_label.isalpha():
+            continue
+        for second in alternatives:
+            second_label = str(second["label"])
+            if not _same_letter_different_case(first_label, second_label):
+                continue
+            if min(float(first["confidence"]), float(second["confidence"])) >= 0.20:
+                pair = [first, second]
+                return sorted(pair, key=lambda item: float(item["confidence"]), reverse=True)
+    return []
+
+
+def _alnum_should_override(
+    current_label: str,
+    current_confidence: float,
+    alnum_label: str,
+    alnum_confidence: float,
+    letter_confidence: float,
+) -> bool:
+    """Decide when the trained alphanumeric model may replace the current label."""
+
+    if alnum_confidence < 0.55:
+        return False
+    if alnum_label.isdigit() and letter_confidence >= 0.9:
+        return False
+    if _same_letter_different_case(current_label, alnum_label):
+        margin = 0.18 if current_label.islower() else 0.10
+        return alnum_confidence >= current_confidence + margin
+    if current_confidence < 0.86 or not current_label.isalnum():
+        return True
+    if current_label.isdigit() and alnum_label.isdigit():
+        return alnum_confidence >= current_confidence - 0.05
+    if current_label.isalpha() and alnum_label.isalpha():
+        return alnum_confidence >= current_confidence - 0.05
+    return False
 
 
 def _load_digit_model_for_fallback(device: torch.device) -> nn.Module | None:
@@ -1039,28 +1093,13 @@ def predict_characters(
             # it only overrides when it agrees with the current character type
             # or when the old curated model was unsure.
             alnum_was_used = False
+            case_alternatives: list[dict[str, float | str]] = []
             if punctuation_label is None and alnum_model is not None and alnum_labels is not None:
                 alnum_match = _alnum_prediction(alnum_model, alnum_labels, region, selected_device)
-                alnum_label, alnum_confidence = alnum_match
+                alnum_label, alnum_confidence, alnum_alternatives = alnum_match
+                case_alternatives = _case_ambiguity_alternatives(alnum_alternatives)
                 letter_confidence = letter_match[1] if letter_match is not None else 0.0
-                if (
-                    alnum_confidence >= 0.55
-                    and not (alnum_label.isdigit() and letter_confidence >= 0.9)
-                    and (
-                        confidence_value < 0.86
-                        or not str(label).isalnum()
-                        or (
-                            str(label).isdigit()
-                            and alnum_label.isdigit()
-                            and alnum_confidence >= confidence_value - 0.05
-                        )
-                        or (
-                            str(label).isalpha()
-                            and alnum_label.isalpha()
-                            and alnum_confidence >= confidence_value - 0.05
-                        )
-                    )
-                ):
+                if _alnum_should_override(str(label), confidence_value, alnum_label, alnum_confidence, letter_confidence):
                     label = alnum_label
                     confidence_value = max(confidence_value, alnum_confidence)
                     alnum_was_used = True
@@ -1105,9 +1144,12 @@ def predict_characters(
             elif punctuation_label is None and _looks_like_one(region) and str(label) in {"1", "I", "L", "l"}:
                 label = "1"
                 confidence_value = max(confidence_value, 0.92)
+            if case_alternatives:
+                matching_case = next((item for item in case_alternatives if str(item["label"]) == str(label)), None)
+                if matching_case is not None:
+                    confidence_value = float(matching_case["confidence"])
             x0, y0, x1, y1 = region.box
-            predictions.append(
-                {
+            prediction: dict[str, float | int | str | list[dict[str, float | str]]] = {
                     "label": label,
                     "confidence": confidence_value,
                     "x": x0,
@@ -1116,7 +1158,9 @@ def predict_characters(
                     "height": y1 - y0,
                     "row": region.row,
                 }
-            )
+            if case_alternatives:
+                prediction["alternatives"] = case_alternatives
+            predictions.append(prediction)
     predictions = _postprocess_exclamations(predictions)
     predictions = _postprocess_lowercase_i(predictions)
     return _postprocess_colons(predictions)

@@ -1,6 +1,7 @@
 import unittest
 
 from character_model import (
+    _alnum_should_override,
     _digit_beats_ambiguous_letter,
     _letter_should_override,
     _looks_like_four,
@@ -164,6 +165,14 @@ class CharacterPostprocessingTests(unittest.TestCase):
         self.assertFalse(_letter_should_override("4", 0.98, 0.90, False))
         self.assertTrue(_letter_should_override("5", 0.80, 0.93, False))
         self.assertFalse(_letter_should_override("5", 0.80, 0.99, True))
+
+    def test_alnum_model_needs_margin_to_flip_case(self) -> None:
+        """Mixed-case predictions should not erase lowercase on tiny margins."""
+
+        self.assertFalse(_alnum_should_override("s", 0.72, "S", 0.82, 0.0))
+        self.assertTrue(_alnum_should_override("s", 0.72, "S", 0.91, 0.0))
+        self.assertFalse(_alnum_should_override("S", 0.72, "s", 0.78, 0.0))
+        self.assertTrue(_alnum_should_override("S", 0.72, "s", 0.84, 0.0))
 
 
 if __name__ == "__main__":
