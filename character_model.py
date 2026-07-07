@@ -837,15 +837,30 @@ def predict_characters(
             # messy 2/7 drawings, where MNIST is still stronger than EMNIST.
             digit_match = None
             digit_was_used = False
-            if punctuation_label is None and (not str(label).isalpha() or confidence_value < 0.86):
+            if punctuation_label is None and (
+                not str(label).isalpha() or confidence_value < 0.86 or str(label) in {"J", "Z"}
+            ):
                 digit_match = _digit_fallback_prediction(region, selected_device)
                 if digit_match is not None:
                     digit_label, digit_confidence = digit_match
                     letter_confidence = letter_match[1] if letter_match is not None else 0.0
+                    digit_beats_ambiguous_letter = (
+                        (
+                            digit_confidence >= 0.985
+                            and digit_label == "2"
+                            and str(label) == "Z"
+                            and confidence_value < 0.96
+                        )
+                        or (
+                            digit_confidence >= 0.94
+                            and digit_label == "5"
+                            and str(label) == "J"
+                        )
+                    )
                     if (
                         digit_confidence >= 0.80
-                        and letter_confidence < 0.9
-                        and (not str(label).isalpha() or confidence_value < 0.82)
+                        and (letter_confidence < 0.9 or digit_beats_ambiguous_letter)
+                        and (digit_beats_ambiguous_letter or not str(label).isalpha() or confidence_value < 0.82)
                     ):
                         label = digit_label
                         confidence_value = max(confidence_value, digit_confidence)

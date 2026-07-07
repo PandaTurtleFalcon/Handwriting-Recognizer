@@ -120,6 +120,32 @@ class MnistPreprocessingTests(unittest.TestCase):
         self.assertEqual(len(regions), 1)
         self.assertGreater(regions[0].box[3] - regions[0].box[1], 90)
 
+    def test_character_segmentation_merges_disconnected_letter_parts(self) -> None:
+        """Disconnected pieces of a hand-drawn letter should stay together."""
+
+        image = Image.new("L", (120, 120), 255)
+        draw = ImageDraw.Draw(image)
+        draw.line((28, 18, 28, 100), fill=0, width=6)
+        draw.arc((24, 18, 86, 60), start=270, end=90, fill=0, width=6)
+        draw.arc((24, 58, 92, 100), start=270, end=90, fill=0, width=6)
+
+        regions = segment_digit_regions(image, split_wide=False, min_component_pixels=4, merge_marks=True)
+
+        self.assertEqual(len(regions), 1)
+
+    def test_character_segmentation_merges_stacked_digit_parts(self) -> None:
+        """Disconnected top and bottom strokes of a 5 should stay together."""
+
+        image = Image.new("L", (120, 150), 255)
+        draw = ImageDraw.Draw(image)
+        draw.line((75, 25, 35, 25), fill=0, width=7)
+        draw.line((35, 25, 35, 70), fill=0, width=7)
+        draw.arc((25, 58, 88, 125), start=260, end=80, fill=0, width=7)
+
+        regions = segment_digit_regions(image, split_wide=False, min_component_pixels=4, merge_marks=True)
+
+        self.assertEqual(len(regions), 1)
+
     def test_messy_connected_27_segments_and_predicts(self) -> None:
         """The original connected 27 regression should still read correctly."""
 

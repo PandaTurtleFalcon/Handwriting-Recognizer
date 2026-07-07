@@ -483,6 +483,63 @@ def _merge_small_mark_boxes(mask: np.ndarray, boxes: list[tuple[int, int, int, i
     return _sort_boxes_reading_order(merged_boxes)
 
 
+def _merge_disconnected_character_parts(
+    mask: np.ndarray,
+    boxes: list[tuple[int, int, int, int]],
+) -> list[tuple[int, int, int, int]]:
+    """Join substantial overlapping parts of one hand-drawn character."""
+
+    if len(boxes) <= 1:
+        return boxes
+
+    ordered = sorted(boxes, key=lambda item: item[0])
+    merged: list[tuple[int, int, int, int]] = []
+    index = 0
+    while index < len(ordered):
+        current = ordered[index]
+        while index + 1 < len(ordered):
+            following = ordered[index + 1]
+            x0, y0, x1, y1 = current
+            nx0, ny0, nx1, ny1 = following
+            width = x1 - x0
+            height = y1 - y0
+            next_width = nx1 - nx0
+            next_height = ny1 - ny0
+            horizontal_gap = nx0 - x1
+            vertical_overlap = min(y1, ny1) - max(y0, ny0)
+            overlap_ratio = vertical_overlap / max(1, min(height, next_height))
+            horizontal_overlap = min(x1, nx1) - max(x0, nx0)
+            horizontal_overlap_ratio = horizontal_overlap / max(1, min(width, next_width))
+            vertical_gap = ny0 - y1
+            merged_width = max(x1, nx1) - min(x0, nx0)
+            merged_height = max(y1, ny1) - min(y0, ny0)
+            current_area = _box_ink_area(mask, current)
+            next_area = _box_ink_area(mask, following)
+            gap_limit = max(10, int(min(width, next_width) * 0.4), int(min(height, next_height) * 0.28))
+
+            horizontally_near_parts = (
+                horizontal_gap <= gap_limit
+                and overlap_ratio >= 0.55
+            )
+            vertically_stacked_parts = (
+                vertical_gap <= max(12, int(min(height, next_height) * 0.35))
+                and horizontal_overlap_ratio >= 0.35
+            )
+            should_merge = (
+                (horizontally_near_parts or vertically_stacked_parts)
+                and current_area >= 45
+                and next_area >= 45
+                and merged_width / max(merged_height, 1) <= 1.25
+            )
+            if not should_merge:
+                break
+            current = (min(x0, nx0), min(y0, ny0), max(x1, nx1), max(y1, ny1))
+            index += 1
+        merged.append(current)
+        index += 1
+    return _sort_boxes_reading_order(merged)
+
+
 def segment_digit_regions(
     image: Image.Image,
     split_wide: bool = True,
@@ -521,6 +578,7 @@ def segment_digit_regions(
     if split_wide:
         boxes = _refine_digit_boxes(mask, boxes)
     if merge_marks:
+        boxes = _merge_disconnected_character_parts(mask, boxes)
         boxes = _merge_small_mark_boxes(mask, boxes)
     rows = _group_boxes_by_reading_order(boxes)
     digits: list[DigitRegion] = []
