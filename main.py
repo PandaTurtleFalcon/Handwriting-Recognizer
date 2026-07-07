@@ -296,6 +296,37 @@ input[type="file"]:focus-visible {
   font-size: 12px;
   font-weight: 800;
 }
+.full-correction {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  margin: 12px 0 14px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #f8fafc;
+}
+.full-correction label {
+  grid-column: 1 / -1;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 800;
+}
+.full-correction input[type="text"] {
+  min-width: 0;
+  height: 38px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 0 10px;
+  font: inherit;
+}
+.full-correction button {
+  width: auto;
+  min-height: 38px;
+  margin: 0;
+  padding: 0 12px;
+  font-size: 13px;
+}
 .correction-form {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
@@ -317,7 +348,8 @@ input[type="file"]:focus-visible {
   padding: 0 10px;
   font-size: 13px;
 }
-.correction-form button:disabled {
+.correction-form button:disabled,
+.full-correction button:disabled {
   background: #94a3b8;
   cursor: wait;
 }
@@ -664,10 +696,12 @@ def parse_correction_form(body: bytes) -> dict[str, str]:
 def build_correction_record(form: dict[str, str]) -> dict[str, object]:
     """Validate form fields and shape them for the correction JSONL log."""
 
+    correction_kind = form.get("correction_kind", "character").strip() or "character"
     corrected_label = form.get("corrected_label", "").strip()
     if not corrected_label:
         raise ValueError("Type the correct character before saving.")
-    if len(corrected_label) > 16:
+    max_length = 255 if correction_kind == "sequence" else 16
+    if len(corrected_label) > max_length:
         raise ValueError("Correction is too long.")
     try:
         prediction_index = int(form.get("prediction_index", "0"))
@@ -675,9 +709,12 @@ def build_correction_record(form: dict[str, str]) -> dict[str, object]:
         bbox = json.loads(form.get("bbox", "{}"))
     except (TypeError, ValueError, json.JSONDecodeError) as exc:
         raise ValueError("Correction request is malformed.") from exc
-    if prediction_index < 1 or not isinstance(bbox, dict):
+    if correction_kind not in {"character", "sequence"} or not isinstance(bbox, dict):
+        raise ValueError("Correction request is malformed.")
+    if correction_kind == "character" and prediction_index < 1:
         raise ValueError("Correction request is malformed.")
     return {
+        "correction_kind": correction_kind,
         "filename": form.get("filename", "")[:255],
         "sequence": form.get("sequence", "")[:255],
         "prediction_index": prediction_index,
@@ -849,6 +886,7 @@ def render_result(result: dict[str, object]) -> str:
     overlay_html = render_overlays(result, predictions)
     row_html = render_row_sequences(result.get("row_sequences", []))
     context_html = render_context_notes(result.get("context_notes", []))
+    full_correction_html = render_full_correction_form(result)
     return f"""
 <article class="result-panel">
   <div class="result-head">
@@ -857,9 +895,43 @@ def render_result(result: dict[str, object]) -> str:
   </div>
   {row_html}
   {context_html}
+  {full_correction_html}
   {overlay_html}
   <div class="digits">{''.join(digit_cards)}</div>
 </article>"""
+
+
+def render_full_correction_form(result: dict[str, object]) -> str:
+    """Render one whole-result correction field for fixing every character."""
+
+    sequence = str(result.get("sequence", ""))
+    hidden_fields = {
+        "correction_kind": "sequence",
+        "filename": result.get("filename", ""),
+        "sequence": sequence,
+        "prediction_index": 0,
+        "original_label": sequence,
+        "confidence": 0,
+        "bbox": "{}",
+    }
+    inputs = "".join(
+        f'<input type="hidden" name="{html.escape(str(name), quote=True)}" '
+        f'value="{html.escape(str(value), quote=True)}">'
+        for name, value in hidden_fields.items()
+    )
+    label_seed = json.dumps(hidden_fields, ensure_ascii=True, sort_keys=True)
+    label_token = hashlib.sha1(label_seed.encode("utf-8")).hexdigest()[:10]
+    label_id = f"sequence-correction-{label_token}"
+    return (
+        '<form class="full-correction" action="/correct" method="post" data-correction-form>'
+        f"{inputs}"
+        f'<label for="{label_id}">Fix the whole result</label>'
+        f'<input id="{label_id}" name="corrected_label" type="text" maxlength="255" '
+        f'value="{html.escape(sequence, quote=True)}" autocomplete="off">'
+        '<button type="submit">Save all</button>'
+        '<span class="correction-status" data-correction-status></span>'
+        "</form>"
+    )
 
 
 def render_correction_form(result: dict[str, object], prediction: dict[str, object], index: int) -> str:
@@ -873,6 +945,7 @@ def render_correction_form(result: dict[str, object], prediction: dict[str, obje
         "row": prediction.get("row", 1),
     }
     hidden_fields = {
+        "correction_kind": "character",
         "filename": result.get("filename", ""),
         "sequence": result.get("sequence", ""),
         "prediction_index": index,

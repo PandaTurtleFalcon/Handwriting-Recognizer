@@ -79,6 +79,9 @@ class WebAppRenderingTests(unittest.TestCase):
         self.assertIn('name="bbox"', html)
         self.assertIn("data-correction-form", html)
         self.assertIn("data-correction-status", html)
+        self.assertIn("Fix the whole result", html)
+        self.assertIn('name="correction_kind"', html)
+        self.assertIn('value="sequence"', html)
 
     def test_correction_forms_have_unique_input_ids(self) -> None:
         """Multiple correction fields should be independently focusable."""
@@ -98,9 +101,32 @@ class WebAppRenderingTests(unittest.TestCase):
 
         html = main.render_result(result)
 
-        self.assertEqual(html.count('name="corrected_label"'), 2)
+        self.assertEqual(html.count('name="corrected_label"'), 3)
         self.assertEqual(html.count('id="correction-'), 2)
-        self.assertEqual(len(set(part.split('"', 1)[0] for part in html.split('id="')[1:])), 2)
+        self.assertEqual(len(set(part.split('"', 1)[0] for part in html.split('id="')[1:])), 3)
+
+    def test_full_result_correction_can_save_entire_text(self) -> None:
+        """Whole-result correction should allow fixing every predicted character."""
+
+        html = main.render_result(
+            {
+                "filename": "phrase.png",
+                "sequence": "HL:",
+                "row_sequences": ["HL:"],
+                "preview": "data:image/png;base64,abc",
+                "image_width": 100,
+                "image_height": 50,
+                "predictions": [
+                    {"label": "H", "confidence": 0.95, "x": 10, "y": 5, "width": 20, "height": 30, "row": 1},
+                    {"label": "L", "confidence": 0.75, "x": 50, "y": 5, "width": 10, "height": 30, "row": 1},
+                    {"label": ":", "confidence": 0.90, "x": 70, "y": 5, "width": 10, "height": 30, "row": 1},
+                ],
+            }
+        )
+
+        self.assertIn('class="full-correction"', html)
+        self.assertIn('value="HL:"', html)
+        self.assertIn("Save all", html)
 
     def test_valid_image_with_bad_extension_is_decoded_by_content(self) -> None:
         """Image content should matter more than filename extension."""
@@ -364,6 +390,7 @@ class WebAppRenderingTests(unittest.TestCase):
         record = main.build_correction_record(form)
 
         self.assertEqual(record["filename"], "sample.png")
+        self.assertEqual(record["correction_kind"], "character")
         self.assertEqual(record["sequence"], "T3L87")
         self.assertEqual(record["prediction_index"], 3)
         self.assertEqual(record["original_label"], "L")
@@ -371,6 +398,22 @@ class WebAppRenderingTests(unittest.TestCase):
         self.assertEqual(record["confidence"], 0.904)
         self.assertEqual(record["bbox"], {"x": 10.0, "y": 20.0, "width": 30.0, "height": 40.0, "row": 1})
         self.assertIn("timestamp", record)
+
+    def test_parse_sequence_correction_builds_training_record(self) -> None:
+        """Whole-result corrections should preserve the complete corrected text."""
+
+        body = (
+            b"correction_kind=sequence&filename=sample.png&sequence=HL%3A&prediction_index=0"
+            b"&original_label=HL%3A&corrected_label=Hi%21&confidence=0&bbox=%7B%7D"
+        )
+
+        form = main.parse_correction_form(body)
+        record = main.build_correction_record(form)
+
+        self.assertEqual(record["correction_kind"], "sequence")
+        self.assertEqual(record["prediction_index"], 0)
+        self.assertEqual(record["original_label"], "HL:")
+        self.assertEqual(record["corrected_label"], "Hi!")
 
     def test_save_correction_appends_jsonl(self) -> None:
         """Saved corrections should append one JSON object per line."""
