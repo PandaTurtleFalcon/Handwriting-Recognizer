@@ -1,5 +1,8 @@
 import io
+import json
+import tempfile
 import unittest
+from pathlib import Path
 from unittest.mock import patch
 
 from PIL import Image
@@ -71,6 +74,9 @@ class WebAppRenderingTests(unittest.TestCase):
         self.assertIn('class="sequence">01</div>', html)
         self.assertIn('aria-label="Prediction 1: digit 0, confidence 95.0 percent"', html)
         self.assertIn('<span class="digit-index">#2</span> 1', html)
+        self.assertIn('action="/correct"', html)
+        self.assertIn('name="corrected_label"', html)
+        self.assertIn('name="bbox"', html)
 
     def test_valid_image_with_bad_extension_is_decoded_by_content(self) -> None:
         """Image content should matter more than filename extension."""
@@ -83,6 +89,29 @@ class WebAppRenderingTests(unittest.TestCase):
 
         self.assertEqual(results[0]["sequence"], "8")
         self.assertIn("preview", results[0])
+
+    def test_classify_files_applies_context_cleanup_to_display(self) -> None:
+        """Obvious context cleanup should affect display text, not predictions."""
+
+        fake_predictions = [
+            {"label": "H", "confidence": 0.9, "x": 1, "y": 1, "width": 20, "height": 20, "row": 1},
+            {"label": "L", "confidence": 0.8, "x": 25, "y": 1, "width": 10, "height": 20, "row": 1},
+            {"label": "!", "confidence": 0.9, "x": 40, "y": 1, "width": 8, "height": 20, "row": 1},
+        ]
+        previous_kind = main.MnistWebHandler.recognizer_kind
+        previous_labels = main.MnistWebHandler.labels
+        main.MnistWebHandler.recognizer_kind = "characters"
+        main.MnistWebHandler.labels = ["H", "L", "!"]
+        try:
+            with patch.object(main, "predict_characters", return_value=fake_predictions):
+                results = main.classify_files([("greeting.png", png_bytes())], model=object(), device=object())
+        finally:
+            main.MnistWebHandler.recognizer_kind = previous_kind
+            main.MnistWebHandler.labels = previous_labels
+
+        self.assertEqual(results[0]["sequence"], "Hi!")
+        self.assertEqual([item["label"] for item in results[0]["predictions"]], ["H", "L", "!"])
+        self.assertTrue(results[0]["context_notes"])
 
     def test_parse_multipart_accepts_case_insensitive_content_type(self) -> None:
         """Multipart content type parsing should be case-insensitive."""
@@ -163,8 +192,8 @@ class WebAppRenderingTests(unittest.TestCase):
         self.assertEqual(mock_characters.call_args.kwargs["alnum_labels"], ["0", "A"])
         self.assertEqual(results[0]["sequence"], "A")
 
-    def test_result_cards_show_case_alternatives(self) -> None:
-        """Ambiguous upper/lower predictions should expose both confidences."""
+    def test_result_cards_show_top_three_guesses(self) -> None:
+        """Ambiguous predictions should expose the strongest alternatives."""
 
         html = main.render_result(
             {
@@ -192,9 +221,148 @@ class WebAppRenderingTests(unittest.TestCase):
             }
         )
 
-        self.assertIn("case:", html)
+        self.assertIn("top guesses:", html)
         self.assertIn("<b>s</b> 58.0%", html)
         self.assertIn("<b>S</b> 32.0%", html)
+        self.assertIn('class="digit uncertain"', html)
+        self.assertIn('class="digit-box uncertain"', html)
+
+    def test_render_result_shows_context_notes(self) -> None:
+        """Context cleanup notes should be visible in the result panel."""
+
+        html = main.render_result(
+            {
+                "filename": "context.png",
+                "sequence": "Hi!",
+                "row_sequences": ["Hi!"],
+                "context_notes": ["Read H followed by a skinny stroke as the greeting 'Hi'."],
+                "preview": "data:image/png;base64,",
+                "image_width": 100,
+                "image_height": 100,
+                "predictions": [
+                    {"label": "H", "confidence": 0.9, "x": 1, "y": 1, "width": 20, "height": 20, "row": 1}
+                ],
+            }
+        )
+
+        self.assertIn("skinny stroke", html)
+
+    def test_result_cards_limit_top_guesses_to_three(self) -> None:
+        """The result card should stay compact when many alternatives exist."""
+
+        html = main.render_result(
+            {
+                "filename": "many.png",
+                "sequence": "8",
+                "row_sequences": ["8"],
+                "preview": "data:image/png;base64,",
+                "image_width": 100,
+                "image_height": 100,
+                "predictions": [
+                    {
+                        "label": "8",
+                        "confidence": 0.91,
+                        "x": 1,
+                        "y": 1,
+                        "width": 20,
+                        "height": 20,
+                        "row": 1,
+                        "alternatives": [
+                            {"label": "8", "confidence": 0.91},
+                            {"label": "B", "confidence": 0.40},
+                            {"label": "3", "confidence": 0.22},
+                            {"label": "S", "confidence": 0.18},
+                        ],
+                    }
+                ],
+            }
+        )
+
+        self.assertIn("<b>8</b> 91.0%", html)
+        self.assertIn("<b>B</b> 40.0%", html)
+        self.assertIn("<b>3</b> 22.0%", html)
+        self.assertNotIn("<b>S</b> 18.0%", html)
+
+    def test_low_confidence_prediction_is_marked_uncertain(self) -> None:
+        """Low-confidence predictions should be visually marked as uncertain."""
+
+        html = main.render_result(
+            {
+                "filename": "low.png",
+                "sequence": "7",
+                "row_sequences": ["7"],
+                "preview": "data:image/png;base64,",
+                "image_width": 100,
+                "image_height": 100,
+                "predictions": [
+                    {"label": "7", "confidence": 0.62, "x": 1, "y": 1, "width": 20, "height": 20, "row": 1}
+                ],
+            }
+        )
+
+        self.assertIn('class="digit uncertain"', html)
+        self.assertIn("uncertain", html)
+        self.assertIn('aria-label="Prediction 1: digit 7, confidence 62.0 percent, uncertain"', html)
+
+    def test_close_alternatives_mark_prediction_uncertain(self) -> None:
+        """A close top-two margin should also get the yellow uncertain state."""
+
+        prediction = {
+            "label": "S",
+            "confidence": 0.86,
+            "alternatives": [
+                {"label": "S", "confidence": 0.86},
+                {"label": "s", "confidence": 0.80},
+            ],
+        }
+
+        self.assertTrue(main.is_prediction_uncertain(prediction))
+
+    def test_parse_correction_form_builds_training_record(self) -> None:
+        """Correction forms should produce stable JSONL-ready records."""
+
+        body = (
+            b"filename=sample.png&sequence=T3L87&prediction_index=3&original_label=L"
+            b"&corrected_label=%28&confidence=0.904"
+            b"&bbox=%7B%22x%22%3A10%2C%22y%22%3A20%2C%22width%22%3A30%2C%22height%22%3A40%2C%22row%22%3A1%7D"
+        )
+
+        form = main.parse_correction_form(body)
+        record = main.build_correction_record(form)
+
+        self.assertEqual(record["filename"], "sample.png")
+        self.assertEqual(record["sequence"], "T3L87")
+        self.assertEqual(record["prediction_index"], 3)
+        self.assertEqual(record["original_label"], "L")
+        self.assertEqual(record["corrected_label"], "(")
+        self.assertEqual(record["confidence"], 0.904)
+        self.assertEqual(record["bbox"], {"x": 10.0, "y": 20.0, "width": 30.0, "height": 40.0, "row": 1})
+        self.assertIn("timestamp", record)
+
+    def test_save_correction_appends_jsonl(self) -> None:
+        """Saved corrections should append one JSON object per line."""
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "corrections.jsonl"
+            record = {
+                "filename": "sample.png",
+                "sequence": "S",
+                "prediction_index": 1,
+                "original_label": "S",
+                "corrected_label": "s",
+                "confidence": 0.58,
+                "bbox": {"x": 1, "y": 2, "width": 3, "height": 4, "row": 1},
+                "timestamp": "2026-07-07T18:00:00+00:00",
+            }
+
+            main.save_correction(record, path=path)
+            main.save_correction({**record, "corrected_label": "5"}, path=path)
+
+            lines = path.read_text(encoding="utf-8").splitlines()
+
+        self.assertEqual(len(lines), 2)
+        self.assertEqual(json.loads(lines[0])["corrected_label"], "s")
+        self.assertEqual(json.loads(lines[1])["corrected_label"], "5")
 
 
 if __name__ == "__main__":

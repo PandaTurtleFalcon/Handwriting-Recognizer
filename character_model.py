@@ -526,6 +526,36 @@ def _case_ambiguity_alternatives(alternatives: list[dict[str, float | str]]) -> 
     return []
 
 
+def _top_alternatives(alternatives: list[dict[str, float | str]], selected_label: str) -> list[dict[str, float | str]]:
+    """Return compact top guesses, always keeping the selected label visible."""
+
+    cleaned: list[dict[str, float | str]] = []
+    seen: set[str] = set()
+    for item in alternatives:
+        label = str(item["label"])
+        if label in seen:
+            continue
+        cleaned.append({"label": label, "confidence": float(item["confidence"])})
+        seen.add(label)
+        if len(cleaned) >= 3:
+            break
+    if selected_label not in seen:
+        cleaned.insert(0, {"label": selected_label, "confidence": 0.0})
+        cleaned = cleaned[:3]
+    return cleaned
+
+
+def _is_uncertain(confidence: float, alternatives: list[dict[str, float | str]]) -> bool:
+    """Return true when a prediction should be shown as needing review."""
+
+    if confidence < 0.75:
+        return True
+    if len(alternatives) >= 2:
+        gap = float(alternatives[0]["confidence"]) - float(alternatives[1]["confidence"])
+        return gap < 0.15
+    return False
+
+
 def _alnum_should_override(
     current_label: str,
     current_confidence: float,
@@ -994,53 +1024,120 @@ def _postprocess_exclamations(predictions: list[dict[str, float | int | str]]) -
     return sorted(merged, key=lambda item: (int(item["row"]), int(item["x"])))
 
 
+def _split_box(mask: np.ndarray, left: int, right: int) -> tuple[int, int, int, int] | None:
+    """Return the foreground bounds inside a horizontal slice."""
+
+    submask = mask[:, left:right]
+    ys, xs = np.where(submask)
+    if len(xs) < 20:
+        return None
+    return (left + int(xs.min()), int(ys.min()), left + int(xs.max()) + 1, int(ys.max()) + 1)
+
+
+def _blank_seam_cut(smoothed_projection: np.ndarray) -> int | None:
+    """Find a split column from a truly blank-ish internal seam."""
+
+    width = len(smoothed_projection)
+    start = int(width * 0.30)
+    stop = int(width * 0.72)
+    low_columns = np.where(
+        smoothed_projection[start:stop] <= max(1.0, float(smoothed_projection.max()) * 0.08)
+    )[0] + start
+    if len(low_columns) < 5:
+        return None
+
+    groups = np.split(low_columns, np.where(np.diff(low_columns) > 1)[0] + 1)
+    group = max(groups, key=len)
+    if len(group) < 5:
+        return None
+    return int(round(float(group.mean())))
+
+
+def _thin_bridge_cut(mask: np.ndarray, smoothed_projection: np.ndarray) -> int | None:
+    """Find a split column where two glyphs touch through a small bridge."""
+
+    height, width = mask.shape
+    if width < 110 or width / max(height, 1) < 1.15:
+        return None
+
+    start = int(width * 0.28)
+    stop = int(width * 0.74)
+    if stop <= start:
+        return None
+
+    window = smoothed_projection[start:stop]
+    cut = start + int(np.argmin(window))
+    left_peak = float(smoothed_projection[max(0, cut - 28) : max(0, cut - 4)].max(initial=0.0))
+    right_peak = float(smoothed_projection[min(width, cut + 5) : min(width, cut + 29)].max(initial=0.0))
+    neighbor_peak = min(left_peak, right_peak)
+    valley = float(smoothed_projection[cut])
+    if neighbor_peak <= 0.0 or valley > max(2.5, neighbor_peak * 0.34):
+        return None
+
+    bridge_ink = int(mask[:, max(0, cut - 2) : min(width, cut + 3)].sum())
+    if bridge_ink > max(10, int(height * 0.22)):
+        return None
+
+    left_box = _split_box(mask, 0, cut)
+    right_box = _split_box(mask, cut, width)
+    if left_box is None or right_box is None:
+        return None
+    left_width = left_box[2] - left_box[0]
+    right_width = right_box[2] - right_box[0]
+    left_height = left_box[3] - left_box[1]
+    right_height = right_box[3] - right_box[1]
+    left_is_narrow_mark = left_width >= 8 and left_height >= height * 0.45
+    right_is_narrow_mark = right_width >= 8 and right_height >= height * 0.45
+    if (left_width < 24 and not left_is_narrow_mark) or (right_width < 24 and not right_is_narrow_mark):
+        return None
+    return cut
+
+
+def _split_one_touching_character_region(region: DigitRegion) -> list[DigitRegion]:
+    """Split one wide region when it has a safe vertical cut."""
+
+    mask = _foreground_from_image(region.image) > 0.18
+    height, width = mask.shape
+    if height <= 0 or width <= 0 or width / max(height, 1) < 0.85 or width < 90:
+        return [region]
+
+    projection = mask.sum(axis=0).astype(np.float32)
+    smoothed = np.convolve(projection, np.ones(9, dtype=np.float32) / 9.0, mode="same")
+    cut = _blank_seam_cut(smoothed)
+    if cut is None:
+        cut = _thin_bridge_cut(mask, smoothed)
+    if cut is None:
+        return [region]
+
+    local_boxes = [_split_box(mask, 0, cut), _split_box(mask, cut, width)]
+    if any(box is None for box in local_boxes):
+        return [region]
+
+    x0, y0, _, _ = region.box
+    split_regions: list[DigitRegion] = []
+    for lx0, ly0, lx1, ly1 in local_boxes:
+        split_regions.append(
+            DigitRegion(
+                image=region.image.crop((lx0, ly0, lx1, ly1)),
+                box=(x0 + lx0, y0 + ly0, x0 + lx1, y0 + ly1),
+                row=region.row,
+            )
+        )
+    return split_regions
+
+
 def _split_touching_character_regions(regions: list[DigitRegion]) -> list[DigitRegion]:
-    """Split wide regions that contain a blank internal seam."""
+    """Split wide regions that contain either a seam or a thin touching bridge."""
 
     split_regions: list[DigitRegion] = []
-    for region in regions:
-        mask = _foreground_from_image(region.image) > 0.18
-        height, width = mask.shape
-        if height <= 0 or width <= 0 or width / max(height, 1) < 0.85 or width < 90:
-            split_regions.append(region)
+    pending: list[tuple[DigitRegion, int]] = [(region, 0) for region in regions]
+    while pending:
+        region, depth = pending.pop(0)
+        pieces = _split_one_touching_character_region(region)
+        if len(pieces) == 1 or depth >= 2:
+            split_regions.extend(pieces)
             continue
-
-        projection = mask.sum(axis=0).astype(np.float32)
-        smoothed = np.convolve(projection, np.ones(9, dtype=np.float32) / 9.0, mode="same")
-        start = int(width * 0.30)
-        stop = int(width * 0.72)
-        low_columns = np.where(smoothed[start:stop] <= max(1.0, float(smoothed.max()) * 0.08))[0] + start
-        if len(low_columns) < 5:
-            split_regions.append(region)
-            continue
-
-        groups = np.split(low_columns, np.where(np.diff(low_columns) > 1)[0] + 1)
-        group = max(groups, key=len)
-        if len(group) < 5:
-            split_regions.append(region)
-            continue
-        cut = int(round(float(group.mean())))
-
-        local_boxes: list[tuple[int, int, int, int]] = []
-        for left, right in ((0, cut), (cut, width)):
-            submask = mask[:, left:right]
-            ys, xs = np.where(submask)
-            if len(xs) < 20:
-                continue
-            local_boxes.append((left + int(xs.min()), int(ys.min()), left + int(xs.max()) + 1, int(ys.max()) + 1))
-        if len(local_boxes) != 2:
-            split_regions.append(region)
-            continue
-
-        x0, y0, _, _ = region.box
-        for lx0, ly0, lx1, ly1 in local_boxes:
-            split_regions.append(
-                DigitRegion(
-                    image=region.image.crop((lx0, ly0, lx1, ly1)),
-                    box=(x0 + lx0, y0 + ly0, x0 + lx1, y0 + ly1),
-                    row=region.row,
-                )
-            )
+        pending.extend((piece, depth + 1) for piece in pieces)
 
     return sorted(split_regions, key=lambda item: (item.row, item.box[0]))
 
@@ -1093,6 +1190,7 @@ def predict_characters(
             # it only overrides when it agrees with the current character type
             # or when the old curated model was unsure.
             alnum_was_used = False
+            alnum_alternatives: list[dict[str, float | str]] = []
             case_alternatives: list[dict[str, float | str]] = []
             if punctuation_label is None and alnum_model is not None and alnum_labels is not None:
                 alnum_match = _alnum_prediction(alnum_model, alnum_labels, region, selected_device)
@@ -1148,6 +1246,7 @@ def predict_characters(
                 matching_case = next((item for item in case_alternatives if str(item["label"]) == str(label)), None)
                 if matching_case is not None:
                     confidence_value = float(matching_case["confidence"])
+            top_alternatives = _top_alternatives(alnum_alternatives, str(label)) if alnum_alternatives else []
             x0, y0, x1, y1 = region.box
             prediction: dict[str, float | int | str | list[dict[str, float | str]]] = {
                     "label": label,
@@ -1158,8 +1257,8 @@ def predict_characters(
                     "height": y1 - y0,
                     "row": region.row,
                 }
-            if case_alternatives:
-                prediction["alternatives"] = case_alternatives
+            if top_alternatives:
+                prediction["alternatives"] = top_alternatives
             predictions.append(prediction)
     predictions = _postprocess_exclamations(predictions)
     predictions = _postprocess_lowercase_i(predictions)

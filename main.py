@@ -8,6 +8,7 @@ renders the original image with numbered bounding boxes that match the cards.
 from __future__ import annotations
 
 import base64
+import datetime as dt
 import html
 import io
 import json
@@ -16,7 +17,7 @@ from email.parser import BytesParser
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import urlparse
+from urllib.parse import parse_qs, urlparse
 
 from PIL import Image, ImageOps, UnidentifiedImageError
 
@@ -27,6 +28,7 @@ from alnum_model import load_mixedcase_model
 from character_model import METRICS_PATH as CHARACTER_METRICS_PATH
 from character_model import WEIGHTS_PATH as CHARACTER_WEIGHTS_PATH
 from character_model import load_alnum_model, load_character_model, load_letter_model, predict_characters
+from context_rules import cleanup_context
 from emnist_experiment import METRICS_PATH as LETTER_METRICS_PATH
 from emnist_experiment import WEIGHTS_PATH as LETTER_WEIGHTS_PATH
 from mnist_model import METRICS_PATH, WEIGHTS_PATH, get_device, load_model, predict_digits
@@ -37,6 +39,10 @@ PORT = 8000
 MAX_UPLOAD_BYTES = 8 * 1024 * 1024
 MAX_IMAGE_PIXELS = 4_000_000
 MAX_FILES = 20
+CORRECTIONS_PATH = Path("data") / "corrections" / "corrections.jsonl"
+LOW_CONFIDENCE_THRESHOLD = 0.80
+CLOSE_GUESS_MARGIN = 0.12
+TOP_GUESS_LIMIT = 3
 Image.MAX_IMAGE_PIXELS = MAX_IMAGE_PIXELS * 2
 
 
@@ -51,6 +57,9 @@ PAGE_CSS = """
   --accent: #2563eb;
   --accent-dark: #1e40af;
   --ok: #15803d;
+  --warn: #b45309;
+  --warn-bg: #fffbeb;
+  --warn-line: #f59e0b;
 }
 * { box-sizing: border-box; }
 body {
@@ -218,6 +227,9 @@ input[type="file"]:focus-visible {
   border-radius: 5px;
   box-shadow: 0 0 0 2px rgb(255 255 255 / 0.9);
 }
+.digit-box.uncertain {
+  border-color: var(--warn-line);
+}
 .digit-box span {
   position: absolute;
   top: 0;
@@ -232,10 +244,18 @@ input[type="file"]:focus-visible {
   font-size: 13px;
   font-weight: 900;
 }
+.digit-box.uncertain span {
+  background: var(--warn-line);
+}
 .digit-box:hover,
 .digit-box:focus-visible {
   border-color: #991b1b;
   outline: 3px solid rgb(220 38 38 / 0.25);
+}
+.digit-box.uncertain:hover,
+.digit-box.uncertain:focus-visible {
+  border-color: var(--warn);
+  outline: 3px solid rgb(245 158 11 / 0.28);
 }
 .digit-index {
   color: #dc2626;
@@ -246,6 +266,10 @@ input[type="file"]:focus-visible {
   border-radius: 8px;
   padding: 12px;
   background: #fbfdff;
+}
+.digit.uncertain {
+  border-color: var(--warn-line);
+  background: var(--warn-bg);
 }
 .digit strong {
   display: block;
@@ -264,9 +288,41 @@ input[type="file"]:focus-visible {
 .alternatives b {
   color: var(--ink);
 }
+.uncertain-note {
+  display: inline-block;
+  margin-top: 7px;
+  color: var(--warn);
+  font-size: 12px;
+  font-weight: 800;
+}
+.correction-form {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  margin-top: 10px;
+}
+.correction-form input[type="text"] {
+  min-width: 0;
+  height: 34px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 0 9px;
+  font: inherit;
+}
+.correction-form button {
+  width: auto;
+  min-height: 34px;
+  margin: 0;
+  padding: 0 10px;
+  font-size: 13px;
+}
 .error {
   border-color: #fecaca;
   background: #fff7f7;
+}
+.notice {
+  border-color: #bbf7d0;
+  background: #f0fdf4;
 }
 code {
   color: var(--accent-dark);
@@ -313,9 +369,12 @@ class MnistWebHandler(BaseHTTPRequestHandler):
         self.send_error(HTTPStatus.NOT_FOUND)
 
     def do_POST(self) -> None:
-        """Accept multipart uploads and render prediction results."""
+        """Accept prediction uploads or correction submissions."""
 
         parsed = urlparse(self.path)
+        if parsed.path == "/correct":
+            self._handle_correction_post()
+            return
         if parsed.path != "/predict":
             self.send_error(HTTPStatus.NOT_FOUND)
             return
@@ -344,6 +403,31 @@ class MnistWebHandler(BaseHTTPRequestHandler):
                 render_page(error="Prediction failed. Check that the upload is a valid handwriting image and try again."),
                 HTTPStatus.INTERNAL_SERVER_ERROR,
             )
+
+    def _handle_correction_post(self) -> None:
+        """Persist one user correction from a result card."""
+
+        try:
+            length = int(self.headers.get("Content-Length", "0"))
+        except ValueError:
+            self._send_html(render_page(error="Correction request is malformed."), HTTPStatus.BAD_REQUEST)
+            return
+        if length <= 0 or length > 16_384:
+            self._send_html(render_page(error="Correction request is malformed."), HTTPStatus.BAD_REQUEST)
+            return
+        body = self.rfile.read(length)
+        try:
+            form = parse_correction_form(body)
+            record = build_correction_record(form)
+            save_correction(record)
+        except ValueError as exc:
+            self._send_html(render_page(error=str(exc)), HTTPStatus.BAD_REQUEST)
+            return
+        except OSError as exc:
+            print(f"Correction save failed: {exc!r}")
+            self._send_html(render_page(error="Could not save that correction."), HTTPStatus.INTERNAL_SERVER_ERROR)
+            return
+        self._send_html(render_page(notice="Correction saved. Thanks, this can be used for retraining."))
 
     def _send_html(self, body: str, status: HTTPStatus = HTTPStatus.OK) -> None:
         """Send a UTF-8 HTML response."""
@@ -435,13 +519,15 @@ def classify_files(files: list[tuple[str, bytes]], model, device) -> list[dict[s
             )
             continue
 
-        sequence = "".join(prediction_value(item) for item in predictions)
-        row_sequences = build_row_sequences(predictions)
+        raw_sequence = "".join(prediction_value(item) for item in predictions)
+        raw_row_sequences = build_row_sequences(predictions)
+        context = cleanup_context(raw_sequence, raw_row_sequences)
         results.append(
             {
                 "filename": filename,
-                "sequence": sequence,
-                "row_sequences": row_sequences,
+                "sequence": context.display,
+                "row_sequences": context.rows,
+                "context_notes": context.notes,
                 "predictions": predictions,
                 "preview": image_to_data_url(image),
                 "image_width": image.width,
@@ -470,6 +556,35 @@ def prediction_value(prediction: dict[str, object]) -> str:
     return str(prediction.get("label", prediction.get("digit", "")))
 
 
+def top_guesses(prediction: dict[str, object]) -> list[dict[str, object]]:
+    """Return up to three model alternatives sorted by confidence."""
+
+    alternatives = prediction.get("alternatives", [])
+    if not isinstance(alternatives, list):
+        return []
+    guesses = [item for item in alternatives if isinstance(item, dict) and item.get("label", "") != ""]
+    return sorted(guesses, key=lambda item: float(item.get("confidence", 0)), reverse=True)[:TOP_GUESS_LIMIT]
+
+
+def is_prediction_uncertain(prediction: dict[str, object]) -> bool:
+    """Flag predictions whose confidence or alternatives make the result shaky."""
+
+    confidence = float(prediction.get("confidence", 0))
+    if confidence < LOW_CONFIDENCE_THRESHOLD:
+        return True
+    guesses = top_guesses(prediction)
+    if not guesses:
+        return False
+    displayed = prediction_value(prediction)
+    top_confidence = float(guesses[0].get("confidence", 0))
+    if str(guesses[0].get("label", "")) != displayed and top_confidence >= confidence:
+        return True
+    if len(guesses) < 2:
+        return False
+    second_confidence = float(guesses[1].get("confidence", 0))
+    return top_confidence - second_confidence <= CLOSE_GUESS_MARGIN
+
+
 def image_to_data_url(image: Image.Image) -> str:
     """Convert a preview image into an inline browser-safe data URL."""
 
@@ -481,7 +596,60 @@ def image_to_data_url(image: Image.Image) -> str:
     return f"data:image/png;base64,{encoded}"
 
 
-def render_page(results: list[dict[str, object]] | None = None, error: str | None = None) -> str:
+def parse_correction_form(body: bytes) -> dict[str, str]:
+    """Parse a URL-encoded correction form into single string values."""
+
+    fields = parse_qs(body.decode("utf-8"), keep_blank_values=True, strict_parsing=True)
+    return {key: values[-1] if values else "" for key, values in fields.items()}
+
+
+def build_correction_record(form: dict[str, str]) -> dict[str, object]:
+    """Validate form fields and shape them for the correction JSONL log."""
+
+    corrected_label = form.get("corrected_label", "").strip()
+    if not corrected_label:
+        raise ValueError("Type the correct character before saving.")
+    if len(corrected_label) > 16:
+        raise ValueError("Correction is too long.")
+    try:
+        prediction_index = int(form.get("prediction_index", "0"))
+        confidence = float(form.get("confidence", "0"))
+        bbox = json.loads(form.get("bbox", "{}"))
+    except (TypeError, ValueError, json.JSONDecodeError) as exc:
+        raise ValueError("Correction request is malformed.") from exc
+    if prediction_index < 1 or not isinstance(bbox, dict):
+        raise ValueError("Correction request is malformed.")
+    return {
+        "filename": form.get("filename", "")[:255],
+        "sequence": form.get("sequence", "")[:255],
+        "prediction_index": prediction_index,
+        "original_label": form.get("original_label", "")[:16],
+        "corrected_label": corrected_label,
+        "confidence": confidence,
+        "bbox": {
+            "x": float(bbox.get("x", 0)),
+            "y": float(bbox.get("y", 0)),
+            "width": float(bbox.get("width", 0)),
+            "height": float(bbox.get("height", 0)),
+            "row": int(bbox.get("row", 1)),
+        },
+        "timestamp": dt.datetime.now(dt.UTC).isoformat(),
+    }
+
+
+def save_correction(record: dict[str, object], path: Path = CORRECTIONS_PATH) -> None:
+    """Append one validated correction record to the training feedback log."""
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(record, ensure_ascii=False, sort_keys=True) + "\n")
+
+
+def render_page(
+    results: list[dict[str, object]] | None = None,
+    error: str | None = None,
+    notice: str | None = None,
+) -> str:
     """Render the complete upload/results page."""
 
     metrics = read_metrics()
@@ -531,6 +699,8 @@ def render_page(results: list[dict[str, object]] | None = None, error: str | Non
     result_html = ""
     if error:
         result_html = f'<section class="empty-panel error"><p>{html.escape(error)}</p></section>'
+    elif notice:
+        result_html = f'<section class="empty-panel notice"><p>{html.escape(notice)}</p></section>'
     elif results:
         result_html = "\n".join(render_result(item) for item in results)
     else:
@@ -595,26 +765,31 @@ def render_result(result: dict[str, object]) -> str:
     predictions = result.get("predictions", [])
     digit_cards = []
     for index, prediction in enumerate(predictions, start=1):
+        if not isinstance(prediction, dict):
+            continue
         digit = html.escape(prediction_value(prediction))
         confidence = float(prediction["confidence"]) * 100
-        alternatives = prediction.get("alternatives", [])
+        uncertain = is_prediction_uncertain(prediction)
         alternatives_html = ""
-        if isinstance(alternatives, list) and alternatives:
+        guesses = top_guesses(prediction)
+        if guesses:
             items = []
-            for alternative in alternatives:
-                if not isinstance(alternative, dict):
-                    continue
+            for alternative in guesses:
                 label = html.escape(str(alternative.get("label", "")))
                 alt_confidence = 100.0 * float(alternative.get("confidence", 0))
                 items.append(f"<b>{label}</b> {alt_confidence:.1f}%")
             if items:
-                alternatives_html = f'<div class="alternatives">case: {" / ".join(items)}</div>'
+                alternatives_html = f'<div class="alternatives">top guesses: {" / ".join(items)}</div>'
+        uncertain_html = '<span class="uncertain-note">uncertain</span>' if uncertain else ""
+        card_class = "digit uncertain" if uncertain else "digit"
+        correction_html = render_correction_form(result, prediction, index)
         digit_cards.append(
-            f'<div class="digit"><strong><span class="digit-index">#{index}</span> {digit}</strong>'
-            f'<span>confidence {confidence:.1f}%</span>{alternatives_html}</div>'
-        )
+            f'<div class="{card_class}"><strong><span class="digit-index">#{index}</span> {digit}</strong>'
+            f'<span>confidence {confidence:.1f}%</span>{uncertain_html}{alternatives_html}{correction_html}</div>'
+    )
     overlay_html = render_overlays(result, predictions)
     row_html = render_row_sequences(result.get("row_sequences", []))
+    context_html = render_context_notes(result.get("context_notes", []))
     return f"""
 <article class="result-panel">
   <div class="result-head">
@@ -622,9 +797,45 @@ def render_result(result: dict[str, object]) -> str:
     <div class="sequence">{html.escape(str(result.get("sequence", "")))}</div>
   </div>
   {row_html}
+  {context_html}
   {overlay_html}
   <div class="digits">{''.join(digit_cards)}</div>
 </article>"""
+
+
+def render_correction_form(result: dict[str, object], prediction: dict[str, object], index: int) -> str:
+    """Render a tiny per-character correction form for later retraining."""
+
+    bbox = {
+        "x": prediction.get("x", 0),
+        "y": prediction.get("y", 0),
+        "width": prediction.get("width", 0),
+        "height": prediction.get("height", 0),
+        "row": prediction.get("row", 1),
+    }
+    hidden_fields = {
+        "filename": result.get("filename", ""),
+        "sequence": result.get("sequence", ""),
+        "prediction_index": index,
+        "original_label": prediction_value(prediction),
+        "confidence": prediction.get("confidence", 0),
+        "bbox": json.dumps(bbox, separators=(",", ":")),
+    }
+    inputs = "".join(
+        f'<input type="hidden" name="{html.escape(str(name), quote=True)}" '
+        f'value="{html.escape(str(value), quote=True)}">'
+        for name, value in hidden_fields.items()
+    )
+    label_id = f"correction-{index}"
+    return (
+        '<form class="correction-form" action="/correct" method="post">'
+        f"{inputs}"
+        f'<label class="sr-only" for="{label_id}">Correct prediction #{index}</label>'
+        f'<input id="{label_id}" name="corrected_label" type="text" maxlength="16" '
+        f'placeholder="fix #{index}" autocomplete="off">'
+        '<button type="submit">Save</button>'
+        "</form>"
+    )
 
 
 def render_row_sequences(row_sequences: object) -> str:
@@ -637,6 +848,15 @@ def render_row_sequences(row_sequences: object) -> str:
         for index, sequence in enumerate(row_sequences, start=1)
     )
     return f'<div class="row-output">{rows}</div>'
+
+
+def render_context_notes(notes: object) -> str:
+    """Render short context-cleanup notes under the prediction rows."""
+
+    if not isinstance(notes, list) or not notes:
+        return ""
+    items = "".join(f"<code>{html.escape(str(note))}</code>" for note in notes)
+    return f'<div class="row-output">{items}</div>'
 
 
 def render_overlays(result: dict[str, object], predictions: object) -> str:
@@ -660,10 +880,13 @@ def render_overlays(result: dict[str, object], predictions: object) -> str:
         height = 100.0 * float(prediction.get("height", 0)) / image_height
         digit = html.escape(prediction_value(prediction))
         confidence = 100.0 * float(prediction.get("confidence", 0))
+        uncertain = is_prediction_uncertain(prediction)
+        box_class = "digit-box uncertain" if uncertain else "digit-box"
+        uncertainty_label = ", uncertain" if uncertain else ""
         boxes.append(
-            '<div class="digit-box" '
+            f'<div class="{box_class}" '
             f'tabindex="0" title="Prediction #{index}: {digit}, confidence {confidence:.1f}%" '
-            f'aria-label="Prediction {index}: {prediction_kind} {digit}, confidence {confidence:.1f} percent" '
+            f'aria-label="Prediction {index}: {prediction_kind} {digit}, confidence {confidence:.1f} percent{uncertainty_label}" '
             f'style="left:{left:.3f}%;top:{top:.3f}%;width:{width:.3f}%;height:{height:.3f}%;">'
             f'<span aria-hidden="true">#{index}</span></div>'
         )

@@ -114,6 +114,40 @@ class CharacterPostprocessingTests(unittest.TestCase):
         self.assertEqual(len(split), 2)
         self.assertLess(split[0].box[2], split[1].box[0])
 
+    def test_thin_bridge_splits_touching_character_region(self) -> None:
+        """A small connecting stroke should not force two glyphs into one region."""
+
+        image = Image.new("L", (180, 120), 255)
+        draw = ImageDraw.Draw(image)
+        draw.arc((12, 18, 78, 84), start=15, end=335, fill=0, width=7)
+        draw.line((30, 54, 76, 54), fill=0, width=7)
+        draw.line((76, 56, 108, 56), fill=0, width=4)
+        draw.line((120, 18, 164, 18), fill=0, width=7)
+        draw.line((164, 18, 120, 104), fill=0, width=7)
+        region = DigitRegion(image=image, box=(20, 40, 200, 160), row=1)
+
+        split = _split_touching_character_regions([region])
+
+        self.assertEqual(len(split), 2)
+        self.assertLess(split[0].box[2], split[1].box[0] + 8)
+
+    def test_touching_narrow_punctuation_region_is_split(self) -> None:
+        """A tall skinny mark attached to a glyph should survive as its own region."""
+
+        image = Image.new("L", (160, 130), 255)
+        draw = ImageDraw.Draw(image)
+        draw.line((20, 12, 20, 96), fill=0, width=6)
+        draw.ellipse((15, 108, 25, 118), fill=0)
+        draw.line((23, 58, 54, 58), fill=0, width=4)
+        draw.arc((62, 28, 130, 94), start=15, end=335, fill=0, width=7)
+        draw.line((78, 60, 126, 60), fill=0, width=7)
+        region = DigitRegion(image=image, box=(30, 30, 190, 160), row=1)
+
+        split = _split_touching_character_regions([region])
+
+        self.assertEqual(len(split), 2)
+        self.assertLessEqual(split[0].box[2] - split[0].box[0], 40)
+
     def test_shape_rule_identifies_plain_one(self) -> None:
         """A plain vertical stroke should remain digit 1, not letter L."""
 
