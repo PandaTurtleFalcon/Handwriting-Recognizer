@@ -623,8 +623,53 @@ def _looks_like_four(region: DigitRegion) -> bool:
     )
 
 
+def _ink_center_x(mask: np.ndarray) -> float | None:
+    """Return the normalized horizontal center of a mask slice."""
+
+    _, xs = np.where(mask)
+    if len(xs) == 0:
+        return None
+    return float(xs.mean()) / max(float(mask.shape[1]), 1.0)
+
+
+def _parenthesis_shape_label(region: DigitRegion) -> str | None:
+    """Recognize single-stroke parentheses before model arbitration."""
+
+    mask = _foreground_from_image(region.image) > 0.18
+    height, width = mask.shape
+    if height <= 0 or width <= 0:
+        return None
+    aspect_ratio = width / max(height, 1)
+    if not 0.32 <= aspect_ratio <= 0.72 or float(mask.mean()) > 0.08:
+        return None
+
+    top_span = _mask_span(mask[: max(1, int(height * 0.25)), :])
+    middle_span = _mask_span(mask[int(height * 0.35) : max(int(height * 0.65), int(height * 0.35) + 1), :])
+    bottom_span = _mask_span(mask[int(height * 0.75) :, :])
+    if middle_span > 0.36 or bottom_span > 0.38:
+        return None
+
+    centers = []
+    for start, stop in ((0.0, 0.2), (0.2, 0.4), (0.4, 0.6), (0.6, 0.8), (0.8, 1.0)):
+        section = mask[int(height * start) : max(int(height * stop), int(height * start) + 1), :]
+        center = _ink_center_x(section)
+        if center is None:
+            return None
+        centers.append(center)
+
+    if centers[2] <= centers[0] - 0.15 and centers[2] <= centers[4] - 0.10:
+        return "("
+    if top_span <= 0.58 and centers[2] >= centers[0] + 0.15 and centers[2] >= centers[4] + 0.10:
+        return ")"
+    return None
+
+
 def _punctuation_shape_label(region: DigitRegion) -> str | None:
     """Detect punctuation whose geometry is clearer than model logits."""
+
+    parenthesis_label = _parenthesis_shape_label(region)
+    if parenthesis_label is not None:
+        return parenthesis_label
 
     array = np.asarray(region.image, dtype=np.float32) / 255.0
     mask = array > 0.18
@@ -895,6 +940,57 @@ def _postprocess_exclamations(predictions: list[dict[str, float | int | str]]) -
     return sorted(merged, key=lambda item: (int(item["row"]), int(item["x"])))
 
 
+def _split_touching_character_regions(regions: list[DigitRegion]) -> list[DigitRegion]:
+    """Split wide regions that contain a blank internal seam."""
+
+    split_regions: list[DigitRegion] = []
+    for region in regions:
+        mask = _foreground_from_image(region.image) > 0.18
+        height, width = mask.shape
+        if height <= 0 or width <= 0 or width / max(height, 1) < 0.85 or width < 90:
+            split_regions.append(region)
+            continue
+
+        projection = mask.sum(axis=0).astype(np.float32)
+        smoothed = np.convolve(projection, np.ones(9, dtype=np.float32) / 9.0, mode="same")
+        start = int(width * 0.30)
+        stop = int(width * 0.72)
+        low_columns = np.where(smoothed[start:stop] <= max(1.0, float(smoothed.max()) * 0.08))[0] + start
+        if len(low_columns) < 5:
+            split_regions.append(region)
+            continue
+
+        groups = np.split(low_columns, np.where(np.diff(low_columns) > 1)[0] + 1)
+        group = max(groups, key=len)
+        if len(group) < 5:
+            split_regions.append(region)
+            continue
+        cut = int(round(float(group.mean())))
+
+        local_boxes: list[tuple[int, int, int, int]] = []
+        for left, right in ((0, cut), (cut, width)):
+            submask = mask[:, left:right]
+            ys, xs = np.where(submask)
+            if len(xs) < 20:
+                continue
+            local_boxes.append((left + int(xs.min()), int(ys.min()), left + int(xs.max()) + 1, int(ys.max()) + 1))
+        if len(local_boxes) != 2:
+            split_regions.append(region)
+            continue
+
+        x0, y0, _, _ = region.box
+        for lx0, ly0, lx1, ly1 in local_boxes:
+            split_regions.append(
+                DigitRegion(
+                    image=region.image.crop((lx0, ly0, lx1, ly1)),
+                    box=(x0 + lx0, y0 + ly0, x0 + lx1, y0 + ly1),
+                    row=region.row,
+                )
+            )
+
+    return sorted(split_regions, key=lambda item: (item.row, item.box[0]))
+
+
 def predict_characters(
     model: nn.Module,
     labels: list[str],
@@ -909,6 +1005,7 @@ def predict_characters(
 
     selected_device = device or next(model.parameters()).device
     regions = segment_digit_regions(image, split_wide=False, min_component_pixels=4, merge_marks=True)
+    regions = _split_touching_character_regions(regions)
     predictions: list[dict[str, float | int | str]] = []
     with torch.no_grad():
         for region in regions:

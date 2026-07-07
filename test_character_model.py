@@ -10,6 +10,7 @@ from character_model import (
     _postprocess_exclamations,
     _postprocess_lowercase_i,
     _punctuation_shape_label,
+    _split_touching_character_regions,
 )
 from mnist_model import DigitRegion, segment_digit_regions
 from PIL import Image, ImageDraw
@@ -80,6 +81,37 @@ class CharacterPostprocessingTests(unittest.TestCase):
         region = DigitRegion(image=image, box=(0, 0, 70, 120), row=1)
 
         self.assertEqual(_punctuation_shape_label(region), "i")
+
+    def test_parenthesis_shapes_are_detected(self) -> None:
+        """Single-stroke parentheses should beat letter/digit guesses."""
+
+        left = Image.new("L", (90, 150), 255)
+        right = Image.new("L", (90, 150), 255)
+        left_draw = ImageDraw.Draw(left)
+        right_draw = ImageDraw.Draw(right)
+        left_draw.arc((22, 8, 86, 142), start=105, end=255, fill=0, width=6)
+        right_draw.arc((4, 8, 68, 142), start=-75, end=75, fill=0, width=6)
+
+        self.assertEqual(_punctuation_shape_label(DigitRegion(image=left, box=(0, 0, 90, 150), row=1)), "(")
+        self.assertEqual(_punctuation_shape_label(DigitRegion(image=right, box=(0, 0, 90, 150), row=1)), ")")
+
+    def test_blank_seam_splits_touching_character_region(self) -> None:
+        """A wide region with an internal blank seam should become two regions."""
+
+        image = Image.new("L", (180, 130), 255)
+        draw = ImageDraw.Draw(image)
+        draw.arc((12, 20, 78, 82), start=20, end=330, fill=0, width=6)
+        draw.line((28, 52, 76, 52), fill=0, width=6)
+        draw.line((120, 18, 166, 18), fill=0, width=6)
+        draw.line((120, 18, 120, 62), fill=0, width=6)
+        draw.line((120, 62, 160, 62), fill=0, width=6)
+        draw.arc((114, 58, 168, 116), start=-90, end=95, fill=0, width=6)
+        region = DigitRegion(image=image, box=(10, 20, 190, 150), row=1)
+
+        split = _split_touching_character_regions([region])
+
+        self.assertEqual(len(split), 2)
+        self.assertLess(split[0].box[2], split[1].box[0])
 
     def test_shape_rule_identifies_plain_one(self) -> None:
         """A plain vertical stroke should remain digit 1, not letter L."""
