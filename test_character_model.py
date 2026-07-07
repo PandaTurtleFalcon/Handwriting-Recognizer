@@ -5,6 +5,7 @@ from character_model import (
     _looks_like_one,
     _looks_like_seven,
     _postprocess_colons,
+    _postprocess_exclamations,
     _postprocess_lowercase_i,
     _punctuation_shape_label,
 )
@@ -41,6 +42,19 @@ class CharacterPostprocessingTests(unittest.TestCase):
         cleaned = _postprocess_colons(predictions)
 
         self.assertEqual("".join(str(item["label"]) for item in cleaned), ":")
+        self.assertEqual(len(cleaned), 1)
+
+    def test_split_dot_below_stem_becomes_exclamation(self) -> None:
+        """A detached dot below a skinny stem should read as exclamation."""
+
+        predictions = [
+            {"label": "1", "confidence": 0.98, "x": 50, "y": 15, "width": 12, "height": 80, "row": 1},
+            {"label": "0", "confidence": 0.81, "x": 48, "y": 112, "width": 15, "height": 15, "row": 2},
+        ]
+
+        cleaned = _postprocess_exclamations(predictions)
+
+        self.assertEqual("".join(str(item["label"]) for item in cleaned), "!")
         self.assertEqual(len(cleaned), 1)
 
     def test_dot_below_stem_stays_exclamation_mark(self) -> None:

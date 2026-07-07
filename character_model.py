@@ -655,6 +655,15 @@ def _is_detached_i_dot(prediction: dict[str, float | int | str]) -> bool:
     return label in {":", ".", "'", "`", "!", "i"} and width <= 36 and height <= 36
 
 
+def _is_detached_exclamation_dot(prediction: dict[str, float | int | str]) -> bool:
+    """Return true when a small prediction could be an exclamation dot."""
+
+    label = str(prediction["label"])
+    width = int(prediction["width"])
+    height = int(prediction["height"])
+    return label in {":", ".", "'", "`", "!", "i", "0", "O", "Q"} and width <= 36 and height <= 36
+
+
 def _is_detached_colon_dot(prediction: dict[str, float | int | str]) -> bool:
     """Return true when a small prediction could be one colon dot."""
 
@@ -681,6 +690,22 @@ def _is_dot_above_stem(
         and abs(dot_center_x - stem_center_x) <= horizontal_slop
         and stem_top - (float(dot["y"]) + float(dot["height"])) <= max(58.0, stem_height * 0.55)
     )
+
+
+def _is_dot_below_stem(
+    dot: dict[str, float | int | str],
+    stem: dict[str, float | int | str],
+) -> bool:
+    """Check whether a dot sits below and aligned with an exclamation stem."""
+
+    dot_center_x = float(dot["x"]) + float(dot["width"]) / 2.0
+    stem_center_x = float(stem["x"]) + float(stem["width"]) / 2.0
+    stem_bottom = float(stem["y"]) + float(stem["height"])
+    stem_width = float(stem["width"])
+    stem_height = float(stem["height"])
+    horizontal_slop = max(22.0, stem_width * 1.5)
+    vertical_gap = float(dot["y"]) - stem_bottom
+    return 0 <= vertical_gap <= max(58.0, stem_height * 0.55) and abs(dot_center_x - stem_center_x) <= horizontal_slop
 
 
 def _merge_bounds(
@@ -779,6 +804,52 @@ def _postprocess_lowercase_i(predictions: list[dict[str, float | int | str]]) ->
             continue
         merged.append(replacements.get(index, prediction))
 
+    return sorted(merged, key=lambda item: (int(item["row"]), int(item["x"])))
+
+
+def _postprocess_exclamations(predictions: list[dict[str, float | int | str]]) -> list[dict[str, float | int | str]]:
+    """Merge a detached lower dot and skinny stem into exclamation mark."""
+
+    used_dot_indexes: set[int] = set()
+    replacements: dict[int, dict[str, float | int | str]] = {}
+
+    for stem_index, prediction in enumerate(predictions):
+        if not _is_i_stem(prediction):
+            continue
+
+        dot_index = next(
+            (
+                index
+                for index, candidate in enumerate(predictions)
+                if index != stem_index
+                and index not in used_dot_indexes
+                and _is_detached_exclamation_dot(candidate)
+                and _is_dot_below_stem(candidate, prediction)
+            ),
+            None,
+        )
+        if dot_index is None:
+            continue
+
+        dot = predictions[dot_index]
+        x0, y0, x1, y1 = _merge_bounds(prediction, dot)
+        used_dot_indexes.add(dot_index)
+        replacements[stem_index] = {
+            **prediction,
+            "label": "!",
+            "confidence": max(float(prediction["confidence"]), float(dot["confidence"]), 0.92),
+            "x": x0,
+            "y": y0,
+            "width": x1 - x0,
+            "height": y1 - y0,
+            "row": min(int(prediction["row"]), int(dot["row"])),
+        }
+
+    merged: list[dict[str, float | int | str]] = []
+    for index, prediction in enumerate(predictions):
+        if index in used_dot_indexes:
+            continue
+        merged.append(replacements.get(index, prediction))
     return sorted(merged, key=lambda item: (int(item["row"]), int(item["x"])))
 
 
@@ -904,7 +975,9 @@ def predict_characters(
                     "row": region.row,
                 }
             )
-    return _postprocess_colons(_postprocess_lowercase_i(predictions))
+    predictions = _postprocess_exclamations(predictions)
+    predictions = _postprocess_lowercase_i(predictions)
+    return _postprocess_colons(predictions)
 
 
 def main() -> None:
