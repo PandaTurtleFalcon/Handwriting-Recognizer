@@ -546,6 +546,23 @@ def _digit_beats_ambiguous_letter(
     )
 
 
+def _letter_should_override(
+    current_label: str,
+    current_confidence: float,
+    letter_confidence: float,
+    digit_was_used: bool,
+) -> bool:
+    """Decide when the letter-only model is strong enough to replace a label."""
+
+    if digit_was_used:
+        return False
+    if not current_label.isalnum():
+        return letter_confidence >= 0.55
+    if current_label.isalpha():
+        return letter_confidence >= 0.70 and letter_confidence >= current_confidence - 0.03
+    return letter_confidence >= 0.92 and letter_confidence >= current_confidence + 0.08
+
+
 def _mask_span(mask: np.ndarray) -> float:
     """Measure how much horizontal space a foreground mask occupies."""
 
@@ -579,6 +596,31 @@ def _looks_like_one(region: DigitRegion) -> bool:
     bottom_span = _mask_span(mask[int(height * 0.55) :, :])
     aspect_ratio = width / max(height, 1)
     return aspect_ratio <= 0.34 and top_span <= 0.22 and bottom_span <= 0.24
+
+
+def _looks_like_four(region: DigitRegion) -> bool:
+    """Recognize open-top handwritten 4s that letter models confuse with A."""
+
+    mask = _foreground_from_image(region.image) > 0.18
+    height, width = mask.shape
+    if height <= 0 or width <= 0:
+        return False
+    aspect_ratio = width / max(height, 1)
+    if not 0.35 <= aspect_ratio <= 0.85:
+        return False
+
+    middle = mask[int(height * 0.42) : max(int(height * 0.62), int(height * 0.42) + 1), :]
+    right = mask[:, int(width * 0.58) :]
+    lower_left = mask[int(height * 0.62) :, : max(1, int(width * 0.38))]
+    top_left = mask[: max(1, int(height * 0.45)), : max(1, int(width * 0.45))]
+    middle_span = _mask_span(middle)
+    right_vertical_coverage = float(np.count_nonzero(np.any(right, axis=1))) / max(height, 1)
+    return (
+        middle_span >= 0.45
+        and right_vertical_coverage >= 0.55
+        and float(lower_left.mean()) <= 0.10
+        and float(top_left.mean()) >= 0.015
+    )
 
 
 def _punctuation_shape_label(region: DigitRegion) -> str | None:
@@ -954,10 +996,13 @@ def predict_characters(
 
             if letter_match is not None and not digit_was_used:
                 letter_label, letter_confidence = letter_match
-                if letter_confidence >= 0.45 or not str(label).isalpha():
+                if _letter_should_override(str(label), confidence_value, letter_confidence, digit_was_used):
                     label = letter_label
                     confidence_value = max(confidence_value, letter_confidence)
-            if punctuation_label is None and _looks_like_seven(region) and str(label) in {"1", "7", "I", "L", "l"}:
+            if punctuation_label is None and _looks_like_four(region) and str(label) in {"4", "A", "Y"}:
+                label = "4"
+                confidence_value = max(confidence_value, 0.92)
+            elif punctuation_label is None and _looks_like_seven(region) and str(label) in {"1", "7", "I", "L", "l"}:
                 label = "7"
                 confidence_value = max(confidence_value, 0.92)
             elif punctuation_label is None and _looks_like_one(region) and str(label) in {"1", "I", "L", "l"}:

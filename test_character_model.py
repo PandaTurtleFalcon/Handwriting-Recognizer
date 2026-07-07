@@ -2,6 +2,8 @@ import unittest
 
 from character_model import (
     _digit_beats_ambiguous_letter,
+    _letter_should_override,
+    _looks_like_four,
     _looks_like_one,
     _looks_like_seven,
     _postprocess_colons,
@@ -102,6 +104,19 @@ class CharacterPostprocessingTests(unittest.TestCase):
         self.assertTrue(_looks_like_seven(region))
         self.assertFalse(_looks_like_one(region))
 
+    def test_shape_rule_identifies_open_top_four(self) -> None:
+        """A handwritten 4 with a crossbar should stay numeric."""
+
+        image = Image.new("L", (100, 120), 255)
+        draw = ImageDraw.Draw(image)
+        draw.line((70, 10, 70, 108), fill=0, width=7)
+        draw.line((70, 10, 25, 62), fill=0, width=7)
+        draw.line((25, 62, 82, 62), fill=0, width=7)
+        region = segment_digit_regions(image, split_wide=False, min_component_pixels=4, merge_marks=True)[0]
+
+        self.assertTrue(_looks_like_four(region))
+        self.assertFalse(_looks_like_one(region))
+
     def test_digit_rescue_handles_common_letter_confusions(self) -> None:
         """Confident digit votes should beat known letter lookalikes."""
 
@@ -109,6 +124,14 @@ class CharacterPostprocessingTests(unittest.TestCase):
         self.assertTrue(_digit_beats_ambiguous_letter("5", 0.95, "J", 0.99))
         self.assertTrue(_digit_beats_ambiguous_letter("2", 0.99, "Z", 0.94))
         self.assertFalse(_digit_beats_ambiguous_letter("4", 0.91, "Y", 0.979))
+
+    def test_letter_model_needs_margin_to_replace_digits(self) -> None:
+        """A weak letter vote should not steal a stronger digit prediction."""
+
+        self.assertFalse(_letter_should_override("5", 0.95, 0.80, False))
+        self.assertFalse(_letter_should_override("4", 0.98, 0.90, False))
+        self.assertTrue(_letter_should_override("5", 0.80, 0.93, False))
+        self.assertFalse(_letter_should_override("5", 0.80, 0.99, True))
 
 
 if __name__ == "__main__":

@@ -10,24 +10,30 @@ from __future__ import annotations
 
 import argparse
 import json
+import tarfile
 import time
+import urllib.request
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
 import numpy as np
 import torch
-from PIL import Image
+from PIL import Image, ImageOps
 from torch import nn
 from torch.utils.data import ConcatDataset, DataLoader, TensorDataset, WeightedRandomSampler
 from torchvision import datasets, transforms
 
 from emnist_experiment import DATA_ROOT as EMNIST_DATA_ROOT
 from emnist_experiment import EMNIST_MEAN, EMNIST_STD, EmnistCNN, EmnistMLP, TinyEmnistCNN, WideEmnistCNN, build_or_load_emnist_cache
+from extra_alnum_datasets import load_labeled_image_folder
 from mnist_model import get_device
 
 
 PROJECT_DIR = Path(__file__).resolve().parent
 MNIST_DATA_ROOT = PROJECT_DIR / "data" / "mnist"
+USPS_DATA_ROOT = PROJECT_DIR / "data" / "usps"
+CHARS74K_DATA_ROOT = PROJECT_DIR / "data" / "chars74k"
+CHARS74K_ENGLISH_HND_URL = "https://drive.google.com/uc?export=download&id=1FCH2jjo9Z1HbPVDWAEfvE3ZKaPpaXogg"
 WEIGHTS_PATH = PROJECT_DIR / "alnum_cnn.pt"
 METRICS_PATH = PROJECT_DIR / "alnum_training_metrics.json"
 LABELS = [str(index) for index in range(10)] + [chr(ord("A") + index) for index in range(26)]
@@ -103,6 +109,179 @@ def build_or_load_mnist_cache(train: bool) -> tuple[torch.Tensor, torch.Tensor]:
     return image_tensor, target_tensor
 
 
+def _foreground_tensor_from_image(image: Image.Image) -> torch.Tensor:
+    """Convert black-on-white or white-on-black glyphs to normalized tensors."""
+
+    grayscale = ImageOps.grayscale(image)
+    array = np.asarray(grayscale, dtype=np.float32) / 255.0
+    border = np.concatenate((array[0, :], array[-1, :], array[:, 0], array[:, -1]))
+    if float(np.median(border)) > 0.5:
+        array = 1.0 - array
+    array[array < 0.18] = 0.0
+    ys, xs = np.where(array > 0.18)
+    if len(xs) > 0:
+        array = array[ys.min() : ys.max() + 1, xs.min() : xs.max() + 1]
+
+    height, width = array.shape
+    scale = 22.0 / max(height, width)
+    new_width = max(1, int(round(width * scale)))
+    new_height = max(1, int(round(height * scale)))
+    glyph = Image.fromarray((array * 255).astype(np.uint8), mode="L").resize(
+        (new_width, new_height),
+        Image.Resampling.LANCZOS,
+    )
+    canvas = Image.new("L", (28, 28), 0)
+    canvas.paste(glyph, ((28 - new_width) // 2, (28 - new_height) // 2))
+    tensor_array = np.asarray(canvas, dtype=np.float32) / 255.0
+    tensor_array = (tensor_array - EMNIST_MEAN) / EMNIST_STD
+    return torch.from_numpy(tensor_array).unsqueeze(0)
+
+
+def image_folder_transform(image: Image.Image) -> torch.Tensor:
+    """Normalize local image-folder datasets like the website normalizes uploads."""
+
+    return _foreground_tensor_from_image(image)
+
+
+def build_or_load_usps_cache(train: bool) -> tuple[torch.Tensor, torch.Tensor]:
+    """Load USPS digit tensors as an optional MNIST-compatible supplement."""
+
+    cache_path = USPS_DATA_ROOT / f"cache_usps_{'train' if train else 'test'}.pt"
+    if cache_path.exists():
+        cache = torch.load(cache_path, map_location="cpu", weights_only=True)
+        return cache["images"], cache["targets"]
+
+    dataset = datasets.USPS(
+        root=str(USPS_DATA_ROOT),
+        train=train,
+        download=True,
+        transform=transforms.Compose(
+            [
+                transforms.Resize((28, 28)),
+                transforms.ToTensor(),
+                transforms.Normalize((EMNIST_MEAN,), (EMNIST_STD,)),
+            ]
+        ),
+    )
+    images = []
+    targets = []
+    for image, target in dataset:
+        images.append(image)
+        targets.append(int(target))
+    image_tensor = torch.stack(images)
+    target_tensor = torch.tensor(targets, dtype=torch.long)
+    cache_path.parent.mkdir(parents=True, exist_ok=True)
+    torch.save({"images": image_tensor, "targets": target_tensor}, cache_path)
+    return image_tensor, target_tensor
+
+
+def _safe_extract_tgz(archive_path: Path, target_dir: Path) -> None:
+    """Extract a tgz archive while blocking path traversal members."""
+
+    target_dir.mkdir(parents=True, exist_ok=True)
+    with tarfile.open(archive_path) as archive:
+        for member in archive.getmembers():
+            destination = (target_dir / member.name).resolve()
+            if not str(destination).startswith(str(target_dir.resolve())):
+                raise RuntimeError(f"Unsafe path in archive: {member.name}")
+        archive.extractall(target_dir)
+
+
+def ensure_chars74k_english_hnd() -> Path:
+    """Download/extract Chars74K EnglishHnd and return its image root."""
+
+    image_root = CHARS74K_DATA_ROOT / "English" / "Hnd" / "Img"
+    if image_root.exists():
+        return image_root
+
+    archive_path = CHARS74K_DATA_ROOT / "EnglishHnd.tgz"
+    archive_path.parent.mkdir(parents=True, exist_ok=True)
+    if not archive_path.exists():
+        request = urllib.request.Request(CHARS74K_ENGLISH_HND_URL, headers={"User-Agent": "Mozilla/5.0"})
+        with urllib.request.urlopen(request, timeout=120) as response:
+            archive_path.write_bytes(response.read())
+    _safe_extract_tgz(archive_path, CHARS74K_DATA_ROOT)
+    if not image_root.exists():
+        raise RuntimeError("Chars74K EnglishHnd archive did not contain the expected image folder.")
+    return image_root
+
+
+def _chars74k_sample_label(sample_dir: Path) -> int | None:
+    """Map Chars74K Sample001..062 folders into existing 0-9/A-Z labels."""
+
+    try:
+        sample_number = int(sample_dir.name.replace("Sample", ""))
+    except ValueError:
+        return None
+    if 1 <= sample_number <= 10:
+        return sample_number - 1
+    if 11 <= sample_number <= 36:
+        return 10 + sample_number - 11
+    if 37 <= sample_number <= 62:
+        return 10 + sample_number - 37
+    return None
+
+
+def build_or_load_chars74k_cache() -> tuple[torch.Tensor, torch.Tensor]:
+    """Load Chars74K EnglishHnd tensors folded into the 36 model classes."""
+
+    cache_path = CHARS74K_DATA_ROOT / "cache_english_hnd_36.pt"
+    if cache_path.exists():
+        cache = torch.load(cache_path, map_location="cpu", weights_only=True)
+        return cache["images"], cache["targets"]
+
+    image_root = ensure_chars74k_english_hnd()
+    images = []
+    targets = []
+    for sample_dir in sorted(path for path in image_root.iterdir() if path.is_dir()):
+        target = _chars74k_sample_label(sample_dir)
+        if target is None:
+            continue
+        for image_path in sorted(sample_dir.glob("*.png")):
+            with Image.open(image_path) as image:
+                images.append(_foreground_tensor_from_image(image))
+            targets.append(target)
+    if not images:
+        raise RuntimeError("No Chars74K images were loaded.")
+
+    image_tensor = torch.stack(images)
+    target_tensor = torch.tensor(targets, dtype=torch.long)
+    cache_path.parent.mkdir(parents=True, exist_ok=True)
+    torch.save({"images": image_tensor, "targets": target_tensor}, cache_path)
+    return image_tensor, target_tensor
+
+
+def build_or_load_emnist_byclass_folded_cache(train: bool) -> tuple[torch.Tensor, torch.Tensor]:
+    """Load EMNIST ByClass, folding lowercase samples into uppercase labels."""
+
+    cache_path = EMNIST_DATA_ROOT / f"cache_byclass_folded_36_{'train' if train else 'test'}.pt"
+    if cache_path.exists():
+        cache = torch.load(cache_path, map_location="cpu", weights_only=True)
+        return cache["images"], cache["targets"]
+
+    images, raw_targets, raw_labels = build_or_load_emnist_cache("byclass", train=train)
+    folded_targets = []
+    kept_indices = []
+    for index, raw_target in enumerate(raw_targets.tolist()):
+        label = raw_labels[int(raw_target)]
+        if label.isdigit():
+            folded_targets.append(int(label))
+            kept_indices.append(index)
+        elif len(label) == 1 and label.isalpha():
+            folded_targets.append(10 + ord(label.upper()) - ord("A"))
+            kept_indices.append(index)
+
+    if not kept_indices:
+        raise RuntimeError("EMNIST ByClass cache did not contain alphanumeric labels.")
+
+    index_tensor = torch.tensor(kept_indices, dtype=torch.long)
+    image_tensor = images[index_tensor]
+    target_tensor = torch.tensor(folded_targets, dtype=torch.long)
+    cache_path.parent.mkdir(parents=True, exist_ok=True)
+    torch.save({"images": image_tensor, "targets": target_tensor}, cache_path)
+    return image_tensor, target_tensor
+
+
 def _limit_per_class(
     images: torch.Tensor,
     targets: torch.Tensor,
@@ -131,6 +310,11 @@ def make_cached_loaders(
     batch_size: int,
     samples_per_class: int | None,
     seed: int,
+    extra_train_dir: Path | None = None,
+    extra_test_dir: Path | None = None,
+    include_emnist_byclass: bool = False,
+    include_chars74k: bool = False,
+    include_usps: bool = False,
 ) -> tuple[DataLoader, DataLoader, DataLoader, DataLoader]:
     """Build loaders from cached tensors for repeatable high-speed training."""
 
@@ -154,19 +338,44 @@ def make_cached_loaders(
         seed + 1,
     )
 
-    train_dataset = ConcatDataset(
-        [
-            TensorDataset(mnist_train_images, mnist_train_targets),
-            TensorDataset(letter_train_images, letter_train_targets),
-        ]
-    )
-    test_dataset = ConcatDataset(
-        [
-            TensorDataset(mnist_test_images, mnist_test_targets),
-            TensorDataset(letter_test_images, letter_test_targets),
-        ]
-    )
-    train_targets = torch.cat([mnist_train_targets, letter_train_targets]).numpy()
+    train_parts = [
+        TensorDataset(mnist_train_images, mnist_train_targets),
+        TensorDataset(letter_train_images, letter_train_targets),
+    ]
+    test_parts = [
+        TensorDataset(mnist_test_images, mnist_test_targets),
+        TensorDataset(letter_test_images, letter_test_targets),
+    ]
+    train_target_parts = [mnist_train_targets, letter_train_targets]
+    if include_emnist_byclass:
+        byclass_train_images, byclass_train_targets = build_or_load_emnist_byclass_folded_cache(train=True)
+        byclass_train_images, byclass_train_targets = _limit_per_class(
+            byclass_train_images,
+            byclass_train_targets,
+            samples_per_class,
+            seed + 2,
+        )
+        train_parts.append(TensorDataset(byclass_train_images, byclass_train_targets))
+        train_target_parts.append(byclass_train_targets)
+    if include_chars74k:
+        chars_images, chars_targets = build_or_load_chars74k_cache()
+        train_parts.append(TensorDataset(chars_images, chars_targets))
+        train_target_parts.append(chars_targets)
+    if include_usps:
+        usps_train_images, usps_train_targets = build_or_load_usps_cache(train=True)
+        train_parts.append(TensorDataset(usps_train_images, usps_train_targets))
+        train_target_parts.append(usps_train_targets)
+    if extra_train_dir is not None:
+        extra_train_images, extra_train_targets = load_labeled_image_folder(extra_train_dir, LABELS, image_folder_transform)
+        train_parts.append(TensorDataset(extra_train_images, extra_train_targets))
+        train_target_parts.append(extra_train_targets)
+    if extra_test_dir is not None:
+        extra_test_images, extra_test_targets = load_labeled_image_folder(extra_test_dir, LABELS, image_folder_transform)
+        test_parts.append(TensorDataset(extra_test_images, extra_test_targets))
+
+    train_dataset = ConcatDataset(train_parts)
+    test_dataset = ConcatDataset(test_parts)
+    train_targets = torch.cat(train_target_parts).numpy()
     class_counts = np.bincount(train_targets, minlength=len(LABELS))
     sample_weights = [1.0 / max(class_counts[int(target)], 1) for target in train_targets]
     sampler = WeightedRandomSampler(sample_weights, num_samples=len(train_targets), replacement=True)
@@ -178,7 +387,14 @@ def make_cached_loaders(
     return train_loader, test_loader, digit_test_loader, letter_test_loader
 
 
-def make_augmented_loaders(batch_size: int) -> tuple[DataLoader, DataLoader, DataLoader, DataLoader]:
+def make_augmented_loaders(
+    batch_size: int,
+    extra_train_dir: Path | None = None,
+    extra_test_dir: Path | None = None,
+    include_emnist_byclass: bool = False,
+    include_chars74k: bool = False,
+    include_usps: bool = False,
+) -> tuple[DataLoader, DataLoader, DataLoader, DataLoader]:
     """Build loaders with live MNIST augmentation and cached EMNIST letters."""
 
     mnist_train = datasets.MNIST(
@@ -200,14 +416,39 @@ def make_augmented_loaders(batch_size: int) -> tuple[DataLoader, DataLoader, Dat
     letter_train = TensorDataset(letter_train_images, letter_train_targets)
     letter_test = TensorDataset(letter_test_images, letter_test_targets)
 
-    train_dataset = ConcatDataset([mnist_train, letter_train])
-    test_dataset = ConcatDataset([mnist_test, letter_test])
-    train_targets = np.concatenate(
-        [
-            np.asarray(mnist_train.targets, dtype=np.int64),
-            letter_train_targets.numpy(),
-        ]
-    )
+    train_parts = [mnist_train, letter_train]
+    test_parts = [mnist_test, letter_test]
+    train_target_parts = [
+        torch.as_tensor(mnist_train.targets, dtype=torch.long),
+        letter_train_targets,
+    ]
+    if include_emnist_byclass:
+        byclass_train_images, byclass_train_targets = build_or_load_emnist_byclass_folded_cache(train=True)
+        train_parts.append(TensorDataset(byclass_train_images, byclass_train_targets))
+        train_target_parts.append(byclass_train_targets)
+    if include_chars74k:
+        chars_images, chars_targets = build_or_load_chars74k_cache()
+        train_parts.append(TensorDataset(chars_images, chars_targets))
+        train_target_parts.append(chars_targets)
+    if include_usps:
+        usps_train_images, usps_train_targets = build_or_load_usps_cache(train=True)
+        train_parts.append(TensorDataset(usps_train_images, usps_train_targets))
+        train_target_parts.append(usps_train_targets)
+    if extra_train_dir is not None:
+        extra_train_images, extra_train_targets = load_labeled_image_folder(
+            extra_train_dir,
+            LABELS,
+            image_folder_transform,
+        )
+        train_parts.append(TensorDataset(extra_train_images, extra_train_targets))
+        train_target_parts.append(extra_train_targets)
+    if extra_test_dir is not None:
+        extra_test_images, extra_test_targets = load_labeled_image_folder(extra_test_dir, LABELS, image_folder_transform)
+        test_parts.append(TensorDataset(extra_test_images, extra_test_targets))
+
+    train_dataset = ConcatDataset(train_parts)
+    test_dataset = ConcatDataset(test_parts)
+    train_targets = torch.cat(train_target_parts).numpy()
     class_counts = np.bincount(train_targets, minlength=len(LABELS))
     sample_weights = [1.0 / max(class_counts[int(target)], 1) for target in train_targets]
     sampler = WeightedRandomSampler(sample_weights, num_samples=len(train_targets), replacement=True)
@@ -246,6 +487,12 @@ def save_checkpoint(
     learning_rate: float,
     seed: int,
     device: torch.device,
+    extra_train_dir: Path | None = None,
+    extra_test_dir: Path | None = None,
+    include_emnist_byclass: bool = False,
+    include_chars74k: bool = False,
+    include_usps: bool = False,
+    warm_start: bool = False,
 ) -> None:
     """Persist the best model weights and the full metrics history."""
 
@@ -261,6 +508,12 @@ def save_checkpoint(
                 "seed": seed,
                 "device": str(device),
                 "normalization": {"mean": EMNIST_MEAN, "std": EMNIST_STD},
+                "extra_train_dir": str(extra_train_dir) if extra_train_dir is not None else None,
+                "extra_test_dir": str(extra_test_dir) if extra_test_dir is not None else None,
+                "include_emnist_byclass": include_emnist_byclass,
+                "include_chars74k": include_chars74k,
+                "include_usps": include_usps,
+                "warm_start": warm_start,
             },
             WEIGHTS_PATH,
         )
@@ -273,6 +526,12 @@ def save_checkpoint(
                 "learning_rate": learning_rate,
                 "seed": seed,
                 "device": str(device),
+                "extra_train_dir": str(extra_train_dir) if extra_train_dir is not None else None,
+                "extra_test_dir": str(extra_test_dir) if extra_test_dir is not None else None,
+                "include_emnist_byclass": include_emnist_byclass,
+                "include_chars74k": include_chars74k,
+                "include_usps": include_usps,
+                "warm_start": warm_start,
                 "history": [asdict(item) for item in history],
             },
             indent=2,
@@ -310,6 +569,12 @@ def train(
     model_type: str,
     samples_per_class: int | None,
     device_name: str,
+    extra_train_dir: Path | None = None,
+    extra_test_dir: Path | None = None,
+    include_emnist_byclass: bool = False,
+    include_chars74k: bool = False,
+    include_usps: bool = False,
+    warm_start: bool = False,
 ) -> list[AlnumEpochMetrics]:
     """Train a 36-class recognizer until it clears the requested accuracy."""
 
@@ -324,16 +589,43 @@ def train(
     else:
         device = get_device()
 
-    loaders = make_augmented_loaders(batch_size) if augment else make_cached_loaders(batch_size, samples_per_class, seed)
+    loaders = (
+        make_augmented_loaders(
+            batch_size,
+            extra_train_dir,
+            extra_test_dir,
+            include_emnist_byclass,
+            include_chars74k,
+            include_usps,
+        )
+        if augment
+        else make_cached_loaders(
+            batch_size,
+            samples_per_class,
+            seed,
+            extra_train_dir,
+            extra_test_dir,
+            include_emnist_byclass,
+            include_chars74k,
+            include_usps,
+        )
+    )
     train_loader, test_loader, digit_test_loader, letter_test_loader = loaders
     model = MODEL_CLASSES[model_type](num_classes=len(LABELS)).to(device)
     criterion = nn.CrossEntropyLoss(label_smoothing=0.03)
+    if warm_start and WEIGHTS_PATH.exists():
+        checkpoint = torch.load(WEIGHTS_PATH, map_location=device, weights_only=True)
+        if checkpoint.get("labels") == LABELS and checkpoint.get("model_type", "cnn") == model_type:
+            model.load_state_dict(checkpoint["model_state_dict"])
     optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate, weight_decay=0.0005)
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=epochs)
 
     history: list[AlnumEpochMetrics] = []
     best_accuracy = 0.0
     best_state = None
+    if warm_start:
+        _, best_accuracy = evaluate(model, test_loader, criterion, device)
+        best_state = {key: value.detach().cpu() for key, value in model.state_dict().items()}
 
     for epoch in range(1, epochs + 1):
         start = time.time()
@@ -372,7 +664,22 @@ def train(
         if test_accuracy > best_accuracy:
             best_accuracy = test_accuracy
             best_state = {key: value.detach().cpu() for key, value in model.state_dict().items()}
-        save_checkpoint(history, best_state, best_accuracy, model_type, augment, learning_rate, seed, device)
+        save_checkpoint(
+            history,
+            best_state,
+            best_accuracy,
+            model_type,
+            augment,
+            learning_rate,
+            seed,
+            device,
+            extra_train_dir,
+            extra_test_dir,
+            include_emnist_byclass,
+            include_chars74k,
+            include_usps,
+            warm_start,
+        )
         print(
             f"Epoch {epoch}/{epochs} train_acc={metrics.train_accuracy:.2f}% "
             f"test_acc={metrics.test_accuracy:.2f}% digits={digit_accuracy:.2f}% "
@@ -400,6 +707,38 @@ def main() -> None:
     parser.add_argument("--model", choices=["mlp", "tinycnn", "cnn", "widecnn"], default="cnn")
     parser.add_argument("--samples-per-class", type=int, default=None)
     parser.add_argument("--device", choices=["auto", "cpu", "mps"], default="auto")
+    parser.add_argument(
+        "--extra-train-dir",
+        type=Path,
+        default=None,
+        help="Optional image-folder dataset to append to alphanumeric training data.",
+    )
+    parser.add_argument(
+        "--extra-test-dir",
+        type=Path,
+        default=None,
+        help="Optional image-folder dataset to append to alphanumeric test data.",
+    )
+    parser.add_argument(
+        "--include-emnist-byclass",
+        action="store_true",
+        help="Append folded EMNIST ByClass samples to the training set.",
+    )
+    parser.add_argument(
+        "--include-chars74k",
+        action="store_true",
+        help="Download and append Chars74K EnglishHnd samples to the training set.",
+    )
+    parser.add_argument(
+        "--include-usps",
+        action="store_true",
+        help="Append USPS digit samples to the training set.",
+    )
+    parser.add_argument(
+        "--warm-start",
+        action="store_true",
+        help="Initialize from the existing alphanumeric checkpoint before training.",
+    )
     args = parser.parse_args()
     train(
         epochs=args.epochs,
@@ -411,6 +750,12 @@ def main() -> None:
         model_type=args.model,
         samples_per_class=args.samples_per_class,
         device_name=args.device,
+        extra_train_dir=args.extra_train_dir,
+        extra_test_dir=args.extra_test_dir,
+        include_emnist_byclass=args.include_emnist_byclass,
+        include_chars74k=args.include_chars74k,
+        include_usps=args.include_usps,
+        warm_start=args.warm_start,
     )
 
 
