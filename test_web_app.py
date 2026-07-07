@@ -77,6 +77,30 @@ class WebAppRenderingTests(unittest.TestCase):
         self.assertIn('action="/correct"', html)
         self.assertIn('name="corrected_label"', html)
         self.assertIn('name="bbox"', html)
+        self.assertIn("data-correction-form", html)
+        self.assertIn("data-correction-status", html)
+
+    def test_correction_forms_have_unique_input_ids(self) -> None:
+        """Multiple correction fields should be independently focusable."""
+
+        result = {
+            "filename": "digits.png",
+            "sequence": "01",
+            "row_sequences": ["01"],
+            "preview": "data:image/png;base64,abc",
+            "image_width": 100,
+            "image_height": 50,
+            "predictions": [
+                {"digit": 0, "confidence": 0.95, "x": 10, "y": 5, "width": 20, "height": 30, "row": 1},
+                {"digit": 1, "confidence": 0.75, "x": 50, "y": 5, "width": 10, "height": 30, "row": 1},
+            ],
+        }
+
+        html = main.render_result(result)
+
+        self.assertEqual(html.count('name="corrected_label"'), 2)
+        self.assertEqual(html.count('id="correction-'), 2)
+        self.assertEqual(len(set(part.split('"', 1)[0] for part in html.split('id="')[1:])), 2)
 
     def test_valid_image_with_bad_extension_is_decoded_by_content(self) -> None:
         """Image content should matter more than filename extension."""
@@ -89,6 +113,15 @@ class WebAppRenderingTests(unittest.TestCase):
 
         self.assertEqual(results[0]["sequence"], "8")
         self.assertIn("preview", results[0])
+
+    def test_render_page_keeps_corrections_on_page_with_fetch(self) -> None:
+        """The page should save corrections in-place instead of replacing results."""
+
+        html = main.render_page()
+
+        self.assertIn("fetch(form.action", html)
+        self.assertIn("Saved", html)
+        self.assertIn("You can edit it again.", html)
 
     def test_classify_files_applies_context_cleanup_to_display(self) -> None:
         """Obvious context cleanup should affect display text, not predictions."""

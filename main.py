@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import base64
 import datetime as dt
+import hashlib
 import html
 import io
 import json
@@ -316,6 +317,17 @@ input[type="file"]:focus-visible {
   padding: 0 10px;
   font-size: 13px;
 }
+.correction-form button:disabled {
+  background: #94a3b8;
+  cursor: wait;
+}
+.correction-status {
+  grid-column: 1 / -1;
+  min-height: 16px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+}
 .error {
   border-color: #fecaca;
   background: #fff7f7;
@@ -336,6 +348,52 @@ code {
   main { width: min(100vw - 20px, 1040px); padding-top: 20px; }
   h1 { font-size: 28px; }
 }
+"""
+
+
+PAGE_SCRIPT = """
+<script>
+(() => {
+  const forms = document.querySelectorAll("[data-correction-form]");
+  forms.forEach((form) => {
+    const input = form.querySelector('input[name="corrected_label"]');
+    const button = form.querySelector('button[type="submit"]');
+    const status = form.querySelector("[data-correction-status]");
+    if (!input || !button || !status) {
+      return;
+    }
+    form.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const value = input.value.trim();
+      if (!value) {
+        status.textContent = "Type the right character first.";
+        input.focus();
+        return;
+      }
+      button.disabled = true;
+      status.textContent = "Saving...";
+      try {
+        const body = new URLSearchParams(new FormData(form)).toString();
+        const response = await fetch(form.action, {
+          method: "POST",
+          headers: {"Content-Type": "application/x-www-form-urlencoded;charset=UTF-8"},
+          body,
+        });
+        if (!response.ok) {
+          throw new Error("Correction save failed.");
+        }
+        input.dataset.savedValue = value;
+        status.textContent = `Saved "${value}". You can edit it again.`;
+        input.select();
+      } catch (error) {
+        status.textContent = "Could not save. Try again.";
+      } finally {
+        button.disabled = false;
+      }
+    });
+  });
+})();
+</script>
 """
 
 
@@ -747,6 +805,7 @@ def render_page(
       </section>
     </div>
   </main>
+  {PAGE_SCRIPT}
 </body>
 </html>"""
 
@@ -826,14 +885,17 @@ def render_correction_form(result: dict[str, object], prediction: dict[str, obje
         f'value="{html.escape(str(value), quote=True)}">'
         for name, value in hidden_fields.items()
     )
-    label_id = f"correction-{index}"
+    label_seed = json.dumps(hidden_fields, ensure_ascii=True, sort_keys=True)
+    label_token = hashlib.sha1(label_seed.encode("utf-8")).hexdigest()[:10]
+    label_id = f"correction-{index}-{label_token}"
     return (
-        '<form class="correction-form" action="/correct" method="post">'
+        '<form class="correction-form" action="/correct" method="post" data-correction-form>'
         f"{inputs}"
         f'<label class="sr-only" for="{label_id}">Correct prediction #{index}</label>'
         f'<input id="{label_id}" name="corrected_label" type="text" maxlength="16" '
         f'placeholder="fix #{index}" autocomplete="off">'
         '<button type="submit">Save</button>'
+        '<span class="correction-status" data-correction-status></span>'
         "</form>"
     )
 
