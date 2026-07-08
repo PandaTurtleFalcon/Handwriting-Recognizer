@@ -1,4 +1,12 @@
-"""Conservative display cleanup for obvious handwriting context errors."""
+"""Conservative display cleanup for obvious handwriting context errors.
+
+This module runs *after* the neural models have already produced a predicted
+sequence. It never re-guesses characters from image data; it only rewrites a
+handful of well-known, unambiguous text patterns (like "Hl" that was clearly
+meant to be "Hi", or a stray bracket that should have been a parenthesis) so
+the displayed text looks right without risking a false "fix" on genuinely
+uncertain input.
+"""
 
 from __future__ import annotations
 
@@ -23,6 +31,8 @@ def cleanup_context(predicted: str, row_strings: Sequence[str] | None = None) ->
     visible instead of being silently guessed.
     """
 
+    # Prefer the caller's per-row breakdown when available; each row is
+    # cleaned independently so a fix in one line can't leak into another.
     rows = [str(row) for row in row_strings] if row_strings else [str(predicted)]
     cleaned_rows: list[str] = []
     notes: list[str] = []
@@ -50,7 +60,14 @@ def _clean_one_row(text: str) -> tuple[str, list[str]]:
 
 
 def _clean_greeting(text: str) -> tuple[str, list[str]]:
-    """Fix only the most obvious handwritten Hi/Hl confusion."""
+    """Fix only the most obvious handwritten Hi/Hl confusion.
+
+    A handwritten lowercase "i" without a clear dot is easily misread by the
+    character models as "L", "I", "1", or "|" (they're all just a tall thin
+    stroke). This only rewrites the pattern when it's the *entire* row (an
+    "H" followed by one skinny stroke and nothing alphanumeric after it) so
+    a genuine word like "H1B" is left untouched.
+    """
 
     if len(text) < 2:
         return text, []
@@ -65,7 +82,14 @@ def _clean_greeting(text: str) -> tuple[str, list[str]]:
 
 
 def _balance_parentheses(text: str) -> tuple[str, list[str]]:
-    """Correct likely edge glyphs when an existing parenthesis is unmatched."""
+    """Correct likely edge glyphs when an existing parenthesis is unmatched.
+
+    Rounded parenthesis strokes are frequently misclassified as brackets,
+    braces, or tall narrow letters/digits (7, L, l, I, 1) because the shapes
+    overlap visually. This only touches the first/last character of a row,
+    and only when doing so would resolve a real open/close imbalance, so it
+    can't accidentally "fix" text that never had a parenthesis at all.
+    """
 
     if not text:
         return text, []

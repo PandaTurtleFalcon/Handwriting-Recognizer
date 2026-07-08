@@ -149,6 +149,13 @@ class WebAppRenderingTests(unittest.TestCase):
         self.assertIn("Saved", html)
         self.assertIn("You can edit it again.", html)
 
+    def test_render_page_shows_digit_specialist_accuracy(self) -> None:
+        """The badge should expose the high-accuracy MNIST digit specialist."""
+
+        html = main.render_page()
+
+        self.assertIn("digit specialist", html)
+
     def test_classify_files_applies_context_cleanup_to_display(self) -> None:
         """Obvious context cleanup should affect display text, not predictions."""
 

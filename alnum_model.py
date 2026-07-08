@@ -36,6 +36,9 @@ CHARS74K_DATA_ROOT = PROJECT_DIR / "data" / "chars74k"
 CHARS74K_ENGLISH_HND_URL = "https://drive.google.com/uc?export=download&id=1FCH2jjo9Z1HbPVDWAEfvE3ZKaPpaXogg"
 WEIGHTS_PATH = PROJECT_DIR / "alnum_cnn.pt"
 METRICS_PATH = PROJECT_DIR / "alnum_training_metrics.json"
+# Class index 0-9 are digits, 10-35 are A-Z. Case is folded to uppercase in
+# this 36-class model; MIXEDCASE_LABELS below is the separate 62-class
+# variant that keeps upper/lower distinct.
 LABELS = [str(index) for index in range(10)] + [chr(ord("A") + index) for index in range(26)]
 MIXEDCASE_WEIGHTS_PATH = PROJECT_DIR / "mixedcase_cnn.pt"
 MIXEDCASE_METRICS_PATH = PROJECT_DIR / "mixedcase_training_metrics.json"
@@ -54,7 +57,13 @@ MODEL_CLASSES = {
 
 @dataclass(frozen=True)
 class AlnumEpochMetrics:
-    """Metrics captured at the end of each combined training epoch."""
+    """Metrics captured at the end of each combined training epoch.
+
+    digit_test_accuracy and letter_test_accuracy are tracked separately from
+    the overall test_accuracy because a model can look good on aggregate
+    while quietly underperforming on one of the two source domains (e.g.
+    digits being much easier than letters).
+    """
 
     epoch: int
     train_loss: float
@@ -117,7 +126,13 @@ def build_or_load_mnist_cache(train: bool) -> tuple[torch.Tensor, torch.Tensor]:
 
 
 def _foreground_tensor_from_image(image: Image.Image) -> torch.Tensor:
-    """Convert black-on-white or white-on-black glyphs to normalized tensors."""
+    """Convert black-on-white or white-on-black glyphs to normalized tensors.
+
+    Same border-sampling trick as `mnist_model._foreground_from_image`: the
+    median of the border pixels stands in for the background color, and the
+    image is inverted if that background reads as bright, so "ink" is always
+    the high-value foreground regardless of the original scan's polarity.
+    """
 
     grayscale = ImageOps.grayscale(image)
     array = np.asarray(grayscale, dtype=np.float32) / 255.0
@@ -129,6 +144,9 @@ def _foreground_tensor_from_image(image: Image.Image) -> torch.Tensor:
     if len(xs) > 0:
         array = array[ys.min() : ys.max() + 1, xs.min() : xs.max() + 1]
 
+    # Scaled to 22px (vs. 20px in mnist_model's normalize) to match how this
+    # dataset mix (MNIST + EMNIST + extras) was empirically found to align
+    # best inside the 28x28 canvas across all source datasets.
     height, width = array.shape
     scale = 22.0 / max(height, width)
     new_width = max(1, int(round(width * scale)))
@@ -183,7 +201,14 @@ def build_or_load_usps_cache(train: bool) -> tuple[torch.Tensor, torch.Tensor]:
 
 
 def _safe_extract_tgz(archive_path: Path, target_dir: Path) -> None:
-    """Extract a tgz archive while blocking path traversal members."""
+    """Extract a tgz archive while blocking path traversal members.
+
+    Guards against the classic "tarbomb" attack where a malicious archive
+    member's name (e.g. "../../etc/passwd") would resolve outside
+    `target_dir` during extraction. Every member's resolved destination is
+    checked before any extraction happens, since standard `extractall` does
+    not validate this on its own.
+    """
 
     target_dir.mkdir(parents=True, exist_ok=True)
     with tarfile.open(archive_path) as archive:
@@ -214,7 +239,14 @@ def ensure_chars74k_english_hnd() -> Path:
 
 
 def _chars74k_sample_label(sample_dir: Path) -> int | None:
-    """Map Chars74K Sample001..062 folders into existing 0-9/A-Z labels."""
+    """Map Chars74K Sample001..062 folders into existing 0-9/A-Z labels.
+
+    Chars74K's EnglishHnd layout uses 62 numbered sample folders in a fixed
+    order: 001-010 are digits 0-9, 011-036 are uppercase A-Z, and 037-062 are
+    lowercase a-z. Since this model folds case (36 classes, not 62), both the
+    uppercase and lowercase ranges map onto the same 10-35 target indices —
+    Sample011 and Sample037 (A and a) both become label index 10.
+    """
 
     try:
         sample_number = int(sample_dir.name.replace("Sample", ""))
@@ -259,7 +291,13 @@ def build_or_load_chars74k_cache() -> tuple[torch.Tensor, torch.Tensor]:
 
 
 def build_or_load_emnist_byclass_folded_cache(train: bool) -> tuple[torch.Tensor, torch.Tensor]:
-    """Load EMNIST ByClass, folding lowercase samples into uppercase labels."""
+    """Load EMNIST ByClass, folding lowercase samples into uppercase labels.
+
+    ByClass has 62 raw classes (digits + upper + lower); this collapses case
+    so 'a' and 'A' samples both train the same 36-class label used by the
+    combined digit/letter model, giving it more real-world lowercase
+    handwriting examples without needing a 62-class output layer.
+    """
 
     cache_path = EMNIST_DATA_ROOT / f"cache_byclass_folded_36_{'train' if train else 'test'}.pt"
     if cache_path.exists():
@@ -298,6 +336,11 @@ def build_or_load_emnist_byclass_mixedcase_cache(train: bool) -> tuple[torch.Ten
         return cache["images"], cache["targets"]
 
     images, raw_targets, raw_labels = build_or_load_emnist_cache("byclass", train=train)
+    # ByClass's own label ordering happens to already start with digits then
+    # uppercase then lowercase, matching MIXEDCASE_LABELS exactly. This check
+    # fails loudly if torchvision ever changes that ordering, since silently
+    # training on mismatched labels would produce a model that looks fine
+    # metrically but predicts the wrong character.
     if raw_labels[: len(MIXEDCASE_LABELS)] != MIXEDCASE_LABELS:
         raise RuntimeError("Unexpected EMNIST ByClass label order; refusing to train mixed-case model.")
     mask = raw_targets < len(MIXEDCASE_LABELS)
@@ -314,7 +357,13 @@ def _limit_per_class(
     samples_per_class: int | None,
     seed: int,
 ) -> tuple[torch.Tensor, torch.Tensor]:
-    """Return a deterministic class-balanced subset for faster experiments."""
+    """Return a deterministic class-balanced subset for faster experiments.
+
+    Capping samples per class (rather than a flat overall subset) keeps rare
+    classes from being starved out, which would happen with a naive random
+    subsample when class sizes are imbalanced. A seeded generator keeps the
+    selection reproducible across runs with the same seed.
+    """
 
     if samples_per_class is None:
         return images, targets
@@ -402,6 +451,11 @@ def make_cached_loaders(
     train_dataset = ConcatDataset(train_parts)
     test_dataset = ConcatDataset(test_parts)
     train_targets = torch.cat(train_target_parts).numpy()
+    # Mixing several source datasets (MNIST, EMNIST letters, optionally
+    # ByClass/Chars74K/USPS/extra folders) means class counts are naturally
+    # unbalanced. Inverse-frequency sample weights make the WeightedRandomSampler
+    # draw rare classes proportionally more often so training doesn't end up
+    # biased toward whichever dataset happens to be largest.
     class_counts = np.bincount(train_targets, minlength=len(LABELS))
     sample_weights = [1.0 / max(class_counts[int(target)], 1) for target in train_targets]
     sampler = WeightedRandomSampler(sample_weights, num_samples=len(train_targets), replacement=True)
@@ -487,7 +541,13 @@ def make_augmented_loaders(
 
 
 def _target_range_loader(images: torch.Tensor, targets: torch.Tensor, start: int, stop: int, batch_size: int) -> DataLoader:
-    """Build a loader for a contiguous target range."""
+    """Build a loader for a contiguous target range.
+
+    Used to carve out just the upper-case (10-35) or lower-case (36-61)
+    slice of MIXEDCASE_LABELS so per-case accuracy can be tracked separately
+    during training, since overall accuracy alone can hide one case being
+    much worse than the other.
+    """
 
     mask = (targets >= start) & (targets < stop)
     return DataLoader(TensorDataset(images[mask], targets[mask]), batch_size=batch_size)
@@ -798,6 +858,9 @@ def train_mixedcase(
             f"gap={metrics['overfit_gap']:.2f}%",
             flush=True,
         )
+        # Early-stop once the target accuracy is hit, but only after epoch 8
+        # so an early lucky epoch (before the cosine schedule has annealed
+        # the learning rate down) doesn't cut training short prematurely.
         if best_accuracy >= min_accuracy and epoch >= 8:
             break
 
@@ -860,6 +923,11 @@ def train(
     train_loader, test_loader, digit_test_loader, letter_test_loader = loaders
     model = MODEL_CLASSES[model_type](num_classes=len(LABELS)).to(device)
     criterion = nn.CrossEntropyLoss(label_smoothing=0.03)
+    # Warm-starting continues training from the existing checkpoint instead
+    # of random init, useful for fine-tuning on new data (e.g. after adding
+    # --include-chars74k) without losing prior accuracy. Only applied if the
+    # checkpoint's label set and architecture match exactly, since loading
+    # mismatched state_dicts would silently corrupt the model.
     if warm_start and WEIGHTS_PATH.exists():
         checkpoint = torch.load(WEIGHTS_PATH, map_location=device, weights_only=True)
         if checkpoint.get("labels") == LABELS and checkpoint.get("model_type", "cnn") == model_type:
@@ -871,6 +939,9 @@ def train(
     best_accuracy = 0.0
     best_state = None
     if warm_start:
+        # Seed "best" with the warm-started model's own pre-training-loop
+        # accuracy so a fresh run of fine-tuning epochs can't overwrite a
+        # already-good checkpoint with a worse one if this run regresses.
         _, best_accuracy = evaluate(model, test_loader, criterion, device)
         best_state = {key: value.detach().cpu() for key, value in model.state_dict().items()}
 
@@ -933,6 +1004,9 @@ def train(
             f"letters={letter_accuracy:.2f}% gap={metrics.overfit_gap:.2f}%",
             flush=True,
         )
+        # Early-stop once the target accuracy is hit, but only after epoch 8
+        # so an early lucky epoch (before the cosine schedule has annealed
+        # the learning rate down) doesn't cut training short prematurely.
         if best_accuracy >= min_accuracy and epoch >= 8:
             break
 

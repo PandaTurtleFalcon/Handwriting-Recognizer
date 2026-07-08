@@ -190,7 +190,14 @@ class CharacterPostprocessingTests(unittest.TestCase):
         self.assertTrue(_digit_beats_ambiguous_letter("4", 0.98, "Y", 0.979))
         self.assertTrue(_digit_beats_ambiguous_letter("5", 0.95, "J", 0.99))
         self.assertTrue(_digit_beats_ambiguous_letter("2", 0.99, "Z", 0.94))
+        self.assertTrue(_digit_beats_ambiguous_letter("1", 0.996, "I", 0.97))
+        self.assertTrue(_digit_beats_ambiguous_letter("1", 0.996, "l", 0.97))
+        self.assertTrue(_digit_beats_ambiguous_letter("0", 0.996, "O", 0.96))
+        self.assertTrue(_digit_beats_ambiguous_letter("8", 0.996, "B", 0.96))
+        self.assertTrue(_digit_beats_ambiguous_letter("5", 0.996, "S", 0.96))
         self.assertFalse(_digit_beats_ambiguous_letter("4", 0.91, "Y", 0.979))
+        self.assertFalse(_digit_beats_ambiguous_letter("1", 0.996, "I", 0.99))
+        self.assertFalse(_digit_beats_ambiguous_letter("0", 0.990, "O", 0.96))
 
     def test_letter_model_needs_margin_to_replace_digits(self) -> None:
         """A weak letter vote should not steal a stronger digit prediction."""

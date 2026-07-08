@@ -42,6 +42,8 @@ def load_labeled_image_folder(
     if not root.is_dir():
         raise RuntimeError(f"Extra dataset path is not a directory: {root}")
 
+    # Case-insensitive lookup so folders can be named "a" or "A" and still map
+    # onto the model's canonical (usually uppercase) label list.
     label_to_index = {label.upper(): index for index, label in enumerate(labels)}
     image_paths: list[tuple[Path, int]] = []
     unknown_classes: list[str] = []
@@ -49,6 +51,8 @@ def load_labeled_image_folder(
     for class_dir in sorted(path for path in root.iterdir() if path.is_dir()):
         label_key = class_dir.name.upper()
         if label_key not in label_to_index:
+            # Collect rather than raise immediately so the error message can
+            # report every bad folder in one pass instead of just the first.
             unknown_classes.append(class_dir.name)
             continue
         target = label_to_index[label_key]
@@ -66,6 +70,8 @@ def load_labeled_image_folder(
     targets = []
     for image_path, target in image_paths:
         with Image.open(image_path) as image:
+            # Convert to single-channel grayscale before the caller-supplied
+            # transform so this matches how uploaded images are preprocessed.
             images.append(transform(image.convert("L")))
         targets.append(target)
 

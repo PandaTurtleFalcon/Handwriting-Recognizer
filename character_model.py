@@ -11,6 +11,7 @@ from __future__ import annotations
 import argparse
 import json
 import random
+import threading
 import time
 from dataclasses import asdict, dataclass
 from pathlib import Path
@@ -50,7 +51,13 @@ LETTER_MODEL_TYPES = {
     "tinycnn": TinyEmnistCNN,
     "widecnn": WideEmnistCNN,
 }
+# The digit fallback model (see _load_digit_model_for_fallback) is loaded
+# lazily and shared process-wide since it's only needed occasionally; the
+# lock protects the check-then-load against a race if two request threads
+# hit the first low-confidence digit-like character at the same time.
 _DIGIT_MODEL: nn.Module | None = None
+_DIGIT_MODEL_LOCK = threading.Lock()
+_DIGIT_AMBIGUOUS_LABELS = {"B", "I", "J", "L", "O", "S", "Y", "Z", "l", "o"}
 
 
 @dataclass(frozen=True)
@@ -91,7 +98,13 @@ class CharacterDataset(Dataset):
 
 
 class CharacterCNN(nn.Module):
-    """Small MLP-style classifier for curated character glyphs."""
+    """Small MLP-style classifier for curated character glyphs.
+
+    Despite the "CNN" name (kept for interface consistency/checkpoint
+    compatibility with other models), this is a plain fully-connected
+    network with no convolutions — the curated dataset is small enough that
+    a simple MLP was sufficient and faster to iterate on.
+    """
 
     def __init__(self, num_classes: int) -> None:
         super().__init__()
@@ -135,7 +148,15 @@ def eval_transform() -> transforms.Compose:
 
 
 def normalize_character_image(image: Image.Image) -> Image.Image:
-    """Center and scale one character crop into a 28x28 foreground image."""
+    """Center and scale one character crop into a 28x28 foreground image.
+
+    Re-runs segmentation on the already-cropped character (with mark merging
+    enabled) purely to rebuild a clean foreground mask that includes
+    disconnected parts like dots/crossbars while excluding stray background
+    noise pixels that might sit just outside the actual glyph strokes. If no
+    regions are found (blank/degenerate crop), falls back to a plain
+    grayscale conversion of the whole crop.
+    """
 
     regions = segment_digit_regions(image, split_wide=False, min_component_pixels=4, merge_marks=True)
     if regions:
@@ -219,7 +240,14 @@ def build_character_exemplars(
     exemplars_per_class: int = 80,
     output_path: Path = EXEMPLARS_PATH,
 ) -> None:
-    """Save one exemplar tensor per curated sample for nearest-neighbor fallback."""
+    """Save one exemplar tensor per curated sample for nearest-neighbor fallback.
+
+    Stores at most 80 examples per class (not the whole dataset) so the
+    nearest-neighbor search in `_nearest_exemplar_label` stays cheap enough
+    to run on every low-confidence prediction. Saved as float16 to keep the
+    checkpoint file small since exemplar precision doesn't need to match
+    training precision.
+    """
 
     images, targets, labels = build_or_load_cache(root)
     selected_indices: list[int] = []
@@ -443,7 +471,15 @@ def tensor_from_alnum_region(region: DigitRegion, device: torch.device) -> torch
 
 
 def _nearest_exemplar_label(model: nn.Module, tensor: torch.Tensor) -> tuple[int, float] | None:
-    """Find the closest curated exemplar for low-confidence predictions."""
+    """Find the closest curated exemplar for low-confidence predictions.
+
+    A simple k=1 nearest-neighbor lookup (by raw pixel-space Euclidean
+    distance) over a small cached sample of training images per class — see
+    `build_character_exemplars`. This acts as a sanity-check fallback for
+    when the softmax classifier itself is unsure, since a very close visual
+    match to a real training example is often a better signal than a
+    marginal softmax probability.
+    """
 
     exemplars = getattr(model, "character_exemplars", None)
     targets = getattr(model, "character_exemplar_targets", None)
@@ -456,7 +492,16 @@ def _nearest_exemplar_label(model: nn.Module, tensor: torch.Tensor) -> tuple[int
 
 
 def _looks_like_letter_region(region: DigitRegion, label: str, confidence: float) -> bool:
-    """Decide whether a region is worth sending to the alphabet model."""
+    """Decide whether a region is worth sending to the alphabet model.
+
+    The alphabet-only model is slower to invoke and can wrongly steal
+    confident digit predictions (e.g. relabeling a clean "4" as a letter),
+    so it's only consulted when there's a real chance the curated model got
+    it wrong: the curated label is already alphabetic, it's one of the
+    digit/letter shapes that are visually ambiguous (1/I/l, -/_/|), or the
+    curated model itself was unsure and the region's shape and size are
+    consistent with a normal letter glyph.
+    """
 
     x0, y0, x1, y1 = region.box
     width = max(1, x1 - x0)
@@ -510,7 +555,15 @@ def _same_letter_different_case(first: str, second: str) -> bool:
 
 
 def _case_ambiguity_alternatives(alternatives: list[dict[str, float | str]]) -> list[dict[str, float | str]]:
-    """Return same-letter upper/lower alternatives when both are plausible."""
+    """Return same-letter upper/lower alternatives when both are plausible.
+
+    Some letters (e.g. C/c, O/o, S/s, W/w) look nearly identical in isolated
+    single-character handwriting with no surrounding word context to hint at
+    case. When the model's top-N alternatives contain both cases of the same
+    letter and neither is a clear loser (both >= 0.20 confidence), this
+    surfaces the pair so the UI/consumer can show both plausible readings
+    instead of silently picking one.
+    """
 
     for first in alternatives:
         first_label = str(first["label"])
@@ -527,7 +580,15 @@ def _case_ambiguity_alternatives(alternatives: list[dict[str, float | str]]) -> 
 
 
 def _top_alternatives(alternatives: list[dict[str, float | str]], selected_label: str) -> list[dict[str, float | str]]:
-    """Return compact top guesses, always keeping the selected label visible."""
+    """Return compact top guesses, always keeping the selected label visible.
+
+    Caps the list at 3 unique labels for display purposes. If the label that
+    ultimately won (after all the override logic in `predict_characters`)
+    isn't among the top alnum-model alternatives, it's force-inserted at the
+    front with a 0.0 placeholder confidence — otherwise the UI could show
+    "top guesses" that don't even include the actual displayed answer, which
+    would look like a bug.
+    """
 
     cleaned: list[dict[str, float | str]] = []
     seen: set[str] = set()
@@ -546,7 +607,13 @@ def _top_alternatives(alternatives: list[dict[str, float | str]], selected_label
 
 
 def _is_uncertain(confidence: float, alternatives: list[dict[str, float | str]]) -> bool:
-    """Return true when a prediction should be shown as needing review."""
+    """Return true when a prediction should be shown as needing review.
+
+    Flags low absolute confidence (<0.75), but also flags a "close call"
+    even when top confidence is otherwise fine: if the top two alternatives
+    are within 0.15 of each other, the model is essentially torn between two
+    answers and the result deserves a second look.
+    """
 
     if confidence < 0.75:
         return True
@@ -563,7 +630,24 @@ def _alnum_should_override(
     alnum_confidence: float,
     letter_confidence: float,
 ) -> bool:
-    """Decide when the trained alphanumeric model may replace the current label."""
+    """Decide when the trained alphanumeric model may replace the current label.
+
+    This is the central arbitration point between the older curated
+    character model and the newer, generally more accurate combined
+    alphanumeric model. The rules are intentionally asymmetric and
+    conservative rather than "highest confidence wins":
+    - Below 0.55 confidence the alnum model is too unsure to trust at all.
+    - If the alnum model says "digit" but the dedicated letter model is very
+      confident (>=0.9) it's a letter, don't let a shaky digit guess win.
+    - For upper/lower case flips of the same letter, require a bigger margin
+      (0.18 for flipping to lowercase, 0.10 for uppercase) since case errors
+      are visually subtle and worth being more skeptical about.
+    - If the curated model was already unsure (<0.86) or produced something
+      that isn't even alphanumeric, defer to the alnum model outright.
+    - Otherwise, only override within the same character class (digit vs.
+      digit, letter vs. letter) and only if the alnum model isn't
+      meaningfully worse (allowing a small 0.05 confidence handicap).
+    """
 
     if alnum_confidence < 0.55:
         return False
@@ -582,19 +666,34 @@ def _alnum_should_override(
 
 
 def _load_digit_model_for_fallback(device: torch.device) -> nn.Module | None:
-    """Lazily load the digit CNN for ambiguous numeric-looking regions."""
+    """Lazily load the digit CNN for ambiguous numeric-looking regions.
+
+    Loaded on first use (not at import time) since most predictions never
+    need it — only regions that look digit-like but got a shaky answer from
+    the other models trigger this path. See `_DIGIT_MODEL_LOCK` for the
+    thread-safety rationale.
+    """
 
     global _DIGIT_MODEL
     if _DIGIT_MODEL is not None:
         return _DIGIT_MODEL
-    if not DIGIT_WEIGHTS_PATH.exists():
-        return None
-    _DIGIT_MODEL = load_model(device=device)
-    return _DIGIT_MODEL
+    with _DIGIT_MODEL_LOCK:
+        if _DIGIT_MODEL is not None:
+            return _DIGIT_MODEL
+        if not DIGIT_WEIGHTS_PATH.exists():
+            return None
+        _DIGIT_MODEL = load_model(device=device)
+        return _DIGIT_MODEL
 
 
 def _digit_fallback_prediction(region: DigitRegion, device: torch.device) -> tuple[str, float] | None:
-    """Ask the MNIST digit model to rescue uncertain digit-like regions."""
+    """Ask the MNIST digit model to rescue uncertain digit-like regions.
+
+    The size floor (width >= 20, height >= 34, area >= 900) filters out
+    small punctuation-like marks before bothering to run the digit model,
+    since MNIST was trained on reasonably large centered digits and would
+    give meaningless answers on tiny fragments.
+    """
 
     x0, y0, x1, y1 = region.box
     width = x1 - x0
@@ -614,20 +713,33 @@ def _digit_beats_ambiguous_letter(
     current_label: str,
     current_confidence: float,
 ) -> bool:
-    """Return true for known digit/letter pairs where MNIST should win."""
+    """Return true for known digit/letter pairs where MNIST should win.
 
-    return (
-        digit_confidence >= 0.985
-        and digit_label == "2"
-        and current_label == "Z"
-        and current_confidence < 0.96
-    ) or (
-        digit_confidence >= 0.94
-        and (
-            (digit_label == "4" and current_label == "Y")
-            or (digit_label == "5" and current_label == "J")
-        )
-    )
+    Hand-picked exceptions for shape pairs that are genuinely ambiguous even
+    to a human (2/Z, 4/Y, 5/J depending on handwriting style), where
+    experience showed the specialist MNIST digit model outperforms the
+    general letter/alnum models. Thresholds are set very high (0.94-0.985)
+    so this only kicks in when MNIST is nearly certain, and only overrides
+    when the letter guess itself wasn't already highly confident.
+    """
+
+    pair_thresholds = {
+        ("2", "Z"): (0.985, 0.97),
+        ("4", "Y"): (0.950, 0.995),
+        ("5", "J"): (0.950, 0.995),
+        ("1", "I"): (0.995, 0.98),
+        ("1", "L"): (0.995, 0.98),
+        ("1", "l"): (0.995, 0.98),
+        ("0", "O"): (0.995, 0.97),
+        ("0", "o"): (0.995, 0.97),
+        ("8", "B"): (0.995, 0.97),
+        ("5", "S"): (0.995, 0.97),
+    }
+    thresholds = pair_thresholds.get((digit_label, current_label))
+    if thresholds is None:
+        return False
+    digit_floor, letter_ceiling = thresholds
+    return digit_confidence >= digit_floor and current_confidence < letter_ceiling
 
 
 def _letter_should_override(
@@ -636,7 +748,18 @@ def _letter_should_override(
     letter_confidence: float,
     digit_was_used: bool,
 ) -> bool:
-    """Decide when the letter-only model is strong enough to replace a label."""
+    """Decide when the letter-only model is strong enough to replace a label.
+
+    If the digit fallback already claimed this region, the letter model is
+    never allowed to override it — digit fallback only fires when it beat
+    strong evidence already, so it shouldn't be second-guessed here. When
+    the current label isn't alphanumeric at all (e.g. punctuation), a modest
+    0.55 confidence is enough since there's little to lose. When it's
+    already a letter, only a same-or-better (within 0.03) letter guess wins.
+    When it's a digit, the bar is much higher (0.92, and must beat the
+    current confidence by 0.08) since replacing a digit with a letter is a
+    bigger, riskier change.
+    """
 
     if digit_was_used:
         return False
@@ -648,7 +771,13 @@ def _letter_should_override(
 
 
 def _mask_span(mask: np.ndarray) -> float:
-    """Measure how much horizontal space a foreground mask occupies."""
+    """Measure how much horizontal space a foreground mask occupies.
+
+    Returns the ink's horizontal extent as a fraction of the mask's width —
+    used by the shape heuristics below (e.g. `_looks_like_seven`) as a cheap
+    stand-in for "how wide is the stroke in this horizontal band" without
+    needing full contour analysis.
+    """
 
     ys, xs = np.where(mask)
     if len(xs) == 0:
@@ -657,7 +786,17 @@ def _mask_span(mask: np.ndarray) -> float:
 
 
 def _looks_like_seven(region: DigitRegion) -> bool:
-    """Recognize the tall handwritten 7 shape that models confuse with 1."""
+    """Recognize the tall handwritten 7 shape that models confuse with 1.
+
+    A "7" has a wide horizontal stroke across the top and a narrow single
+    stroke below, whereas a "1" is narrow all the way down. This checks the
+    top 25% of the box for wide ink coverage and the bottom 45% for narrow
+    coverage, combined with an aspect ratio in the range typical of a
+    handwritten digit (not so narrow it's clearly a "1", not so wide it's
+    something else). These geometric checks run *after* the neural models
+    specifically because 1/7 confusion is common and hard for the CNNs to
+    fix on their own without seeing the distinctive top bar.
+    """
 
     mask = _foreground_from_image(region.image) > 0.18
     height, width = mask.shape
@@ -670,7 +809,13 @@ def _looks_like_seven(region: DigitRegion) -> bool:
 
 
 def _looks_like_one(region: DigitRegion) -> bool:
-    """Recognize a plain vertical 1 that models confuse with L."""
+    """Recognize a plain vertical 1 that models confuse with L.
+
+    The mirror image of `_looks_like_seven`'s logic: requires a narrow
+    aspect ratio and narrow ink coverage at both the top and bottom of the
+    box (no wide top bar, no wide base), which is what plain vertical
+    strokes look like but a serif'd "L" or flared "1" would not.
+    """
 
     mask = _foreground_from_image(region.image) > 0.18
     height, width = mask.shape
@@ -683,7 +828,16 @@ def _looks_like_one(region: DigitRegion) -> bool:
 
 
 def _looks_like_four(region: DigitRegion) -> bool:
-    """Recognize open-top handwritten 4s that letter models confuse with A."""
+    """Recognize open-top handwritten 4s that letter models confuse with A.
+
+    A handwritten "4" typically has: a wide horizontal crossbar around the
+    middle (`middle_span`), solid ink running down the right side (the
+    vertical stroke, `right_vertical_coverage`), very little ink in the
+    lower-left quadrant (the open triangular gap unique to "4", as opposed
+    to "A" which closes at the bottom), and at least a little ink in the
+    upper-left (the diagonal entering the crossbar). All four conditions
+    must hold together since any one alone could also describe other glyphs.
+    """
 
     mask = _foreground_from_image(region.image) > 0.18
     height, width = mask.shape
@@ -717,7 +871,17 @@ def _ink_center_x(mask: np.ndarray) -> float | None:
 
 
 def _parenthesis_shape_label(region: DigitRegion) -> str | None:
-    """Recognize single-stroke parentheses before model arbitration."""
+    """Recognize single-stroke parentheses before model arbitration.
+
+    Parentheses are drawn as one thin curved stroke, which none of the
+    trained classifiers see much of (they're mostly trained on letters and
+    digits). Detected purely from geometry rather than any model: a narrow,
+    sparse (low average ink density) box, split into five horizontal bands
+    whose ink centroid traces a curve. If the middle band's centroid is
+    shifted left of both the top and bottom bands' centroids, the stroke
+    bulges left, i.e. a "(" ; shifted right (with a shallower top, since ")"
+    tends to start further right) means a ")" .
+    """
 
     mask = _foreground_from_image(region.image) > 0.18
     height, width = mask.shape
@@ -749,7 +913,15 @@ def _parenthesis_shape_label(region: DigitRegion) -> str | None:
 
 
 def _punctuation_shape_label(region: DigitRegion) -> str | None:
-    """Detect punctuation whose geometry is clearer than model logits."""
+    """Detect punctuation whose geometry is clearer than model logits.
+
+    None of the classifiers were trained with much (or any) coverage of "i"
+    dots, "!" marks, or ":" as their own standalone characters, so multi-part
+    punctuation is recognized directly from connected-component geometry:
+    one "main" (largest) component plus one or more small satellite
+    components, disambiguated by whether the small piece sits above, below,
+    or straddles the main stroke.
+    """
 
     parenthesis_label = _parenthesis_shape_label(region)
     if parenthesis_label is not None:
@@ -758,6 +930,10 @@ def _punctuation_shape_label(region: DigitRegion) -> str | None:
     array = np.asarray(region.image, dtype=np.float32) / 255.0
     mask = array > 0.18
     if mask.mean() > 0.5:
+        # This region image is already a foreground-normalized grayscale
+        # crop (not raw photo data), so a mask that's more than half "on"
+        # signals the polarity looks inverted for this particular crop;
+        # re-threshold from the bright side instead of the dark side.
         mask = array < 0.82
     labeled, count = ndimage.label(mask)
     components: list[tuple[int, int, int, int, int]] = []
@@ -808,6 +984,15 @@ def _punctuation_shape_label(region: DigitRegion) -> str | None:
     return None
 
 
+# The functions below operate on final *predictions* (after each region has
+# already been classified by the models), unlike `_punctuation_shape_label`
+# above which works on raw segmentation geometry before classification.
+# Segmentation sometimes keeps a stem and its dot as two separate regions
+# even with mark-merging enabled (e.g. when they're far enough apart), so
+# this second pass looks across the whole finished prediction list for
+# adjacent stem+dot pairs to fuse into "i" or "!" after the fact.
+
+
 def _is_i_stem(prediction: dict[str, float | int | str]) -> bool:
     """Return true when a prediction could be the stem of lowercase i."""
 
@@ -848,7 +1033,13 @@ def _is_dot_above_stem(
     dot: dict[str, float | int | str],
     stem: dict[str, float | int | str],
 ) -> bool:
-    """Check whether a dot sits above and aligned with an i-like stem."""
+    """Check whether a dot sits above and aligned with an i-like stem.
+
+    Horizontal tolerance scales with the stem's own width (never below
+    22px) since a wider stroke can plausibly have a slightly more offset
+    dot. Vertical tolerance similarly scales with the stem's height (never
+    below 58px) to accommodate both small and large handwriting.
+    """
 
     dot_center_x = float(dot["x"]) + float(dot["width"]) / 2.0
     stem_center_x = float(stem["x"]) + float(stem["width"]) / 2.0
@@ -1035,7 +1226,16 @@ def _split_box(mask: np.ndarray, left: int, right: int) -> tuple[int, int, int, 
 
 
 def _blank_seam_cut(smoothed_projection: np.ndarray) -> int | None:
-    """Find a split column from a truly blank-ish internal seam."""
+    """Find a split column from a truly blank-ish internal seam.
+
+    Looks for a run of near-zero-ink columns (<=8% of the projection's peak,
+    with a 1.0 floor to tolerate single stray pixels) within the middle 30%
+    to 72% of the region — i.e. away from the outer edges, where a genuine
+    gap between two touching characters would fall. Requires the blank run
+    to be at least 5 columns wide so a single thin anti-aliasing gap inside
+    one character's stroke doesn't get mistaken for a real character
+    boundary. The cut point is the run's average column, not its edge.
+    """
 
     width = len(smoothed_projection)
     start = int(width * 0.30)
@@ -1054,7 +1254,21 @@ def _blank_seam_cut(smoothed_projection: np.ndarray) -> int | None:
 
 
 def _thin_bridge_cut(mask: np.ndarray, smoothed_projection: np.ndarray) -> int | None:
-    """Find a split column where two glyphs touch through a small bridge."""
+    """Find a split column where two glyphs touch through a small bridge.
+
+    Unlike `_blank_seam_cut`, this handles characters that touch via a thin
+    connecting stroke rather than a clean gap (e.g. cursive-ish joins, or two
+    digits whose strokes just barely overlap). Only attempted on wide boxes
+    (aspect ratio >= 1.15, width >= 110) since a normal single character
+    wouldn't be this wide. The column with the least ink in the middle
+    search window is a candidate cut, but it's only accepted if: it's a real
+    local valley relative to its neighboring peaks (not just uniformly low
+    ink throughout), the bridge itself is thin (little ink in the few
+    columns around the cut), and both resulting halves are wide enough (or
+    tall+narrow enough to be a legitimate narrow mark like "1" or "l") to
+    plausibly be their own characters — this avoids slicing off a sliver
+    that's too thin to be meaningful.
+    """
 
     height, width = mask.shape
     if width < 110 or width / max(height, 1) < 1.15:
@@ -1127,7 +1341,15 @@ def _split_one_touching_character_region(region: DigitRegion) -> list[DigitRegio
 
 
 def _split_touching_character_regions(regions: list[DigitRegion]) -> list[DigitRegion]:
-    """Split wide regions that contain either a seam or a thin touching bridge."""
+    """Split wide regions that contain either a seam or a thin touching bridge.
+
+    Runs breadth-first with a depth cap of 2 so a region can be split at
+    most twice (into up to ~4 pieces): after each split, both resulting
+    pieces are re-queued for another split attempt, since a wide region can
+    occasionally contain more than two touching characters. The depth cap
+    exists purely as a safety net against runaway recursive splitting on
+    unusual input.
+    """
 
     split_regions: list[DigitRegion] = []
     pending: list[tuple[DigitRegion, int]] = [(region, 0) for region in regions]
@@ -1152,7 +1374,19 @@ def predict_characters(
     alnum_model: nn.Module | None = None,
     alnum_labels: list[str] | None = None,
 ) -> list[dict[str, float | int | str]]:
-    """Segment an image and predict letters, digits, and punctuation."""
+    """Segment an image and predict letters, digits, and punctuation.
+
+    This is the top-level prediction pipeline that layers several signals on
+    top of each other, in order: the curated character model's raw softmax
+    output, then a punctuation shape override, then a nearest-exemplar
+    fallback, then (optionally) the alphabet-only and combined alphanumeric
+    models, then a narrow MNIST digit-model rescue, then geometric
+    shape-based overrides for specific known confusions (1/7, 4/A). Once
+    every region has an individual label, a final pass merges detached dots
+    into "i"/"!"/":" across the whole prediction list. The ordering matters:
+    later stages are only consulted when earlier ones leave real ambiguity,
+    to keep already-confident predictions from being second-guessed.
+    """
 
     selected_device = device or next(model.parameters()).device
     regions = segment_digit_regions(image, split_wide=False, min_component_pixels=4, merge_marks=True)
@@ -1165,10 +1399,20 @@ def predict_characters(
             confidence, label_index = torch.max(probabilities, dim=0)
             label = labels[int(label_index.item())]
             confidence_value = float(confidence.item())
+            # Punctuation shapes are geometry-only and considered authoritative
+            # over the neural model, which has little/no training signal for
+            # marks like parentheses; once set, punctuation_label gates out
+            # every later override stage below (they all check `is None`).
             punctuation_label = _punctuation_shape_label(region)
             if punctuation_label is not None:
                 label = punctuation_label
                 confidence_value = max(confidence_value, 0.92)
+            # When the curated model itself is unsure, fall back to whichever
+            # cached training exemplar is pixel-closest (nearest neighbor)
+            # rather than trusting a low-confidence softmax guess. Distance
+            # is converted to a confidence-like score by an empirically
+            # chosen linear scale (32.0), clamped to a modest [0.35, 0.9]
+            # range since this is a much cruder signal than the model itself.
             exemplar_match = _nearest_exemplar_label(model, tensor)
             if punctuation_label is None and exemplar_match is not None and confidence_value < 0.82:
                 exemplar_index, distance = exemplar_match
@@ -1204,10 +1448,14 @@ def predict_characters(
 
             # The digit-only model is kept as a narrow rescue path for cases like
             # messy 2/7 drawings, where MNIST is still stronger than EMNIST.
+            # Only invoked when there's a real reason to doubt the current
+            # label: it's not alphabetic at all, confidence is mediocre, or
+            # it's one of the specific letters known to be confused with
+            # digits — see _digit_beats_ambiguous_letter.
             digit_match = None
             digit_was_used = False
             if punctuation_label is None and (
-                not str(label).isalpha() or confidence_value < 0.86 or str(label) in {"J", "Y", "Z"}
+                not str(label).isalpha() or confidence_value < 0.86 or str(label) in _DIGIT_AMBIGUOUS_LABELS
             ):
                 digit_match = _digit_fallback_prediction(region, selected_device)
                 if digit_match is not None:
@@ -1233,6 +1481,11 @@ def predict_characters(
                 if _letter_should_override(str(label), confidence_value, letter_confidence, digit_was_used):
                     label = letter_label
                     confidence_value = max(confidence_value, letter_confidence)
+            # Final geometric tie-breakers for the handful of shape confusions
+            # that models still get wrong even after every other stage above;
+            # these only fire when the current label is already one of the
+            # specific candidates being disambiguated (e.g. won't relabel a
+            # confident "9" just because it vaguely resembles a "4" shape).
             if punctuation_label is None and _looks_like_four(region) and str(label) in {"4", "A", "Y"}:
                 label = "4"
                 confidence_value = max(confidence_value, 0.92)
@@ -1243,6 +1496,11 @@ def predict_characters(
                 label = "1"
                 confidence_value = max(confidence_value, 0.92)
             if case_alternatives:
+                # If the label that ultimately won is one of the two
+                # case-ambiguous alternatives, show its own alternative
+                # confidence rather than whatever confidence value survived
+                # the override cascade above, so the displayed number stays
+                # consistent with the case-ambiguity note.
                 matching_case = next((item for item in case_alternatives if str(item["label"]) == str(label)), None)
                 if matching_case is not None:
                     confidence_value = float(matching_case["confidence"])

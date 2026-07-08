@@ -41,50 +41,82 @@ MAX_UPLOAD_BYTES = 8 * 1024 * 1024
 MAX_IMAGE_PIXELS = 4_000_000
 MAX_FILES = 20
 CORRECTIONS_PATH = Path("data") / "corrections" / "corrections.jsonl"
+# Predictions below this confidence are visually flagged as "uncertain" in
+# the results UI (see is_prediction_uncertain).
 LOW_CONFIDENCE_THRESHOLD = 0.80
+# If the top two model alternatives are within this margin of each other,
+# the prediction is also flagged uncertain even if its raw confidence
+# cleared the threshold above, since a close second guess means the model
+# was effectively torn between two answers.
 CLOSE_GUESS_MARGIN = 0.12
 TOP_GUESS_LIMIT = 3
+# Set well above MAX_IMAGE_PIXELS so PIL's own decompression-bomb guard
+# never fires before this app's own size check in classify_files runs (and
+# reports a friendlier error); the 2x margin is just headroom, not a real limit.
 Image.MAX_IMAGE_PIXELS = MAX_IMAGE_PIXELS * 2
 
 
 PAGE_CSS = """
 :root {
   color-scheme: light;
-  --ink: #172033;
+  --ink: #14192b;
   --muted: #5f6d7e;
-  --line: #d9e0ea;
-  --paper: #f8fafc;
+  --muted-soft: #8592a6;
+  --line: #dde3ec;
+  --line-soft: #eaeef4;
+  --paper: #eef2f8;
   --panel: #ffffff;
-  --accent: #2563eb;
-  --accent-dark: #1e40af;
-  --ok: #15803d;
-  --warn: #b45309;
-  --warn-bg: #fffbeb;
-  --warn-line: #f59e0b;
+  --accent: #4338ca;
+  --accent-dark: #312a9e;
+  --accent-soft: #eef0fe;
+  --accent-ring: rgb(67 56 202 / 0.25);
+  --ok: #0f7a45;
+  --ok-bg: #eefcf3;
+  --ok-line: #bbf1d1;
+  --warn: #92400e;
+  --warn-bg: #fff8ec;
+  --warn-line: #f0b429;
+  --danger: #b91c1c;
+  --danger-bg: #fff5f5;
+  --danger-line: #f6b8b8;
+  --radius-lg: 16px;
+  --radius-md: 12px;
+  --radius-sm: 8px;
+  --shadow-card: 0 1px 2px rgb(20 25 43 / 0.04), 0 8px 24px -12px rgb(20 25 43 / 0.12);
+  --shadow-pop: 0 4px 10px -4px rgb(20 25 43 / 0.18);
 }
 * { box-sizing: border-box; }
 body {
   margin: 0;
-  font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-  background: var(--paper);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, Roboto, ui-sans-serif, system-ui, sans-serif;
+  background:
+    radial-gradient(1100px 480px at 12% -10%, rgb(67 56 202 / 0.08), transparent),
+    var(--paper);
   color: var(--ink);
+  -webkit-font-smoothing: antialiased;
 }
 main {
-  width: min(1040px, calc(100vw - 32px));
+  width: min(1080px, calc(100vw - 32px));
   margin: 0 auto;
-  padding: 36px 0 48px;
+  padding: 40px 0 56px;
 }
 .topbar {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  flex-wrap: wrap;
   gap: 18px;
-  margin-bottom: 28px;
+  margin-bottom: 30px;
+}
+.topbar > div:first-child {
+  min-width: 0;
 }
 h1 {
   margin: 0 0 6px;
-  font-size: 34px;
-  line-height: 1.08;
+  font-size: clamp(26px, 4vw, 34px);
+  font-weight: 800;
+  line-height: 1.12;
+  letter-spacing: -0.02em;
 }
 p {
   margin: 0;
@@ -92,62 +124,133 @@ p {
   line-height: 1.55;
 }
 .badge {
-  border: 1px solid var(--line);
-  border-radius: 999px;
-  padding: 8px 12px;
-  background: var(--panel);
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+  border: 1px solid var(--ok-line);
+  border-radius: var(--radius-lg);
+  padding: 8px 14px;
+  background: var(--ok-bg);
   color: var(--ok);
+  font-size: 13px;
   font-weight: 700;
-  white-space: nowrap;
+  white-space: normal;
+  box-shadow: var(--shadow-pop);
+}
+.badge::before {
+  content: "";
+  width: 7px;
+  height: 7px;
+  margin-top: 3px;
+  border-radius: 50%;
+  background: currentColor;
+  flex: none;
+  align-self: flex-start;
 }
 .workspace {
   display: grid;
-  grid-template-columns: minmax(0, 0.9fr) minmax(320px, 1.1fr);
-  gap: 20px;
+  grid-template-columns: minmax(0, 0.85fr) minmax(340px, 1.15fr);
+  gap: 22px;
+  align-items: start;
 }
 .upload-panel,
 .result-panel,
 .empty-panel {
   background: var(--panel);
   border: 1px solid var(--line);
-  border-radius: 8px;
-  padding: 20px;
+  border-radius: var(--radius-lg);
+  padding: 22px;
+  box-shadow: var(--shadow-card);
+}
+.upload-panel {
+  position: sticky;
+  top: 20px;
 }
 .upload-zone {
   display: grid;
   place-items: center;
   min-height: 240px;
-  border: 2px dashed #a9b8ca;
-  border-radius: 8px;
-  background: #f4f7fb;
+  border: 2px dashed #b7c3d6;
+  border-radius: var(--radius-md);
+  background: linear-gradient(180deg, #f7f9fd, #f0f4fa);
   text-align: center;
-  padding: 22px;
+  padding: 28px 22px;
+  transition: border-color 0.15s ease, background 0.15s ease;
+}
+.upload-zone:focus-within,
+.upload-zone:hover {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+.upload-zone label {
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--ink);
+}
+.upload-zone .hint {
+  margin-top: 6px;
 }
 input[type="file"] {
   width: 100%;
   max-width: 320px;
-  margin-top: 16px;
+  margin-top: 18px;
+  font: inherit;
+  color: var(--muted);
+}
+input[type="file"]::file-selector-button {
+  margin-right: 10px;
+  padding: 9px 14px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--panel);
+  color: var(--ink);
+  font: inherit;
+  font-weight: 700;
+  cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+input[type="file"]::file-selector-button:hover {
+  background: var(--accent-soft);
+  border-color: var(--accent);
 }
 button {
   display: inline-flex;
   justify-content: center;
   align-items: center;
-  min-height: 44px;
-  margin-top: 18px;
+  gap: 8px;
+  min-height: 46px;
+  margin-top: 20px;
   width: 100%;
   border: 0;
-  border-radius: 8px;
-  background: var(--accent);
+  border-radius: var(--radius-sm);
+  background: linear-gradient(180deg, var(--accent), var(--accent-dark));
   color: white;
   font-size: 16px;
-  font-weight: 800;
+  font-weight: 700;
+  letter-spacing: -0.01em;
   cursor: pointer;
+  box-shadow: 0 6px 16px -6px rgb(67 56 202 / 0.55);
+  transition: transform 0.08s ease, box-shadow 0.15s ease, filter 0.15s ease;
 }
-button:hover { background: var(--accent-dark); }
+button:hover { filter: brightness(1.06); }
+button:active { transform: translateY(1px); }
+button:disabled {
+  cursor: wait;
+  filter: none;
+  background: #94a3b8;
+  box-shadow: none;
+}
 button:focus-visible,
-input[type="file"]:focus-visible {
-  outline: 3px solid #93c5fd;
-  outline-offset: 3px;
+input[type="file"]:focus-visible,
+input[type="text"]:focus-visible,
+.digit-box:focus-visible,
+a:focus-visible {
+  outline: 3px solid var(--accent-ring);
+  outline-offset: 2px;
+}
+input[type="text"]:focus-visible {
+  border-color: var(--accent);
 }
 .sr-only {
   position: absolute;
@@ -162,60 +265,71 @@ input[type="file"]:focus-visible {
 }
 .hint {
   margin-top: 14px;
-  font-size: 14px;
+  font-size: 13.5px;
+  color: var(--muted-soft);
 }
-.result-panel + .result-panel { margin-top: 14px; }
+.result-panel + .result-panel { margin-top: 16px; }
 .result-panel { overflow: hidden; }
+.result-panel.error {
+  border-color: var(--danger-line);
+  background: var(--danger-bg);
+}
 .result-head {
   display: flex;
   align-items: baseline;
   justify-content: space-between;
   flex-wrap: wrap;
   gap: 12px;
-  margin-bottom: 12px;
+  margin-bottom: 14px;
+  padding-bottom: 14px;
+  border-bottom: 1px solid var(--line-soft);
 }
 .filename {
-  font-size: 16px;
-  font-weight: 800;
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--muted);
   overflow-wrap: anywhere;
 }
 .sequence {
-  font-size: 32px;
-  line-height: 1;
-  font-weight: 900;
-  color: var(--accent-dark);
-  letter-spacing: 0;
+  font-size: 34px;
+  line-height: 1.1;
+  font-weight: 800;
+  color: var(--ink);
+  letter-spacing: -0.01em;
   max-width: 100%;
   overflow-wrap: anywhere;
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
 }
 .row-output {
-  margin-top: 8px;
+  margin: 10px 0 0;
   color: var(--muted);
-  font-weight: 700;
+  font-weight: 600;
 }
 .row-output code {
   display: inline-block;
   margin: 4px 8px 0 0;
-  padding: 4px 8px;
+  padding: 5px 10px;
   border: 1px solid var(--line);
-  border-radius: 6px;
+  border-radius: 999px;
   background: #f8fafc;
   color: var(--ink);
+  font-size: 12.5px;
   max-width: 100%;
   overflow-wrap: anywhere;
 }
 .digits {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(92px, 1fr));
-  gap: 10px;
+  grid-template-columns: repeat(auto-fill, minmax(96px, 1fr));
+  gap: 12px;
+  margin-top: 16px;
 }
 .preview-wrap {
   position: relative;
-  margin: 14px 0;
+  margin: 16px 0;
   overflow: hidden;
   border: 1px solid var(--line);
-  border-radius: 8px;
-  background: #f4f7fb;
+  border-radius: var(--radius-md);
+  background: repeating-conic-gradient(#f4f7fb 0% 25%, #eef1f6 0% 50%) 50% / 18px 18px;
 }
 .preview-wrap img {
   display: block;
@@ -225,8 +339,10 @@ input[type="file"]:focus-visible {
 .digit-box {
   position: absolute;
   border: 3px solid #dc2626;
-  border-radius: 5px;
+  border-radius: 6px;
   box-shadow: 0 0 0 2px rgb(255 255 255 / 0.9);
+  cursor: default;
+  transition: outline-color 0.1s ease;
 }
 .digit-box.uncertain {
   border-color: var(--warn-line);
@@ -243,10 +359,11 @@ input[type="file"]:focus-visible {
   background: #dc2626;
   color: #fff;
   font-size: 13px;
-  font-weight: 900;
+  font-weight: 800;
 }
 .digit-box.uncertain span {
   background: var(--warn-line);
+  color: #402100;
 }
 .digit-box:hover,
 .digit-box:focus-visible {
@@ -256,97 +373,123 @@ input[type="file"]:focus-visible {
 .digit-box.uncertain:hover,
 .digit-box.uncertain:focus-visible {
   border-color: var(--warn);
-  outline: 3px solid rgb(245 158 11 / 0.28);
+  outline: 3px solid rgb(240 180 41 / 0.32);
 }
 .digit-index {
   color: #dc2626;
-  font-weight: 900;
+  font-weight: 800;
 }
 .digit {
   border: 1px solid var(--line);
-  border-radius: 8px;
-  padding: 12px;
+  border-radius: var(--radius-md);
+  padding: 14px;
   background: #fbfdff;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+.digit:hover {
+  border-color: #c8d3e2;
+  box-shadow: var(--shadow-pop);
 }
 .digit.uncertain {
   border-color: var(--warn-line);
   background: var(--warn-bg);
 }
 .digit strong {
-  display: block;
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
   font-size: 26px;
+  font-weight: 800;
 }
 .digit span {
+  display: block;
+  margin-top: 4px;
   color: var(--muted);
-  font-size: 13px;
+  font-size: 12.5px;
+  font-weight: 600;
 }
 .alternatives {
-  margin-top: 8px;
-  font-size: 13px;
-  line-height: 1.35;
+  margin-top: 9px;
+  font-size: 12.5px;
+  line-height: 1.4;
   color: var(--muted);
 }
 .alternatives b {
   color: var(--ink);
 }
 .uncertain-note {
-  display: inline-block;
-  margin-top: 7px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-top: 8px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: rgb(240 180 41 / 0.18);
   color: var(--warn);
-  font-size: 12px;
+  font-size: 11px;
   font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
 }
 .full-correction {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
-  gap: 8px;
-  margin: 12px 0 14px;
-  padding: 12px;
+  gap: 8px 10px;
+  margin: 14px 0 4px;
+  padding: 14px;
   border: 1px solid var(--line);
-  border-radius: 8px;
+  border-radius: var(--radius-md);
   background: #f8fafc;
 }
 .full-correction label {
   grid-column: 1 / -1;
   color: var(--muted);
-  font-size: 13px;
-  font-weight: 800;
+  font-size: 12.5px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
 }
 .full-correction input[type="text"] {
   min-width: 0;
-  height: 38px;
+  height: 40px;
   border: 1px solid var(--line);
-  border-radius: 6px;
-  padding: 0 10px;
+  border-radius: var(--radius-sm);
+  padding: 0 12px;
   font: inherit;
+  background: var(--panel);
+  transition: border-color 0.15s ease;
 }
 .full-correction button {
   width: auto;
-  min-height: 38px;
+  min-height: 40px;
   margin: 0;
-  padding: 0 12px;
-  font-size: 13px;
+  padding: 0 16px;
+  font-size: 13.5px;
+  box-shadow: none;
 }
 .correction-form {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
   gap: 8px;
-  margin-top: 10px;
+  margin-top: 12px;
 }
 .correction-form input[type="text"] {
   min-width: 0;
-  height: 34px;
+  height: 36px;
   border: 1px solid var(--line);
-  border-radius: 6px;
-  padding: 0 9px;
+  border-radius: var(--radius-sm);
+  padding: 0 10px;
   font: inherit;
+  background: var(--panel);
+  transition: border-color 0.15s ease;
 }
 .correction-form button {
   width: auto;
-  min-height: 34px;
+  min-height: 36px;
   margin: 0;
-  padding: 0 10px;
-  font-size: 13px;
+  padding: 0 12px;
+  font-size: 12.5px;
+  box-shadow: none;
 }
 .correction-form button:disabled,
 .full-correction button:disabled {
@@ -358,27 +501,57 @@ input[type="file"]:focus-visible {
   min-height: 16px;
   color: var(--muted);
   font-size: 12px;
-  font-weight: 700;
+  font-weight: 600;
 }
+.empty-panel {
+  display: grid;
+  place-items: center;
+  min-height: 200px;
+  text-align: center;
+  color: var(--muted);
+}
+.empty-panel p { max-width: 46ch; }
 .error {
-  border-color: #fecaca;
-  background: #fff7f7;
+  border-color: var(--danger-line);
+  background: var(--danger-bg);
+  color: var(--danger);
 }
+.error p { color: var(--danger); }
 .notice {
-  border-color: #bbf7d0;
-  background: #f0fdf4;
+  border-color: var(--ok-line);
+  background: var(--ok-bg);
 }
+.notice p { color: var(--ok); }
 code {
   color: var(--accent-dark);
   font-weight: 700;
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
 }
 @media (max-width: 760px) {
-  .topbar,
+  .topbar {
+    flex-direction: column;
+    align-items: flex-start;
+  }
   .workspace { display: block; }
-  .badge { display: inline-block; margin-top: 14px; }
-  .upload-panel { margin-bottom: 18px; }
-  main { width: min(100vw - 20px, 1040px); padding-top: 20px; }
-  h1 { font-size: 28px; }
+  .badge { margin-top: 2px; }
+  .upload-panel {
+    margin-bottom: 18px;
+    position: static;
+  }
+  main { width: min(100vw - 20px, 1080px); padding-top: 22px; }
+  h1 { font-size: 26px; }
+  .sequence { font-size: 28px; }
+  .digits { grid-template-columns: repeat(auto-fill, minmax(84px, 1fr)); }
+}
+@media (max-width: 420px) {
+  .full-correction,
+  .correction-form {
+    grid-template-columns: 1fr;
+  }
+  .full-correction button,
+  .correction-form button {
+    width: 100%;
+  }
 }
 """
 
@@ -430,7 +603,13 @@ PAGE_SCRIPT = """
 
 
 class MnistWebHandler(BaseHTTPRequestHandler):
-    """HTTP handler that owns loaded model state and request routing."""
+    """HTTP handler that owns loaded model state and request routing.
+
+    BaseHTTPRequestHandler instantiates a new handler object per request, so
+    the loaded models are kept as *class* attributes (set once in `run()`)
+    rather than instance attributes — every request shares the same
+    already-loaded weights instead of reloading them each time.
+    """
 
     model = None
     device = None
@@ -541,7 +720,14 @@ class MnistWebHandler(BaseHTTPRequestHandler):
 
 
 def parse_multipart_files(content_type: str, body: bytes) -> list[tuple[str, bytes]]:
-    """Extract uploaded image files from a multipart/form-data request."""
+    """Extract uploaded image files from a multipart/form-data request.
+
+    There's no HTTP form-parsing library in the stdlib, but Python's email
+    package already implements MIME multipart parsing (multipart/form-data
+    is structurally a MIME message), so the raw body is repackaged with a
+    synthetic Content-Type/Content-Length header and handed to the email
+    parser instead of writing a parser from scratch.
+    """
 
     if not content_type.lower().startswith("multipart/form-data"):
         raise ValueError("Use the upload form to send image files.")
@@ -657,7 +843,17 @@ def top_guesses(prediction: dict[str, object]) -> list[dict[str, object]]:
 
 
 def is_prediction_uncertain(prediction: dict[str, object]) -> bool:
-    """Flag predictions whose confidence or alternatives make the result shaky."""
+    """Flag predictions whose confidence or alternatives make the result shaky.
+
+    Three independent reasons can mark a prediction uncertain: (1) raw
+    confidence is below the threshold; (2) the model's own top-ranked
+    alternative disagrees with the label actually being displayed and is at
+    least as confident — this can happen because `character_model`'s
+    arbitration logic sometimes displays a label other than the raw top
+    softmax class (see `_alnum_should_override` etc.), so a mismatch here
+    signals the final answer was a judgment call, not a clean top-1; (3) the
+    top two alternatives are too close together to be a confident call.
+    """
 
     confidence = float(prediction.get("confidence", 0))
     if confidence < LOW_CONFIDENCE_THRESHOLD:
@@ -676,7 +872,13 @@ def is_prediction_uncertain(prediction: dict[str, object]) -> bool:
 
 
 def image_to_data_url(image: Image.Image) -> str:
-    """Convert a preview image into an inline browser-safe data URL."""
+    """Convert a preview image into an inline browser-safe data URL.
+
+    Embedding the image directly as base64 avoids needing a second HTTP
+    route (and matching request handling) just to serve uploaded images
+    back to the browser for the results preview. Downscaled to at most
+    1200x900 first so large uploads don't bloat the rendered HTML page.
+    """
 
     display_image = image.copy()
     display_image.thumbnail((1200, 900), Image.Resampling.LANCZOS)
@@ -689,12 +891,25 @@ def image_to_data_url(image: Image.Image) -> str:
 def parse_correction_form(body: bytes) -> dict[str, str]:
     """Parse a URL-encoded correction form into single string values."""
 
-    fields = parse_qs(body.decode("utf-8"), keep_blank_values=True, strict_parsing=True)
+    try:
+        text = body.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise ValueError("Correction request is malformed.") from exc
+    fields = parse_qs(text, keep_blank_values=True, strict_parsing=True)
     return {key: values[-1] if values else "" for key, values in fields.items()}
 
 
 def build_correction_record(form: dict[str, str]) -> dict[str, object]:
-    """Validate form fields and shape them for the correction JSONL log."""
+    """Validate form fields and shape them for the correction JSONL log.
+
+    Two correction kinds share this path: "character" (fixing one predicted
+    glyph) and "sequence" (fixing the whole displayed result at once, see
+    `render_full_correction_form`), which is why the max length and the
+    prediction_index requirement branch on `correction_kind` below. Every
+    field is validated defensively since this handles untrusted POST data —
+    a malformed request should fail with a clear ValueError rather than
+    writing a corrupt record to the training feedback log.
+    """
 
     correction_kind = form.get("correction_kind", "character").strip() or "character"
     corrected_label = form.get("corrected_label", "").strip()
@@ -707,11 +922,15 @@ def build_correction_record(form: dict[str, str]) -> dict[str, object]:
         prediction_index = int(form.get("prediction_index", "0"))
         confidence = float(form.get("confidence", "0"))
         bbox = json.loads(form.get("bbox", "{}"))
-    except (TypeError, ValueError, json.JSONDecodeError) as exc:
+    except (TypeError, ValueError, json.JSONDecodeError, RecursionError) as exc:
         raise ValueError("Correction request is malformed.") from exc
     if correction_kind not in {"character", "sequence"} or not isinstance(bbox, dict):
         raise ValueError("Correction request is malformed.")
     if correction_kind == "character" and prediction_index < 1:
+        # Sequence-level corrections use index 0 (see the hidden fields in
+        # render_full_correction_form) since they aren't tied to one
+        # specific prediction; only individual-character corrections need a
+        # real 1-based prediction index.
         raise ValueError("Correction request is malformed.")
     return {
         "correction_kind": correction_kind,
@@ -745,7 +964,15 @@ def render_page(
     error: str | None = None,
     notice: str | None = None,
 ) -> str:
-    """Render the complete upload/results page."""
+    """Render the complete upload/results page.
+
+    The metrics badge text below is built by checking each model's weights
+    file for existence, in order from broadest/newest (mixed-case, then
+    combined alnum, then letters-only, then curated character model) down to
+    the plain digit CNN, so the badge reflects whichever most-capable model
+    is actually active for `run()`'s recognizer selection (see `run` for the
+    matching load-order logic).
+    """
 
     metrics = read_metrics()
     metrics_text = "Model not trained yet"
@@ -790,6 +1017,9 @@ def render_page(
             metrics_text = f"Character validation accuracy: {best['validation_accuracy']:.2f}%"
         elif character_metrics:
             metrics_text = f"{metrics_text} + punctuation"
+    if metrics:
+        digit_best = max(metrics, key=lambda item: item.get("test_accuracy", 0))
+        metrics_text = f"{metrics_text} | digit specialist {digit_best['test_accuracy']:.2f}%"
 
     result_html = ""
     if error:
@@ -864,7 +1094,7 @@ def render_result(result: dict[str, object]) -> str:
         if not isinstance(prediction, dict):
             continue
         digit = html.escape(prediction_value(prediction))
-        confidence = float(prediction["confidence"]) * 100
+        confidence = float(prediction.get("confidence", 0)) * 100
         uncertain = is_prediction_uncertain(prediction)
         alternatives_html = ""
         guesses = top_guesses(prediction)
@@ -919,6 +1149,9 @@ def render_full_correction_form(result: dict[str, object]) -> str:
         f'value="{html.escape(str(value), quote=True)}">'
         for name, value in hidden_fields.items()
     )
+    # The label's `id` only needs to be unique per page render (multiple
+    # result cards can appear on one page) so a short hash of the form's own
+    # content is enough; this isn't a security control, just DOM uniqueness.
     label_seed = json.dumps(hidden_fields, ensure_ascii=True, sort_keys=True)
     label_token = hashlib.sha1(label_seed.encode("utf-8")).hexdigest()[:10]
     label_id = f"sequence-correction-{label_token}"
@@ -1009,6 +1242,10 @@ def render_overlays(result: dict[str, object], predictions: object) -> str:
     for index, prediction in enumerate(predictions, start=1):
         if not isinstance(prediction, dict):
             continue
+        # Boxes are positioned with CSS percentages (not pixels) so they
+        # stay aligned with the preview image regardless of how the browser
+        # scales it responsively; image_width/height are the *original*
+        # upload dimensions the model coordinates were computed against.
         left = 100.0 * float(prediction.get("x", 0)) / image_width
         top = 100.0 * float(prediction.get("y", 0)) / image_height
         width = 100.0 * float(prediction.get("width", 0)) / image_width
@@ -1045,7 +1282,15 @@ def read_metrics(path=METRICS_PATH):
 
 
 def run(host: str = HOST, port: int = PORT) -> None:
-    """Load the best available recognizer and start the local HTTP server."""
+    """Load the best available recognizer and start the local HTTP server.
+
+    Model selection prefers the expanded character recognizer (which itself
+    layers letter/mixed-case/alnum models on top, see `character_model.predict_characters`)
+    and only falls back to the plain digit-only CNN when the character
+    weights were never trained. The mixed-case (upper+lower) alnum model is
+    preferred over the case-folded one when both exist, since it's strictly
+    more capable.
+    """
 
     if CHARACTER_WEIGHTS_PATH.exists():
         MnistWebHandler.device = get_device()
@@ -1070,6 +1315,10 @@ def run(host: str = HOST, port: int = PORT) -> None:
         raise SystemExit(
             f"Missing model weights. Train first with: python3 character_model.py or python3 mnist_model.py"
         )
+    # ThreadingHTTPServer handles each request on its own thread so a slow
+    # image upload/prediction doesn't block other concurrent requests; this
+    # is safe here because the loaded models are read-only at inference time
+    # and PyTorch inference (under torch.no_grad()) doesn't mutate shared state.
     server = ThreadingHTTPServer((host, port), MnistWebHandler)
     print(f"Handwriting Recognizer ({MnistWebHandler.recognizer_kind}) running at http://{host}:{port}")
     server.serve_forever()

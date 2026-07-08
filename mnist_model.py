@@ -30,6 +30,9 @@ DEFAULT_DATA_ROOTS = [
     Path.home() / "Downloads" / "data",
 ]
 
+# The canonical MNIST per-pixel mean/std (computed over the training set).
+# Every tensor fed to DigitCNN must be normalized with these exact constants
+# because that's what the network was trained on.
 MNIST_MEAN = 0.1307
 MNIST_STD = 0.3081
 
@@ -57,7 +60,14 @@ class DigitRegion:
 
 
 class DigitCNN(nn.Module):
-    """Convolutional network trained on MNIST digits."""
+    """Convolutional network trained on MNIST digits.
+
+    Two conv blocks (32 then 64 filters), each followed by a 2x2 max-pool,
+    take the 28x28 input down to a 7x7x64 feature map before the classifier
+    head. Dropout increases with depth (0.10 -> 0.20 -> 0.35) since later,
+    more abstract layers are more prone to overfitting on a small 10-class
+    problem.
+    """
 
     def __init__(self) -> None:
         super().__init__()
@@ -92,7 +102,12 @@ class DigitCNN(nn.Module):
 
 
 def get_device() -> torch.device:
-    """Choose the fastest locally available PyTorch device."""
+    """Choose the fastest locally available PyTorch device.
+
+    Preference order is Apple Silicon MPS, then CUDA, then CPU. `mps` is
+    guarded with getattr because older torch builds don't expose
+    `torch.backends.mps` at all, which would otherwise raise AttributeError.
+    """
 
     if getattr(torch.backends, "mps", None) is not None and torch.backends.mps.is_available():
         return torch.device("mps")
@@ -113,6 +128,11 @@ def find_data_root() -> Path:
 def build_loaders(data_root: Path, batch_size: int) -> tuple[DataLoader, DataLoader]:
     """Create augmented training and plain test loaders for MNIST."""
 
+    # Mild random affine jitter (rotation/translate/scale/shear) approximates
+    # the natural variation in real handwriting so the model generalizes
+    # beyond MNIST's fairly uniform, pre-centered digit style. The ranges are
+    # deliberately small — MNIST digits are already well-formed, so
+    # aggressive augmentation would create unrealistic training examples.
     train_transform = transforms.Compose(
         [
             transforms.RandomAffine(
@@ -177,6 +197,7 @@ def train_model(
 ) -> list[EpochMetrics]:
     """Train the MNIST CNN and save the best checkpoint above the target."""
 
+    # Fixed seed keeps training runs reproducible for comparing experiments.
     torch.manual_seed(42)
     np.random.seed(42)
 
@@ -228,6 +249,9 @@ def train_model(
         )
         history.append(metrics)
 
+        # Track the best-performing epoch's weights (not necessarily the
+        # final epoch's) since cosine annealing and stochastic minibatches
+        # mean test accuracy can dip after its peak before training ends.
         if test_accuracy > best_accuracy:
             best_accuracy = test_accuracy
             best_state = {key: value.detach().cpu() for key, value in model.state_dict().items()}
@@ -268,7 +292,15 @@ def load_model(weights_path: Path = WEIGHTS_PATH, device: torch.device | None = 
 
 
 def _foreground_from_image(image: Image.Image) -> np.ndarray:
-    """Convert an image into a foreground-ink mask, handling light/dark ink."""
+    """Convert an image into a foreground-ink mask, handling light/dark ink.
+
+    Uploaded photos can be dark ink on a light page or (less commonly) light
+    chalk/pen on a dark background. We sample the image border pixels as a
+    proxy for the background color: if the border is mostly bright, assume
+    light background and invert so "ink" is always represented as high
+    values. 0.18 is an empirical noise floor that discards faint scanner/
+    camera artifacts without erasing genuine light pencil strokes.
+    """
 
     grayscale = ImageOps.grayscale(image)
     array = np.asarray(grayscale, dtype=np.float32) / 255.0
@@ -280,7 +312,16 @@ def _foreground_from_image(image: Image.Image) -> np.ndarray:
 
 
 def _group_boxes_by_reading_order(boxes: list[tuple[int, int, int, int]]) -> list[list[tuple[int, int, int, int]]]:
-    """Group boxes into rows so multi-line uploads read top-to-bottom."""
+    """Group boxes into rows so multi-line uploads read top-to-bottom.
+
+    Rows aren't detected by fixed pixel bands (handwriting is rarely level)
+    but by clustering boxes whose vertical centers are close to each other.
+    The tolerance scales with the median glyph height (with an 8px floor for
+    very small crops) so both tiny and large handwriting cluster sensibly.
+    A box joins the first row whose running average center it's close
+    enough to; this is a greedy single-pass clustering, not globally optimal,
+    but is fast and good enough for the row counts typical of this app.
+    """
 
     if not boxes:
         return []
@@ -312,7 +353,16 @@ def _sort_boxes_reading_order(boxes: list[tuple[int, int, int, int]]) -> list[tu
 
 
 def _best_vertical_cut(mask: np.ndarray, left: int, right: int) -> int:
-    """Find the lowest-ink vertical seam for splitting connected digits."""
+    """Find the lowest-ink vertical seam for splitting connected digits.
+
+    Sums ink pixels column-by-column (a vertical projection) across the
+    search window; the column with the least ink is where two touching
+    digits are most likely to meet. The projection is smoothed with a 7-wide
+    moving average first so a single stray dark pixel doesn't create a false
+    minimum. When several columns tie near the minimum (within 0.5 ink
+    "units"), the one closest to the window's midpoint is preferred, which
+    biases toward an even split rather than an edge cut.
+    """
 
     left = max(0, left)
     right = min(mask.shape[1] - 1, right)
@@ -330,7 +380,17 @@ def _best_vertical_cut(mask: np.ndarray, left: int, right: int) -> int:
 
 
 def _trim_overlapping_boxes(mask: np.ndarray, boxes: list[tuple[int, int, int, int]]) -> list[tuple[int, int, int, int]]:
-    """Reduce overlap after splitting so boxes map cleanly to characters."""
+    """Reduce overlap after splitting so boxes map cleanly to characters.
+
+    Splitting a wide box (see `_split_wide_box`) can leave adjacent boxes
+    overlapping slightly. Small overlaps (<12% of the narrower box's width)
+    are left alone since they're usually harmless bounding-box slop. Larger
+    overlaps get a fresh ink-seam cut between them; for very large overlaps
+    (>=35%) the cut is additionally capped near the left box's edge so we
+    don't carve away too much of the right character's leading stroke. The
+    `min_width` guard rejects cuts that would leave either side too thin to
+    plausibly be its own character.
+    """
 
     if len(boxes) <= 1:
         return boxes
@@ -361,7 +421,19 @@ def _trim_overlapping_boxes(mask: np.ndarray, boxes: list[tuple[int, int, int, i
 
 
 def _split_wide_box(mask: np.ndarray, box: tuple[int, int, int, int]) -> list[tuple[int, int, int, int]]:
-    """Split boxes that are much wider than a normal single digit."""
+    """Split boxes that are much wider than a normal single digit.
+
+    Connected-component detection merges touching digits (e.g. "11" or "42"
+    drawn without a gap) into one box. A box is only considered for splitting
+    once its aspect ratio passes 1.45 (tall single digits are usually
+    narrower than they are tall) to avoid mangling legitimately wide single
+    glyphs. `0.62` approximates a typical single digit's width-to-height
+    ratio, so `width / (height * 0.62)` estimates how many digits are packed
+    into the box; this is then capped at 4 to keep runaway detections (e.g.
+    from a long underline) from exploding into many tiny boxes. Cut points
+    are searched near evenly-spaced expected positions (not blindly at the
+    minimum ink column) so an accidental gap doesn't split off a sliver.
+    """
 
     x0, y0, x1, y1 = box
     width = x1 - x0
@@ -393,6 +465,8 @@ def _split_wide_box(mask: np.ndarray, box: tuple[int, int, int, int]) -> list[tu
         submask = mask[y0:y1, left:right]
         ys, xs = np.where(submask)
         if len(xs) < 12:
+            # Too little ink in this slice to be a real character; drop it
+            # rather than emit a near-empty box downstream.
             continue
         split_boxes.append((left + int(xs.min()), y0 + int(ys.min()), left + int(xs.max()) + 1, y0 + int(ys.max()) + 1))
     return split_boxes or [box]
@@ -408,7 +482,12 @@ def _refine_digit_boxes(mask: np.ndarray, boxes: list[tuple[int, int, int, int]]
 
 
 def _box_ink_area(mask: np.ndarray, box: tuple[int, int, int, int]) -> int:
-    """Count foreground pixels inside a bounding box."""
+    """Count foreground pixels inside a bounding box.
+
+    Used as a cheap proxy for "how substantial is this mark" when deciding
+    whether a component is a real character stroke versus stray noise or a
+    small mark like a dot.
+    """
 
     x0, y0, x1, y1 = box
     return int(mask[y0:y1, x0:x1].sum())
@@ -425,7 +504,17 @@ def _gap_between_boxes(first: tuple[int, int, int, int], second: tuple[int, int,
 
 
 def _merge_small_mark_boxes(mask: np.ndarray, boxes: list[tuple[int, int, int, int]]) -> list[tuple[int, int, int, int]]:
-    """Attach dots and punctuation marks to the closest parent character."""
+    """Attach dots and punctuation marks to the closest parent character.
+
+    Connected-component detection treats an "i" dot, an apostrophe, or a
+    detached exclamation-point dot as its own separate component. Left
+    alone, these would become spurious extra predictions. This groups every
+    "small" component (area below a threshold relative to the row's median
+    character size, or physically tiny) into whichever nearby "large"
+    component it's horizontally aligned with and vertically close to, so it
+    rides along as part of that character's bounding box instead of being
+    predicted on its own.
+    """
 
     if len(boxes) <= 1:
         return boxes
@@ -443,6 +532,10 @@ def _merge_small_mark_boxes(mask: np.ndarray, boxes: list[tuple[int, int, int, i
         area = areas[index]
         width = x1 - x0
         height = y1 - y0
+        # A thin tall stroke (like the stem of an "i" or "l") can have a
+        # small ink area but must never be treated as a mark itself, or it
+        # would get absorbed into some other character instead of anchoring
+        # its own dot.
         is_tall_stroke = height >= 28 and height / max(width, 1) >= 3.0
         is_small = area <= small_area_limit and not is_tall_stroke
         if is_small:
@@ -465,6 +558,12 @@ def _merge_small_mark_boxes(mask: np.ndarray, boxes: list[tuple[int, int, int, i
             if not mark_is_small:
                 continue
             mark_center_x = (mx0 + mx1) / 2.0
+            # A mark is only absorbed if it's roughly centered over the
+            # parent character (horizontal_limit) and close enough not to
+            # belong to a neighboring character instead (vertical_limit).
+            # Both limits scale with the parent's own size so tiny dots near
+            # tiny letters aren't held to the same absolute pixel tolerance
+            # as marks near large characters.
             horizontal_limit = max(width, mark_width, 12) * 0.75
             vertical_limit = max(height, mark_height, 14) * 0.85
             if abs(center_x - mark_center_x) > horizontal_limit:
@@ -487,7 +586,21 @@ def _merge_disconnected_character_parts(
     mask: np.ndarray,
     boxes: list[tuple[int, int, int, int]],
 ) -> list[tuple[int, int, int, int]]:
-    """Join substantial overlapping parts of one hand-drawn character."""
+    """Join substantial overlapping parts of one hand-drawn character.
+
+    Some single characters get drawn (or scanned) as multiple disconnected
+    ink blobs that connected-component labeling can't join automatically —
+    e.g. a pen lift mid-stroke, or a crossed "t"/"+" where the crossbar
+    doesn't quite touch the stem. Two adjacent boxes are candidates for
+    merging either when they're side-by-side with a small horizontal gap and
+    strong vertical overlap ("horizontally_near_parts"), or stacked with a
+    small vertical gap and strong horizontal overlap
+    ("vertically_stacked_parts"). The `current_area >= 45` checks avoid
+    pulling in tiny noise specks (those are handled separately by
+    `_merge_small_mark_boxes`), and the merged aspect-ratio cap (<=1.25)
+    prevents this from silently fusing two genuinely separate characters
+    into one implausibly wide box.
+    """
 
     if len(boxes) <= 1:
         return boxes
@@ -546,13 +659,26 @@ def segment_digit_regions(
     min_component_pixels: int = 12,
     merge_marks: bool = False,
 ) -> list[DigitRegion]:
-    """Segment an uploaded image into ordered handwriting regions."""
+    """Segment an uploaded image into ordered handwriting regions.
+
+    This is the entry point for turning one uploaded photo/scan into a list
+    of per-character crops with page coordinates and row numbers, which the
+    digit and character models then classify independently.
+    """
 
     foreground = _foreground_from_image(image)
     mask = foreground > 0.18
     if int(mask.sum()) < 20:
+        # Not enough ink anywhere in the image to be handwriting; bail out
+        # rather than running expensive labeling on a near-blank page.
         return []
 
+    # Dilating before labeling closes small gaps within a single character's
+    # strokes (e.g. a loosely drawn "8") so connected-component analysis
+    # doesn't fracture one glyph into multiple components. The *original*
+    # (non-dilated) mask is still used below to compute tight bounding boxes,
+    # so dilation only affects which pixels get grouped together, not the
+    # box extents.
     label_mask = ndimage.binary_dilation(mask, iterations=2)
     labeled, count = ndimage.label(label_mask)
     boxes: list[tuple[int, int, int, int]] = []
@@ -584,6 +710,11 @@ def segment_digit_regions(
     digits: list[DigitRegion] = []
     for row_index, row in enumerate(rows, start=1):
         for box_index, (x0, y0, x1, y1) in enumerate(row):
+            # Pad each box outward a bit (15% of its longer side) so the
+            # crop includes a small ink-free margin, which the MNIST-style
+            # normalization step expects. The pad is clamped against the
+            # neighboring box in the same row so padding never eats into an
+            # adjacent character.
             pad = max(4, int(max(x1 - x0, y1 - y0) * 0.15))
             left_limit = 0
             right_limit = foreground.shape[1]
@@ -608,7 +739,17 @@ def segment_digits(image: Image.Image) -> list[Image.Image]:
 
 
 def mnist_normalize_image(image: Image.Image) -> Image.Image:
-    """Normalize one cropped digit to the centered 28x28 MNIST format."""
+    """Normalize one cropped digit to the centered 28x28 MNIST format.
+
+    Mirrors the canonical MNIST preprocessing recipe: crop tightly to ink,
+    scale so the longer side is 20px (leaving a ~4px border on all sides
+    within the 28x28 canvas, matching the original dataset's convention),
+    then recenter using the pixel-mass centroid rather than the bounding-box
+    center. Centroid centering matters because a digit like "7" has most of
+    its mass in the top stroke, so a plain bbox-center would leave it visibly
+    off-center compared to how MNIST digits were actually prepared — and the
+    model was trained on centroid-centered digits.
+    """
 
     array = _foreground_from_image(image)
     ys, xs = np.where(array > 0.18)
@@ -632,6 +773,8 @@ def mnist_normalize_image(image: Image.Image) -> Image.Image:
     canvas_array = np.asarray(canvas, dtype=np.float32)
     center = ndimage.center_of_mass(canvas_array)
     if not any(np.isnan(center)):
+        # center_of_mass returns NaN when the canvas is entirely blank
+        # (nothing to shift); skip the recenter in that edge case.
         shift_y = int(round(14 - center[0]))
         shift_x = int(round(14 - center[1]))
         shifted = ndimage.shift(canvas_array, shift=(shift_y, shift_x), order=1, mode="constant", cval=0)
@@ -640,7 +783,13 @@ def mnist_normalize_image(image: Image.Image) -> Image.Image:
 
 
 def tensor_from_digit(image: Image.Image, device: torch.device, thicken: bool = False) -> torch.Tensor:
-    """Convert a cropped digit image into a normalized model tensor."""
+    """Convert a cropped digit image into a normalized model tensor.
+
+    `thicken` runs a 2x2 max filter to bulk up thin/faint strokes before
+    normalization — used as a retry variant for low-confidence predictions
+    (see `_predict_digit_image`) since some handwriting is drawn with very
+    light pressure that thins out during preprocessing.
+    """
 
     normalized = mnist_normalize_image(image)
     array = np.asarray(normalized, dtype=np.float32) / 255.0
@@ -659,7 +808,15 @@ def _predict_digit_tensor(model: nn.Module, tensor: torch.Tensor) -> tuple[int, 
 
 
 def _low_confidence_digit_variants(image: Image.Image) -> list[Image.Image]:
-    """Generate simple crop variants for uncertain digit predictions."""
+    """Generate simple crop variants for uncertain digit predictions.
+
+    A common segmentation mistake is including a sliver of a neighboring
+    digit's stroke at the right edge, which can confuse the classifier (e.g.
+    "1" + a stray mark from the next digit looking like "4"). Only crops with
+    aspect ratio >= 0.85 (i.e. not already narrow/tall) are trimmed, since
+    narrow digits like "1" are unlikely to have this problem and trimming
+    them further would cut into real ink.
+    """
 
     variants = [image]
     width, height = image.size
@@ -671,7 +828,14 @@ def _low_confidence_digit_variants(image: Image.Image) -> list[Image.Image]:
 
 
 def _predict_digit_image(model: nn.Module, image: Image.Image, device: torch.device) -> tuple[int, float]:
-    """Predict one cropped digit image, retrying variants when confidence is low."""
+    """Predict one cropped digit image, retrying variants when confidence is low.
+
+    0.85 is treated as "confident enough" to skip the more expensive retry
+    loop. Below that, every crop variant is tried both normal and
+    "thickened" (see `tensor_from_digit`), and the single highest-confidence
+    result across all of them wins — this is a brute-force ensemble over
+    cheap preprocessing variations rather than a smarter model.
+    """
 
     label, confidence = _predict_digit_tensor(model, tensor_from_digit(image, device))
     if confidence >= 0.85:

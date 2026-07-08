@@ -26,6 +26,11 @@ PROJECT_DIR = Path(__file__).resolve().parent
 DATA_ROOT = PROJECT_DIR / "data" / "emnist"
 METRICS_PATH = PROJECT_DIR / "emnist_experiment_metrics.json"
 WEIGHTS_PATH = PROJECT_DIR / "emnist_experiment.pt"
+# Per-pixel mean/std computed over the (rotated/mirrored) EMNIST training
+# set. Different from MNIST's constants because EMNIST glyphs have a
+# different average ink density. Every model trained here or in
+# alnum_model.py that consumes EMNIST-style input must normalize with these
+# same values to match what the network saw during training.
 EMNIST_MEAN = 0.1736
 EMNIST_STD = 0.3248
 
@@ -43,7 +48,12 @@ class ExperimentMetrics:
 
 
 class EmnistMLP(nn.Module):
-    """Fast fully-connected baseline for quick EMNIST experiments."""
+    """Fast fully-connected baseline for quick EMNIST experiments.
+
+    No convolutions, so it trains much faster than the CNN variants below at
+    the cost of accuracy — useful for quickly sanity-checking a dataset or
+    training pipeline change before committing to a slower CNN run.
+    """
 
     def __init__(self, num_classes: int) -> None:
         super().__init__()
@@ -63,7 +73,13 @@ class EmnistMLP(nn.Module):
 
 
 class EmnistCNN(nn.Module):
-    """Compact convolutional model that reached the best alphabet accuracy."""
+    """Compact convolutional model that reached the best alphabet accuracy.
+
+    Same two-conv-block shape as `mnist_model.DigitCNN` (32 then 64 filters,
+    two 2x2 max-pools taking 28x28 down to 7x7), but with a larger 512-unit
+    dense head since distinguishing 26+ letter classes needs more capacity
+    than distinguishing 10 digit classes.
+    """
 
     def __init__(self, num_classes: int) -> None:
         super().__init__()
@@ -96,7 +112,12 @@ class EmnistCNN(nn.Module):
 
 
 class TinyEmnistCNN(nn.Module):
-    """Smaller CNN used when speed matters more than peak accuracy."""
+    """Smaller CNN used when speed matters more than peak accuracy.
+
+    Single conv block with a wider 5x5 kernel instead of two 3x3 blocks,
+    trading some accuracy for a much smaller parameter count and faster
+    forward pass.
+    """
 
     def __init__(self, num_classes: int) -> None:
         super().__init__()
@@ -121,7 +142,12 @@ class TinyEmnistCNN(nn.Module):
 
 
 class WideEmnistCNN(nn.Module):
-    """Wider CNN variant for experiments with more capacity."""
+    """Wider CNN variant for experiments with more capacity.
+
+    Unlike EmnistCNN/TinyEmnistCNN, these conv layers skip BatchNorm and use
+    bias terms directly — a deliberate architectural variation kept around
+    for comparing against the batch-normalized models during experiments.
+    """
 
     def __init__(self, num_classes: int) -> None:
         super().__init__()
@@ -144,7 +170,15 @@ class WideEmnistCNN(nn.Module):
 
 
 def emnist_transform(augment: bool = False) -> transforms.Compose:
-    """Return the EMNIST transform, including the required orientation fix."""
+    """Return the EMNIST transform, including the required orientation fix.
+
+    The EMNIST dataset stores images rotated 90 degrees and mirrored
+    relative to how they should be displayed (a well-known quirk of the
+    original NIST-to-EMNIST conversion pipeline). Every image must be
+    counter-rotated and mirrored back before any other processing, or the
+    model will learn on sideways/flipped glyphs and fail on normally
+    oriented uploads.
+    """
 
     steps = [transforms.Lambda(lambda image: ImageOps.mirror(image.rotate(-90, expand=True)))]
     if augment:
@@ -212,7 +246,12 @@ def make_loaders(batch_size: int, split: str, augment: bool) -> tuple[DataLoader
 
 
 def build_or_load_emnist_cache(split: str, train: bool) -> tuple[torch.Tensor, torch.Tensor, list[str]]:
-    """Load cached EMNIST tensors, or build them from torchvision once."""
+    """Load cached EMNIST tensors, or build them from torchvision once.
+
+    Decoding and transforming the raw EMNIST files is slow, so the resulting
+    tensors are cached to disk after the first run and simply reloaded on
+    subsequent calls.
+    """
 
     cache_path = DATA_ROOT / f"cache_{split}_{'train' if train else 'test'}.pt"
     if cache_path.exists():
@@ -220,6 +259,9 @@ def build_or_load_emnist_cache(split: str, train: bool) -> tuple[torch.Tensor, t
         return cache["images"], cache["targets"], list(cache["labels"])
 
     transform = emnist_transform(augment=False)
+    # torchvision's "letters" split is 1-indexed (class 0 is unused/reserved),
+    # so both the targets and the label list must be shifted down by one to
+    # get a clean, dense 0-indexed 26-class label space.
     target_transform = (lambda label: label - 1) if split == "letters" else None
     dataset = datasets.EMNIST(
         DATA_ROOT,
@@ -318,6 +360,10 @@ def train(
     elif device_name == "mps":
         device = torch.device("mps")
     else:
+        # Auto-detection deliberately avoids MPS here: at the time this was
+        # written, MPS had correctness/perf issues with this training loop,
+        # so "auto" silently falls back to CPU. Explicitly passing
+        # --device mps still works if the caller wants to opt in anyway.
         device = get_device()
         if device.type == "mps":
             device = torch.device("cpu")
