@@ -362,6 +362,29 @@ def evaluate(model: nn.Module, loader: DataLoader, criterion: nn.Module, device:
     return loss_total / max(len(loader), 1), 100.0 * correct / max(total, 1)
 
 
+def augment_character_batch(images: torch.Tensor) -> torch.Tensor:
+    """Apply fast tensor jitter to a normalized character batch."""
+
+    if random.random() < 0.85:
+        shift_y = random.randint(-2, 2)
+        shift_x = random.randint(-2, 2)
+        images = torch.roll(images, shifts=(shift_y, shift_x), dims=(2, 3))
+        fill_value = float((0.0 - CHAR_MEAN) / CHAR_STD)
+        if shift_y > 0:
+            images[:, :, :shift_y, :] = fill_value
+        elif shift_y < 0:
+            images[:, :, shift_y:, :] = fill_value
+        if shift_x > 0:
+            images[:, :, :, :shift_x] = fill_value
+        elif shift_x < 0:
+            images[:, :, :, shift_x:] = fill_value
+    if random.random() < 0.55:
+        images = images + torch.randn_like(images) * 0.025
+    if random.random() < 0.45:
+        images = images * random.uniform(0.92, 1.08)
+    return images
+
+
 def train_character_model(
     epochs: int = 12,
     batch_size: int = 128,
@@ -373,6 +396,7 @@ def train_character_model(
     label_smoothing: float = 0.03,
     seed: int = 42,
     warm_start: bool = False,
+    augment: bool = False,
 ) -> list[CharacterEpochMetrics]:
     """Train the curated character model and save weights/labels/exemplars."""
 
@@ -418,6 +442,8 @@ def train_character_model(
 
         for images, labels_tensor in train_loader:
             images = images.to(device)
+            if augment:
+                images = augment_character_batch(images)
             labels_tensor = labels_tensor.to(device)
             optimizer.zero_grad(set_to_none=True)
             outputs = model(images)
@@ -465,6 +491,7 @@ def train_character_model(
             "label_smoothing": label_smoothing,
             "seed": seed,
             "warm_start": warm_start,
+            "augment": augment,
             "image_size": IMAGE_SIZE,
             "normalization": {"mean": CHAR_MEAN, "std": CHAR_STD},
         },
@@ -482,6 +509,7 @@ def train_character_model(
                 "seed": seed,
                 "device": str(device),
                 "warm_start": warm_start,
+                "augment": augment,
                 "best_checkpoint": {"validation_accuracy": best_accuracy},
                 "history": [asdict(item) for item in history],
             },
@@ -1624,6 +1652,7 @@ def main() -> None:
     parser.add_argument("--label-smoothing", type=float, default=0.03)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--warm-start", action="store_true")
+    parser.add_argument("--augment", action="store_true")
     args = parser.parse_args()
     train_character_model(
         epochs=args.epochs,
@@ -1635,6 +1664,7 @@ def main() -> None:
         label_smoothing=args.label_smoothing,
         seed=args.seed,
         warm_start=args.warm_start,
+        augment=args.augment,
     )
 
 
