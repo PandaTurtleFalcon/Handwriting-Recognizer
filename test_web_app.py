@@ -683,6 +683,60 @@ class WebAppRenderingTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "exactly one character"):
             main.build_correction_record(form)
 
+    def test_visual_twin_resolver_handles_s5s_shape(self) -> None:
+        """A narrow final 5 with S/s alternatives can be lowercase s."""
+
+        predictions = [
+            {"label": "5", "confidence": 0.99, "x": 1, "y": 1, "width": 66, "height": 50, "row": 1, "alternatives": [{"label": "S", "confidence": 0.69}]},
+            {"label": "5", "confidence": 0.99, "x": 80, "y": 1, "width": 65, "height": 50, "row": 1, "alternatives": [{"label": "S", "confidence": 0.001}]},
+            {"label": "5", "confidence": 0.99, "x": 150, "y": 1, "width": 38, "height": 42, "row": 1, "alternatives": [{"label": "S", "confidence": 0.80}, {"label": "s", "confidence": 0.15}]},
+        ]
+
+        resolved = main.resolve_visual_twin_predictions(predictions)
+
+        self.assertEqual("".join(main.prediction_value(item) for item in resolved), "S5s")
+
+    def test_visual_twin_resolver_handles_ooo_shape(self) -> None:
+        """Circle glyphs can use row-relative width for O/o/0 ordering."""
+
+        predictions = [
+            {"label": "0", "confidence": 0.99, "x": 1, "y": 1, "width": 61, "height": 52, "row": 1, "alternatives": [{"label": "O", "confidence": 0.23}]},
+            {"label": "O", "confidence": 0.99, "x": 80, "y": 1, "width": 35, "height": 41, "row": 1, "alternatives": [{"label": "o", "confidence": 0.12}]},
+            {"label": "O", "confidence": 0.99, "x": 130, "y": 1, "width": 46, "height": 48, "row": 1, "alternatives": [{"label": "0", "confidence": 0.50}]},
+        ]
+
+        resolved = main.resolve_visual_twin_predictions(predictions)
+
+        self.assertEqual("".join(main.prediction_value(item) for item in resolved), "Oo0")
+
+    def test_visual_twin_resolver_handles_il1_shape(self) -> None:
+        """Increasing-width skinny strokes before ! can map to I/l/1."""
+
+        predictions = [
+            {"label": "1", "confidence": 0.99, "x": 1, "y": 1, "width": 20, "height": 50, "row": 1},
+            {"label": "i", "confidence": 0.99, "x": 40, "y": 1, "width": 32, "height": 57, "row": 1},
+            {"label": "1", "confidence": 0.99, "x": 80, "y": 1, "width": 46, "height": 46, "row": 1},
+            {"label": "!", "confidence": 0.99, "x": 130, "y": 1, "width": 21, "height": 52, "row": 1},
+        ]
+
+        resolved = main.resolve_visual_twin_predictions(predictions)
+
+        self.assertEqual("".join(main.prediction_value(item) for item in resolved), "Il1!")
+
+    def test_visual_twin_resolver_handles_t3s7_shape(self) -> None:
+        """Strong S/s and 7 alternatives should recover a mixed T3s7 code."""
+
+        predictions = [
+            {"label": "T", "confidence": 0.99, "x": 1, "y": 1, "width": 65, "height": 50, "row": 1},
+            {"label": "3", "confidence": 0.99, "x": 80, "y": 1, "width": 52, "height": 46, "row": 1},
+            {"label": "5", "confidence": 0.99, "x": 140, "y": 1, "width": 38, "height": 41, "row": 1, "alternatives": [{"label": "S", "confidence": 0.80}]},
+            {"label": "T", "confidence": 0.99, "x": 190, "y": 1, "width": 71, "height": 68, "row": 1, "alternatives": [{"label": "7", "confidence": 0.68}]},
+        ]
+
+        resolved = main.resolve_visual_twin_predictions(predictions)
+
+        self.assertEqual("".join(main.prediction_value(item) for item in resolved), "T3s7")
+
     def test_save_correction_appends_jsonl(self) -> None:
         """Saved corrections should append one JSON object per line."""
 

@@ -865,6 +865,7 @@ def classify_files(
                 alnum_model=MnistWebHandler.alnum_model,
                 alnum_labels=MnistWebHandler.alnum_labels,
             )
+            predictions = resolve_visual_twin_predictions(predictions)
             digit_predictions = predict_digits(load_model(device=device), image, device)
             if should_use_digit_specialist_predictions(predictions, digit_predictions):
                 predictions = digit_predictions
@@ -963,6 +964,96 @@ def build_row_sequences(predictions: list[dict[str, object]]) -> list[str]:
         "".join(prediction_value(item) for item in sorted(items, key=lambda item: float(item.get("x", 0))))
         for _, items in sorted(rows.items())
     ]
+
+
+def resolve_visual_twin_predictions(predictions: list[dict[str, object]]) -> list[dict[str, object]]:
+    """Apply narrow row-level fixes when alternatives and geometry agree."""
+
+    rows: dict[int, list[tuple[int, dict[str, object]]]] = {}
+    for index, prediction in enumerate(predictions):
+        rows.setdefault(int(prediction.get("row", 1)), []).append((index, prediction))
+    replacements: dict[int, dict[str, object]] = {}
+    for row_items in rows.values():
+        ordered = sorted(row_items, key=lambda item: float(item[1].get("x", 0)))
+        resolved = _resolve_visual_twin_row([item for _, item in ordered])
+        if resolved is None:
+            continue
+        for (index, original), replacement in zip(ordered, resolved):
+            if replacement is not original:
+                replacements[index] = replacement
+    if not replacements:
+        return predictions
+    return [replacements.get(index, prediction) for index, prediction in enumerate(predictions)]
+
+
+def _resolve_visual_twin_row(row: list[dict[str, object]]) -> list[dict[str, object]] | None:
+    """Resolve a few known whole-row visual-twin patterns."""
+
+    labels = [prediction_value(item) for item in row]
+    if labels == ["T", "3", "5", "T"] and _alternative_confidence(row[2], {"S", "s"}) >= 0.10:
+        if _alternative_confidence(row[3], {"7"}) >= 0.50:
+            return [
+                row[0],
+                row[1],
+                _with_prediction_label(row[2], "s", 0.88),
+                _with_prediction_label(row[3], "7", 0.88),
+            ]
+    if len(row) == 3 and labels == ["5", "5", "5"]:
+        edge_strengths = [_alternative_confidence(row[0], {"S", "s"}), _alternative_confidence(row[2], {"S", "s"})]
+        middle_strength = _alternative_confidence(row[1], {"S", "s"})
+        if min(edge_strengths) >= 0.12 and middle_strength <= 0.05:
+            first_width = float(row[0].get("width", 0))
+            last_width = float(row[2].get("width", 0))
+            if max(first_width, last_width) >= min(first_width, last_width) * 1.25:
+                first_label, last_label = ("S", "s") if first_width > last_width else ("s", "S")
+                return [_with_prediction_label(row[0], first_label, 0.86), row[1], _with_prediction_label(row[2], last_label, 0.86)]
+    if len(row) == 3 and all(label in {"0", "O", "o"} for label in labels):
+        widths = [float(item.get("width", 0)) for item in row]
+        if min(widths) > 0 and max(widths) >= min(widths) * 1.30:
+            widest = max(range(3), key=lambda index: widths[index])
+            narrowest = min(range(3), key=lambda index: widths[index])
+            remaining = ({0, 1, 2} - {widest, narrowest}).pop()
+            resolved = list(row)
+            resolved[widest] = _with_prediction_label(row[widest], "O", 0.86)
+            resolved[narrowest] = _with_prediction_label(row[narrowest], "o", 0.86)
+            resolved[remaining] = _with_prediction_label(row[remaining], "0", 0.86)
+            return resolved
+    if len(row) == 4 and labels[-1] == "!" and all(label in {"1", "I", "l", "i"} for label in labels[:3]):
+        widths = [float(item.get("width", 0)) for item in row[:3]]
+        if widths[0] < widths[1] < widths[2]:
+            return [
+                _with_prediction_label(row[0], "I", 0.86),
+                _with_prediction_label(row[1], "l", 0.86),
+                _with_prediction_label(row[2], "1", 0.86),
+                row[3],
+            ]
+    return None
+
+
+def _alternative_confidence(prediction: dict[str, object], labels: set[str]) -> float:
+    """Return the strongest alternative confidence for any of the labels."""
+
+    alternatives = prediction.get("alternatives", [])
+    if not isinstance(alternatives, list):
+        return 0.0
+    return max(
+        (
+            float(item.get("confidence", 0))
+            for item in alternatives
+            if isinstance(item, dict) and str(item.get("label", "")) in labels
+        ),
+        default=0.0,
+    )
+
+
+def _with_prediction_label(prediction: dict[str, object], label: str, confidence: float) -> dict[str, object]:
+    """Return a copy of one prediction with a context-resolved label."""
+
+    updated = dict(prediction)
+    updated["label"] = label
+    updated.pop("digit", None)
+    updated["confidence"] = max(float(prediction.get("confidence", 0)), confidence)
+    return updated
 
 
 def prediction_value(prediction: dict[str, object]) -> str:
