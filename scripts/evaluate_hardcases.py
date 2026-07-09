@@ -80,6 +80,7 @@ class HardCaseResult:
     prediction: str
     exact: bool
     ambiguity_aware: bool
+    font: str = ""
 
 
 def load_web_models() -> tuple[object, object]:
@@ -109,18 +110,37 @@ def sequence_matches_with_ambiguity(target: str, prediction: str) -> bool:
     return all(labels_match_with_ambiguity(expected, actual) for expected, actual in zip(target, prediction))
 
 
-def choose_font(size: int) -> ImageFont.FreeTypeFont | ImageFont.ImageFont:
-    """Load a handwriting-ish system font, falling back to Pillow's default."""
+def font_label(font: ImageFont.FreeTypeFont | ImageFont.ImageFont, fallback_index: int = 0) -> str:
+    """Return a stable short label for a PIL font object."""
 
+    path = getattr(font, "path", "")
+    if path:
+        return Path(str(path)).stem
+    return f"default-{fallback_index}"
+
+
+def iter_fonts(size: int) -> list[tuple[str, ImageFont.FreeTypeFont | ImageFont.ImageFont]]:
+    """Load available handwriting-ish system fonts for evaluator coverage."""
+
+    fonts: list[tuple[str, ImageFont.FreeTypeFont | ImageFont.ImageFont]] = []
     for path in FONT_CANDIDATES:
         candidate = Path(path)
         if not candidate.exists():
             continue
         try:
-            return ImageFont.truetype(str(candidate), size=size)
+            fonts.append((candidate.stem, ImageFont.truetype(str(candidate), size=size)))
         except OSError:
             continue
-    return ImageFont.load_default()
+    if not fonts:
+        default_font = ImageFont.load_default()
+        fonts.append((font_label(default_font), default_font))
+    return fonts
+
+
+def choose_font(size: int) -> ImageFont.FreeTypeFont | ImageFont.ImageFont:
+    """Load one handwriting-ish system font, falling back to Pillow's default."""
+
+    return iter_fonts(size)[0][1]
 
 
 def render_case(text: str, font: ImageFont.FreeTypeFont | ImageFont.ImageFont) -> bytes:
@@ -145,33 +165,49 @@ def render_case(text: str, font: ImageFont.FreeTypeFont | ImageFont.ImageFont) -
     return buffer.getvalue()
 
 
-def evaluate_cases(cases: list[str] | None = None) -> dict[str, object]:
+def evaluate_cases(cases: list[str] | None = None, all_fonts: bool = False) -> dict[str, object]:
     """Run generated hard cases through the app classifier."""
 
     selected_cases = cases or DEFAULT_CASES
     model, device = load_web_models()
-    font = choose_font(72)
+    default_font = choose_font(72)
+    fonts = iter_fonts(72) if all_fonts else [(font_label(default_font), default_font)]
     results: list[HardCaseResult] = []
-    for target in selected_cases:
-        payload = render_case(target, font)
-        classified = main.classify_files([(f"{target}.png", payload)], model, device, save_sources=False)[0]
-        prediction = str(classified.get("sequence", ""))
-        results.append(
-            HardCaseResult(
-                target=target,
-                prediction=prediction,
-                exact=prediction == target,
-                ambiguity_aware=sequence_matches_with_ambiguity(target, prediction),
+    for font_name, font in fonts:
+        for target in selected_cases:
+            payload = render_case(target, font)
+            classified = main.classify_files([(f"{target}-{font_name}.png", payload)], model, device, save_sources=False)[0]
+            prediction = str(classified.get("sequence", ""))
+            results.append(
+                HardCaseResult(
+                    target=target,
+                    prediction=prediction,
+                    exact=prediction == target,
+                    ambiguity_aware=sequence_matches_with_ambiguity(target, prediction),
+                    font=font_name,
+                )
             )
-        )
     exact = sum(result.exact for result in results)
     ambiguity = sum(result.ambiguity_aware for result in results)
+    per_font: dict[str, dict[str, object]] = {}
+    for font_name, _ in fonts:
+        font_results = [result for result in results if result.font == font_name]
+        font_exact = sum(result.exact for result in font_results)
+        font_ambiguity = sum(result.ambiguity_aware for result in font_results)
+        per_font[font_name] = {
+            "total": len(font_results),
+            "exact_correct": font_exact,
+            "exact_accuracy": 100.0 * font_exact / max(len(font_results), 1),
+            "ambiguity_aware_correct": font_ambiguity,
+            "ambiguity_aware_accuracy": 100.0 * font_ambiguity / max(len(font_results), 1),
+        }
     return {
         "total": len(results),
         "exact_correct": exact,
         "exact_accuracy": 100.0 * exact / max(len(results), 1),
         "ambiguity_aware_correct": ambiguity,
         "ambiguity_aware_accuracy": 100.0 * ambiguity / max(len(results), 1),
+        "per_font": per_font,
         "results": [result.__dict__ for result in results],
     }
 
@@ -181,9 +217,10 @@ def main_cli() -> None:
 
     parser = argparse.ArgumentParser(description="Evaluate generated hard-case strings against the web recognizer.")
     parser.add_argument("--case", action="append", default=[], help="Specific case to evaluate; repeatable.")
+    parser.add_argument("--all-fonts", action="store_true", help="Evaluate every available configured font.")
     parser.add_argument("--json", action="store_true", help="Print machine-readable JSON.")
     args = parser.parse_args()
-    report = evaluate_cases(args.case or None)
+    report = evaluate_cases(args.case or None, all_fonts=args.all_fonts)
     if args.json:
         print(json.dumps(report, indent=2))
         return
@@ -193,10 +230,19 @@ def main_cli() -> None:
         f"ambiguity_aware={report['ambiguity_aware_accuracy']:.2f}% "
         f"({report['ambiguity_aware_correct']}/{report['total']})"
     )
+    if args.all_fonts:
+        for font_name, font_report in report["per_font"].items():
+            print(
+                f"font={font_name!r} exact={font_report['exact_accuracy']:.2f}% "
+                f"({font_report['exact_correct']}/{font_report['total']}) "
+                f"ambiguity_aware={font_report['ambiguity_aware_accuracy']:.2f}% "
+                f"({font_report['ambiguity_aware_correct']}/{font_report['total']})"
+            )
     for result in report["results"]:
         status = "ok" if result["exact"] else "miss"
         ambiguity = "amb-ok" if result["ambiguity_aware"] else "amb-miss"
-        print(f"{status}/{ambiguity}: target={result['target']!r} prediction={result['prediction']!r}")
+        font = f" font={result['font']!r}" if result.get("font") else ""
+        print(f"{status}/{ambiguity}:{font} target={result['target']!r} prediction={result['prediction']!r}")
 
 
 if __name__ == "__main__":
