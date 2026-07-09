@@ -61,7 +61,7 @@ _DIGIT_MODEL_LOCK = threading.Lock()
 _DIGIT_AMBIGUOUS_LABELS = {"B", "I", "J", "L", "O", "S", "Y", "Z", "l", "o"}
 AMBIGUITY_GROUPS = [
     frozenset("0Oo"),
-    frozenset("1Il|!/"),
+    frozenset("1Ili|!/"),
     frozenset("5Ss"),
     frozenset("2Zz"),
     frozenset("8B"),
@@ -70,6 +70,7 @@ AMBIGUITY_GROUPS = [
     frozenset("Vv"),
     frozenset("Kk"),
     frozenset("Pp"),
+    frozenset("Tt7"),
     frozenset("-_"),
     frozenset(".'`"),
     frozenset(":;i!"),

@@ -126,7 +126,7 @@ def _clean_test_word(text: str) -> tuple[str, list[str]]:
     first, second, third, fourth = text
     if (
         first in {"T", "7"}
-        and second in {"e", "E", "3", ":"}
+        and second in {"e", "E", ":"}
         and third in {"s", "S", "5"}
         and fourth in {"t", "T", "7"}
     ):

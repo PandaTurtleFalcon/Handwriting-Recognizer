@@ -45,6 +45,14 @@ class ContextRulesTests(unittest.TestCase):
         self.assertEqual(cleanup.display, "7:5T9")
         self.assertEqual(cleanup.notes, [])
 
+    def test_conservative_test_cleanup_rejects_digit_three_codes(self) -> None:
+        """Mixed letter/digit codes like T3s7 should not become the word Test."""
+
+        cleanup = cleanup_context("T35T")
+
+        self.assertEqual(cleanup.display, "T35T")
+        self.assertEqual(cleanup.notes, [])
+
     def test_conservative_numeric_pair_cleanup_handles_saved_15_case(self) -> None:
         """A whole-row p5 shape can be the saved 15 correction."""
 

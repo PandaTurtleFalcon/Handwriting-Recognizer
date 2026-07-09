@@ -65,7 +65,7 @@ MODEL_CLASSES = {
 
 MIXEDCASE_AMBIGUITY_GROUPS = [
     frozenset("0Oo"),
-    frozenset("1Il|!/"),
+    frozenset("1Ili|!/"),
     frozenset("5Ss"),
     frozenset("2Zz"),
     frozenset("8B"),
@@ -74,6 +74,7 @@ MIXEDCASE_AMBIGUITY_GROUPS = [
     frozenset("Vv"),
     frozenset("Kk"),
     frozenset("Pp"),
+    frozenset("Tt7"),
     frozenset("9qg"),
     frozenset("Yy4"),
     frozenset("Uuv"),

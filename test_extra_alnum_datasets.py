@@ -84,7 +84,9 @@ class ExtraAlnumDatasetTests(unittest.TestCase):
         self.assertTrue(mixedcase_labels_match_with_ambiguity("S", "s"))
         self.assertTrue(mixedcase_labels_match_with_ambiguity("0", "O"))
         self.assertTrue(mixedcase_labels_match_with_ambiguity("1", "l"))
+        self.assertTrue(mixedcase_labels_match_with_ambiguity("l", "i"))
         self.assertTrue(mixedcase_labels_match_with_ambiguity("q", "9"))
+        self.assertTrue(mixedcase_labels_match_with_ambiguity("T", "7"))
         self.assertFalse(mixedcase_labels_match_with_ambiguity("A", "B"))
 
     def test_nist_sd19_hex_labels_map_to_mixedcase_targets(self) -> None:

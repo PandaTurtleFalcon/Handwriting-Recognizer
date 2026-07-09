@@ -56,11 +56,13 @@ class CharacterPostprocessingTests(unittest.TestCase):
         self.assertTrue(labels_match_with_ambiguity("S", "s"))
         self.assertTrue(labels_match_with_ambiguity("0", "O"))
         self.assertTrue(labels_match_with_ambiguity("1", "|"))
+        self.assertTrue(labels_match_with_ambiguity("l", "i"))
         self.assertTrue(labels_match_with_ambiguity("_", "-"))
         self.assertTrue(labels_match_with_ambiguity(".", "'"))
         self.assertTrue(labels_match_with_ambiguity(":", "i"))
         self.assertTrue(labels_match_with_ambiguity(";", "!"))
         self.assertTrue(labels_match_with_ambiguity("q", "9"))
+        self.assertTrue(labels_match_with_ambiguity("T", "7"))
         self.assertFalse(labels_match_with_ambiguity("A", "B"))
 
     def test_split_dot_above_stem_becomes_lowercase_i(self) -> None:

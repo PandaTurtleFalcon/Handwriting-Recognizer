@@ -56,7 +56,7 @@ DIGIT_SPECIALIST_LETTER_BLOCKERS = set("BOSo")
 DIGIT_SPECIALIST_MAX_LETTER_RATIO = 0.25
 DISPLAY_AMBIGUITY_GROUPS = [
     frozenset("0Oo"),
-    frozenset("1Il|!/"),
+    frozenset("1Ili|!/"),
     frozenset("5Ss"),
     frozenset("2Zz"),
     frozenset("8B"),
@@ -65,6 +65,7 @@ DISPLAY_AMBIGUITY_GROUPS = [
     frozenset("Vv"),
     frozenset("Kk"),
     frozenset("Pp"),
+    frozenset("Tt7"),
     frozenset("-_"),
     frozenset(".'`"),
     frozenset(":;i!"),
