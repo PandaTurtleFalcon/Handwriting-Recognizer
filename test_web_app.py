@@ -152,10 +152,36 @@ class WebAppRenderingTests(unittest.TestCase):
     def test_render_page_shows_digit_specialist_accuracy(self) -> None:
         """The badge should expose separate specialist metrics."""
 
-        html = main.render_page()
+        def fake_metrics(path=main.METRICS_PATH):
+            if path == main.METRICS_PATH:
+                return {"history": [{"test_accuracy": 99.65}]}
+            if path == main.ALNUM_METRICS_PATH:
+                return {
+                    "best_checkpoint": {
+                        "test_accuracy": 96.66,
+                        "digit_test_accuracy": 99.53,
+                        "letter_test_accuracy": 95.28,
+                    }
+                }
+            if path == main.MIXEDCASE_METRICS_PATH:
+                return {
+                    "best_checkpoint": {
+                        "test_accuracy": 80.50,
+                        "digit_test_accuracy": 99.08,
+                        "upper_test_accuracy": 71.90,
+                        "lower_test_accuracy": 84.10,
+                    }
+                }
+            if path == main.CHARACTER_METRICS_PATH:
+                return {"best_checkpoint": {"validation_accuracy": 85.57}}
+            return {}
+
+        with patch.object(main, "read_metrics", side_effect=fake_metrics):
+            html = main.render_page()
 
         self.assertIn("alnum", html)
         self.assertIn("digit specialist", html)
+        self.assertIn("punctuation 85.57%", html)
 
     def test_best_metric_entry_prefers_checkpoint_eval(self) -> None:
         """Checkpoint eval should count even if the latest run history regressed."""

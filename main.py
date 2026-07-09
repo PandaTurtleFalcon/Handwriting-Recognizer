@@ -1063,8 +1063,8 @@ def render_page(
         best = best_metric_entry(character_metrics, key="validation_accuracy")
         if best and not LETTER_WEIGHTS_PATH.exists():
             metrics_text = f"Character validation accuracy: {best['validation_accuracy']:.2f}%"
-        elif character_metrics:
-            metrics_text = f"{metrics_text} + punctuation"
+        elif best:
+            metrics_text = f"{metrics_text} + punctuation {best['validation_accuracy']:.2f}%"
     if best_alnum_metric and MIXEDCASE_WEIGHTS_PATH.exists():
         metrics_text = f"{metrics_text} | alnum {best_alnum_metric['test_accuracy']:.2f}%"
     if best_digit_metric:
