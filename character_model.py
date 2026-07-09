@@ -123,6 +123,48 @@ class CharacterCNN(nn.Module):
         return self.network(x)
 
 
+class CharacterConvCNN(nn.Module):
+    """Convolutional classifier for the 93-class curated character dataset."""
+
+    def __init__(self, num_classes: int) -> None:
+        super().__init__()
+        self.network = nn.Sequential(
+            nn.Conv2d(1, 32, kernel_size=3, padding=1, bias=False),
+            nn.BatchNorm2d(32),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(32, 32, kernel_size=3, padding=1, bias=False),
+            nn.BatchNorm2d(32),
+            nn.ReLU(inplace=True),
+            nn.MaxPool2d(2),
+            nn.Dropout2d(0.08),
+            nn.Conv2d(32, 64, kernel_size=3, padding=1, bias=False),
+            nn.BatchNorm2d(64),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(64, 64, kernel_size=3, padding=1, bias=False),
+            nn.BatchNorm2d(64),
+            nn.ReLU(inplace=True),
+            nn.MaxPool2d(2),
+            nn.Dropout2d(0.12),
+            nn.Conv2d(64, 96, kernel_size=3, padding=1, bias=False),
+            nn.BatchNorm2d(96),
+            nn.ReLU(inplace=True),
+            nn.Flatten(),
+            nn.Linear(96 * 8 * 8, 512),
+            nn.ReLU(inplace=True),
+            nn.Dropout(0.35),
+            nn.Linear(512, num_classes),
+        )
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return self.network(x)
+
+
+CHARACTER_MODEL_TYPES = {
+    "mlp": CharacterCNN,
+    "cnn": CharacterConvCNN,
+}
+
+
 def train_transform() -> transforms.Compose:
     """Return the training transform for curated character images."""
 
@@ -325,6 +367,8 @@ def train_character_model(
     batch_size: int = 128,
     min_accuracy: float = 75.0,
     dataset_root: Path = DATASET_ROOT,
+    model_type: str = "cnn",
+    device_name: str = "auto",
 ) -> list[CharacterEpochMetrics]:
     """Train the curated character model and save weights/labels/exemplars."""
 
@@ -335,11 +379,17 @@ def train_character_model(
     np.random.seed(42)
     random.seed(42)
 
-    device = get_device()
-    if device.type == "mps":
+    if device_name == "cpu":
         device = torch.device("cpu")
+    elif device_name == "mps":
+        if getattr(torch.backends, "mps", None) is None or not torch.backends.mps.is_available():
+            raise RuntimeError("MPS was requested but is not available.")
+        device = torch.device("mps")
+    else:
+        device = get_device()
     train_loader, validation_loader, labels = make_loaders(dataset_root, batch_size)
-    model = CharacterCNN(num_classes=len(labels)).to(device)
+    model_class = CHARACTER_MODEL_TYPES[model_type]
+    model = model_class(num_classes=len(labels)).to(device)
     criterion = nn.CrossEntropyLoss()
     optimizer = torch.optim.AdamW(model.parameters(), lr=0.001, weight_decay=0.0005)
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=epochs)
@@ -399,6 +449,7 @@ def train_character_model(
             "model_state_dict": best_state,
             "labels": labels,
             "validation_accuracy": best_accuracy,
+            "model_type": model_type,
             "image_size": IMAGE_SIZE,
             "normalization": {"mean": CHAR_MEAN, "std": CHAR_STD},
         },
@@ -410,13 +461,15 @@ def train_character_model(
     return history
 
 
-def load_character_model(weights_path: Path = WEIGHTS_PATH, device: torch.device | None = None) -> tuple[CharacterCNN, list[str]]:
+def load_character_model(weights_path: Path = WEIGHTS_PATH, device: torch.device | None = None) -> tuple[nn.Module, list[str]]:
     """Load the curated character classifier and optional exemplar bank."""
 
     selected_device = device or get_device()
     checkpoint = torch.load(weights_path, map_location=selected_device, weights_only=True)
     labels = list(checkpoint["labels"])
-    model = CharacterCNN(num_classes=len(labels)).to(selected_device)
+    model_type = str(checkpoint.get("model_type", "mlp"))
+    model_class = CHARACTER_MODEL_TYPES.get(model_type, CharacterCNN)
+    model = model_class(num_classes=len(labels)).to(selected_device)
     model.load_state_dict(checkpoint["model_state_dict"])
     if EXEMPLARS_PATH.exists():
         exemplars = torch.load(EXEMPLARS_PATH, map_location="cpu", weights_only=True)
@@ -1534,8 +1587,16 @@ def main() -> None:
     parser.add_argument("--epochs", type=int, default=12)
     parser.add_argument("--batch-size", type=int, default=128)
     parser.add_argument("--min-accuracy", type=float, default=75.0)
+    parser.add_argument("--model", choices=sorted(CHARACTER_MODEL_TYPES), default="cnn")
+    parser.add_argument("--device", choices=["auto", "cpu", "mps"], default="auto")
     args = parser.parse_args()
-    train_character_model(epochs=args.epochs, batch_size=args.batch_size, min_accuracy=args.min_accuracy)
+    train_character_model(
+        epochs=args.epochs,
+        batch_size=args.batch_size,
+        min_accuracy=args.min_accuracy,
+        model_type=args.model,
+        device_name=args.device,
+    )
 
 
 if __name__ == "__main__":
