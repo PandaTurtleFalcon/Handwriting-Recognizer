@@ -1338,6 +1338,67 @@ def load_mixedcase_model(
     return model, labels
 
 
+def initialize_mixedcase_from_folded_checkpoint(
+    mixedcase_model: nn.Module,
+    model_type: str,
+    device: torch.device,
+    folded_weights_path: Path = WEIGHTS_PATH,
+) -> bool:
+    """Seed a 62-class mixed-case model from the 36-class folded checkpoint.
+
+    The shared convolutional/hidden layers have identical shapes between the
+    folded and mixed-case CNNs. The final classifier differs only in row count:
+    rows 0-9 and 10-35 copy digit/uppercase weights directly, while lowercase
+    rows 36-61 start as a duplicate of their uppercase counterpart. Training
+    can then specialize upper/lower rows instead of learning all features from
+    scratch.
+    """
+
+    if not folded_weights_path.exists():
+        return False
+    checkpoint = torch.load(folded_weights_path, map_location=device, weights_only=True)
+    if checkpoint.get("model_type", "cnn") != model_type or list(checkpoint.get("labels", [])) != list(LABELS):
+        return False
+
+    folded_state = checkpoint["model_state_dict"]
+    mixed_state = mixedcase_model.state_dict()
+    output_weight_key = next(
+        (
+            key
+            for key, value in mixed_state.items()
+            if key.endswith("weight") and value.ndim == 2 and value.shape[0] == len(MIXEDCASE_LABELS)
+        ),
+        "",
+    )
+    output_bias_key = output_weight_key.replace("weight", "bias") if output_weight_key else ""
+    if not output_weight_key or output_weight_key not in folded_state or output_bias_key not in folded_state:
+        return False
+
+    initialized = {}
+    for key, value in mixed_state.items():
+        folded_value = folded_state.get(key)
+        if folded_value is not None and folded_value.shape == value.shape:
+            initialized[key] = folded_value.to(device)
+            continue
+        initialized[key] = value
+
+    output_weight = mixed_state[output_weight_key].clone()
+    output_bias = mixed_state[output_bias_key].clone()
+    folded_weight = folded_state[output_weight_key].to(device)
+    folded_bias = folded_state[output_bias_key].to(device)
+    output_weight[: len(LABELS)] = folded_weight
+    output_bias[: len(LABELS)] = folded_bias
+    for letter_index in range(26):
+        uppercase_index = 10 + letter_index
+        lowercase_index = 36 + letter_index
+        output_weight[lowercase_index] = folded_weight[uppercase_index]
+        output_bias[lowercase_index] = folded_bias[uppercase_index]
+    initialized[output_weight_key] = output_weight
+    initialized[output_bias_key] = output_bias
+    mixedcase_model.load_state_dict(initialized)
+    return True
+
+
 def save_mixedcase_checkpoint(
     history: list[dict[str, float | int]],
     best_state: dict[str, torch.Tensor] | None,
@@ -1364,6 +1425,7 @@ def save_mixedcase_checkpoint(
     folded_loss_weight: float = 0.0,
     type_loss_weight: float = 0.0,
     label_smoothing: float = 0.03,
+    transfer_from_folded: bool = False,
 ) -> None:
     """Persist the best mixed-case weights and metrics."""
 
@@ -1392,6 +1454,7 @@ def save_mixedcase_checkpoint(
                 "folded_loss_weight": folded_loss_weight,
                 "type_loss_weight": type_loss_weight,
                 "label_smoothing": label_smoothing,
+                "transfer_from_folded": transfer_from_folded,
                 "mixedcase_extra_roots": [str(path) for path in (mixedcase_extra_roots or [])],
                 "normalization": {"mean": EMNIST_MEAN, "std": EMNIST_STD},
             },
@@ -1420,6 +1483,7 @@ def save_mixedcase_checkpoint(
                 "folded_loss_weight": folded_loss_weight,
                 "type_loss_weight": type_loss_weight,
                 "label_smoothing": label_smoothing,
+                "transfer_from_folded": transfer_from_folded,
                 "mixedcase_extra_roots": [str(path) for path in (mixedcase_extra_roots or [])],
                 "per_class_accuracy": per_class_accuracy or {},
                 "best_checkpoint": best_metrics or {"test_accuracy": best_accuracy},
@@ -1455,6 +1519,7 @@ def train_mixedcase(
     folded_loss_weight: float = 0.0,
     type_loss_weight: float = 0.0,
     label_smoothing: float = 0.03,
+    transfer_from_folded: bool = False,
 ) -> list[dict[str, float | int]]:
     """Train a 62-class recognizer that distinguishes uppercase and lowercase."""
 
@@ -1493,6 +1558,9 @@ def train_mixedcase(
         weight=loss_weights.to(device) if loss_weights is not None else None,
         label_smoothing=label_smoothing,
     )
+    transferred_from_folded = False
+    if transfer_from_folded and not warm_start:
+        transferred_from_folded = initialize_mixedcase_from_folded_checkpoint(model, model_type, device)
     if warm_start and MIXEDCASE_WEIGHTS_PATH.exists():
         checkpoint = torch.load(MIXEDCASE_WEIGHTS_PATH, map_location=device, weights_only=True)
         if list(checkpoint.get("labels", [])) == list(MIXEDCASE_LABELS) and checkpoint.get("model_type", "cnn") == model_type:
@@ -1597,6 +1665,7 @@ def train_mixedcase(
             folded_loss_weight,
             type_loss_weight,
             label_smoothing,
+            transferred_from_folded,
         )
         print(
             f"Epoch {epoch}/{epochs} train_acc={train_accuracy:.2f}% "
@@ -1876,6 +1945,11 @@ def main() -> None:
         default=0.03,
         help="Label smoothing used by mixed-case cross-entropy training.",
     )
+    parser.add_argument(
+        "--mixedcase-transfer-from-folded",
+        action="store_true",
+        help="Initialize a fresh mixed-case CNN from the folded alnum checkpoint before training.",
+    )
     args = parser.parse_args()
     if args.mixed_case:
         train_mixedcase(
@@ -1902,6 +1976,7 @@ def main() -> None:
             folded_loss_weight=args.mixedcase_folded_loss_weight,
             type_loss_weight=args.mixedcase_type_loss_weight,
             label_smoothing=args.mixedcase_label_smoothing,
+            transfer_from_folded=args.mixedcase_transfer_from_folded,
         )
         return
     train(

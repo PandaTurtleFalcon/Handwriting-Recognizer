@@ -11,12 +11,15 @@ from PIL import Image, ImageDraw
 
 from alnum_model import (
     AugmentedTensorDataset,
+    LABELS,
     MIXEDCASE_LABELS,
+    MODEL_CLASSES,
     _chars74k_sample_label,
     _mixedcase_train_dataset,
     _nist_sd19_label_from_hex,
     build_or_load_mixedcase_ascii_folder_cache,
     evaluate_mixedcase_breakdown,
+    initialize_mixedcase_from_folded_checkpoint,
     load_correction_cache,
     mixedcase_auxiliary_loss,
     mixedcase_folded_logits,
@@ -197,6 +200,45 @@ class ExtraAlnumDatasetTests(unittest.TestCase):
         self.assertAlmostEqual(metrics["upper_ambiguity_aware_test_accuracy"], 100.0)
         self.assertAlmostEqual(metrics["lower_ambiguity_aware_test_accuracy"], 0.0)
         self.assertAlmostEqual(metrics["lower_case_or_ambiguity_aware_test_accuracy"], 100.0)
+
+    def test_mixedcase_transfer_initializes_lowercase_from_folded_letters(self) -> None:
+        """Transfer init should duplicate folded uppercase rows into lowercase rows."""
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            checkpoint_path = Path(temp_dir) / "folded.pt"
+            folded_model = MODEL_CLASSES["cnn"](num_classes=len(LABELS))
+            folded_state = folded_model.state_dict()
+            output_weight_key = "network.20.weight"
+            output_bias_key = "network.20.bias"
+            folded_state[output_weight_key].copy_(
+                torch.arange(folded_state[output_weight_key].numel(), dtype=torch.float32).reshape_as(
+                    folded_state[output_weight_key]
+                )
+            )
+            folded_state[output_bias_key].copy_(torch.arange(len(LABELS), dtype=torch.float32))
+            torch.save(
+                {
+                    "model_state_dict": folded_state,
+                    "labels": LABELS,
+                    "model_type": "cnn",
+                },
+                checkpoint_path,
+            )
+
+            mixed_model = MODEL_CLASSES["cnn"](num_classes=len(MIXEDCASE_LABELS))
+            initialized = initialize_mixedcase_from_folded_checkpoint(
+                mixed_model,
+                "cnn",
+                torch.device("cpu"),
+                folded_weights_path=checkpoint_path,
+            )
+
+        self.assertTrue(initialized)
+        mixed_state = mixed_model.state_dict()
+        self.assertTrue(torch.equal(mixed_state[output_weight_key][: len(LABELS)], folded_state[output_weight_key]))
+        self.assertTrue(torch.equal(mixed_state[output_bias_key][: len(LABELS)], folded_state[output_bias_key]))
+        self.assertTrue(torch.equal(mixed_state[output_weight_key][36], folded_state[output_weight_key][10]))
+        self.assertEqual(float(mixed_state[output_bias_key][36]), float(folded_state[output_bias_key][10]))
 
     def test_nist_sd19_hex_labels_map_to_mixedcase_targets(self) -> None:
         self.assertEqual(_nist_sd19_label_from_hex("30"), 0)
