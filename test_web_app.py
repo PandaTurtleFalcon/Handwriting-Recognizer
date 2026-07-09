@@ -405,6 +405,14 @@ class WebAppRenderingTests(unittest.TestCase):
         self.assertIn("<b>3</b> 22.0%", html)
         self.assertNotIn("<b>S</b> 18.0%", html)
 
+    def test_correction_inputs_have_room_to_type(self) -> None:
+        """Per-character correction inputs should not collapse beside Save."""
+
+        self.assertIn(".digits {", main.PAGE_CSS)
+        self.assertIn("minmax(160px, 1fr)", main.PAGE_CSS)
+        self.assertIn(".correction-form {\n  display: grid;\n  grid-template-columns: 1fr;", main.PAGE_CSS)
+        self.assertIn(".correction-form button {\n  width: 100%;", main.PAGE_CSS)
+
     def test_low_confidence_prediction_is_marked_uncertain(self) -> None:
         """Low-confidence predictions should be visually marked as uncertain."""
 

@@ -321,7 +321,7 @@ input[type="text"]:focus-visible {
 }
 .digits {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(96px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
   gap: 12px;
   margin-top: 16px;
 }
@@ -471,12 +471,13 @@ input[type="text"]:focus-visible {
 }
 .correction-form {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: 1fr;
   gap: 8px;
   margin-top: 12px;
 }
 .correction-form input[type="text"] {
   min-width: 0;
+  width: 100%;
   height: 36px;
   border: 1px solid var(--line);
   border-radius: var(--radius-sm);
@@ -486,7 +487,7 @@ input[type="text"]:focus-visible {
   transition: border-color 0.15s ease;
 }
 .correction-form button {
-  width: auto;
+  width: 100%;
   min-height: 36px;
   margin: 0;
   padding: 0 12px;
@@ -543,7 +544,7 @@ code {
   main { width: min(100vw - 20px, 1080px); padding-top: 22px; }
   h1 { font-size: 26px; }
   .sequence { font-size: 28px; }
-  .digits { grid-template-columns: repeat(auto-fill, minmax(84px, 1fr)); }
+  .digits { grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); }
 }
 @media (max-width: 420px) {
   .full-correction,
