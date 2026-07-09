@@ -1060,8 +1060,8 @@ def render_page(
                     metrics_text = f"Alphabet test accuracy: {best['test_accuracy']:.2f}%"
     if CHARACTER_WEIGHTS_PATH.exists():
         character_metrics = read_metrics(CHARACTER_METRICS_PATH)
-        if character_metrics and not LETTER_WEIGHTS_PATH.exists():
-            best = max(character_metrics, key=lambda item: item.get("validation_accuracy", 0))
+        best = best_metric_entry(character_metrics, key="validation_accuracy")
+        if best and not LETTER_WEIGHTS_PATH.exists():
             metrics_text = f"Character validation accuracy: {best['validation_accuracy']:.2f}%"
         elif character_metrics:
             metrics_text = f"{metrics_text} + punctuation"

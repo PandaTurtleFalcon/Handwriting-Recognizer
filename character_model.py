@@ -369,15 +369,18 @@ def train_character_model(
     dataset_root: Path = DATASET_ROOT,
     model_type: str = "cnn",
     device_name: str = "auto",
+    learning_rate: float = 0.001,
+    seed: int = 42,
+    warm_start: bool = False,
 ) -> list[CharacterEpochMetrics]:
     """Train the curated character model and save weights/labels/exemplars."""
 
     if not dataset_root.exists():
         raise RuntimeError(f"Missing dataset at {dataset_root}")
 
-    torch.manual_seed(42)
-    np.random.seed(42)
-    random.seed(42)
+    torch.manual_seed(seed)
+    np.random.seed(seed)
+    random.seed(seed)
 
     if device_name == "cpu":
         device = torch.device("cpu")
@@ -390,13 +393,20 @@ def train_character_model(
     train_loader, validation_loader, labels = make_loaders(dataset_root, batch_size)
     model_class = CHARACTER_MODEL_TYPES[model_type]
     model = model_class(num_classes=len(labels)).to(device)
+    if warm_start and WEIGHTS_PATH.exists():
+        checkpoint = torch.load(WEIGHTS_PATH, map_location=device, weights_only=True)
+        if checkpoint.get("model_type", "mlp") == model_type and list(checkpoint.get("labels", [])) == labels:
+            model.load_state_dict(checkpoint["model_state_dict"])
     criterion = nn.CrossEntropyLoss()
-    optimizer = torch.optim.AdamW(model.parameters(), lr=0.001, weight_decay=0.0005)
+    optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate, weight_decay=0.0005)
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=epochs)
 
     history: list[CharacterEpochMetrics] = []
     best_accuracy = 0.0
     best_state = None
+    if warm_start:
+        _, best_accuracy = evaluate(model, validation_loader, criterion, device)
+        best_state = {key: value.detach().cpu() for key, value in model.state_dict().items()}
 
     for epoch in range(1, epochs + 1):
         start = time.time()
@@ -450,6 +460,9 @@ def train_character_model(
             "labels": labels,
             "validation_accuracy": best_accuracy,
             "model_type": model_type,
+            "learning_rate": learning_rate,
+            "seed": seed,
+            "warm_start": warm_start,
             "image_size": IMAGE_SIZE,
             "normalization": {"mean": CHAR_MEAN, "std": CHAR_STD},
         },
@@ -457,7 +470,22 @@ def train_character_model(
     )
     LABELS_PATH.write_text(json.dumps(labels, ensure_ascii=False, indent=2), encoding="utf-8")
     build_character_exemplars(dataset_root)
-    METRICS_PATH.write_text(json.dumps([asdict(item) for item in history], indent=2), encoding="utf-8")
+    METRICS_PATH.write_text(
+        json.dumps(
+            {
+                "labels": labels,
+                "model_type": model_type,
+                "learning_rate": learning_rate,
+                "seed": seed,
+                "device": str(device),
+                "warm_start": warm_start,
+                "best_checkpoint": {"validation_accuracy": best_accuracy},
+                "history": [asdict(item) for item in history],
+            },
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
     return history
 
 
@@ -1589,6 +1617,9 @@ def main() -> None:
     parser.add_argument("--min-accuracy", type=float, default=75.0)
     parser.add_argument("--model", choices=sorted(CHARACTER_MODEL_TYPES), default="cnn")
     parser.add_argument("--device", choices=["auto", "cpu", "mps"], default="auto")
+    parser.add_argument("--learning-rate", type=float, default=0.001)
+    parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument("--warm-start", action="store_true")
     args = parser.parse_args()
     train_character_model(
         epochs=args.epochs,
@@ -1596,6 +1627,9 @@ def main() -> None:
         min_accuracy=args.min_accuracy,
         model_type=args.model,
         device_name=args.device,
+        learning_rate=args.learning_rate,
+        seed=args.seed,
+        warm_start=args.warm_start,
     )
 
 
