@@ -18,9 +18,14 @@ from alnum_model import (
     build_or_load_mixedcase_ascii_folder_cache,
     evaluate_mixedcase_breakdown,
     load_correction_cache,
+    mixedcase_auxiliary_loss,
+    mixedcase_folded_logits,
+    mixedcase_folded_targets,
     mixedcase_loss_weights,
     mixedcase_labels_match_with_ambiguity,
     mixedcase_labels_match_with_visual_ambiguity,
+    mixedcase_type_logits,
+    mixedcase_type_targets,
 )
 from extra_alnum_datasets import load_labeled_image_folder
 
@@ -70,6 +75,29 @@ class ExtraAlnumDatasetTests(unittest.TestCase):
         self.assertEqual(len(MIXEDCASE_LABELS), 62)
         self.assertEqual(MIXEDCASE_LABELS.index("S"), 28)
         self.assertEqual(MIXEDCASE_LABELS.index("s"), 54)
+
+    def test_mixedcase_auxiliary_targets_fold_case_and_type(self) -> None:
+        """Auxiliary losses should use stable digit/case/type target mappings."""
+
+        targets = torch.tensor([0, 10, 36, 35, 61])
+
+        self.assertEqual(mixedcase_folded_targets(targets).tolist(), [0, 10, 10, 35, 35])
+        self.assertEqual(mixedcase_type_targets(targets).tolist(), [0, 1, 2, 1, 2])
+
+    def test_mixedcase_auxiliary_logits_and_loss_are_finite(self) -> None:
+        """Folded/type auxiliary losses should be differentiable from class logits."""
+
+        outputs = torch.zeros((3, len(MIXEDCASE_LABELS)), requires_grad=True)
+        targets = torch.tensor([1, 10, 36])
+
+        self.assertEqual(tuple(mixedcase_folded_logits(outputs).shape), (3, 36))
+        self.assertEqual(tuple(mixedcase_type_logits(outputs).shape), (3, 3))
+
+        loss = mixedcase_auxiliary_loss(outputs, targets, folded_weight=0.2, type_weight=0.3)
+        loss.backward()
+
+        self.assertTrue(torch.isfinite(loss))
+        self.assertIsNotNone(outputs.grad)
 
     def test_mixedcase_ascii_folder_loader_preserves_case(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

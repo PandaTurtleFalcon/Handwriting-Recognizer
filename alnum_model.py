@@ -994,6 +994,69 @@ def mixedcase_loss_weights(
     return weights
 
 
+def mixedcase_folded_targets(targets: torch.Tensor) -> torch.Tensor:
+    """Map 62-class mixed-case targets to 36 digit/casefolded labels."""
+
+    folded = targets.clone()
+    lower_mask = folded >= 36
+    folded[lower_mask] = folded[lower_mask] - 26
+    return folded
+
+
+def mixedcase_type_targets(targets: torch.Tensor) -> torch.Tensor:
+    """Map 62-class targets to digit/uppercase/lowercase groups."""
+
+    type_targets = torch.zeros_like(targets)
+    type_targets[(targets >= 10) & (targets < 36)] = 1
+    type_targets[targets >= 36] = 2
+    return type_targets
+
+
+def mixedcase_folded_logits(outputs: torch.Tensor) -> torch.Tensor:
+    """Collapse upper/lower letter logits into 36 casefolded logits."""
+
+    digit_logits = outputs[:, :10]
+    upper_logits = outputs[:, 10:36]
+    lower_logits = outputs[:, 36:62]
+    letter_logits = torch.logsumexp(torch.stack((upper_logits, lower_logits), dim=0), dim=0)
+    return torch.cat((digit_logits, letter_logits), dim=1)
+
+
+def mixedcase_type_logits(outputs: torch.Tensor) -> torch.Tensor:
+    """Collapse logits into digit/uppercase/lowercase group logits."""
+
+    return torch.stack(
+        (
+            torch.logsumexp(outputs[:, :10], dim=1),
+            torch.logsumexp(outputs[:, 10:36], dim=1),
+            torch.logsumexp(outputs[:, 36:62], dim=1),
+        ),
+        dim=1,
+    )
+
+
+def mixedcase_auxiliary_loss(
+    outputs: torch.Tensor,
+    targets: torch.Tensor,
+    folded_weight: float,
+    type_weight: float,
+) -> torch.Tensor:
+    """Return optional auxiliary casefold/type loss for mixed-case training."""
+
+    loss = outputs.new_zeros(())
+    if folded_weight > 0:
+        loss = loss + float(folded_weight) * nn.functional.cross_entropy(
+            mixedcase_folded_logits(outputs),
+            mixedcase_folded_targets(targets),
+        )
+    if type_weight > 0:
+        loss = loss + float(type_weight) * nn.functional.cross_entropy(
+            mixedcase_type_logits(outputs),
+            mixedcase_type_targets(targets),
+        )
+    return loss
+
+
 def evaluate_mixedcase_breakdown(
     model: nn.Module,
     loader: DataLoader,
@@ -1298,6 +1361,8 @@ def save_mixedcase_checkpoint(
     lower_loss_weight: float = 1.0,
     weak_loss_labels: str = "",
     weak_loss_weight: float = 1.0,
+    folded_loss_weight: float = 0.0,
+    type_loss_weight: float = 0.0,
 ) -> None:
     """Persist the best mixed-case weights and metrics."""
 
@@ -1323,6 +1388,8 @@ def save_mixedcase_checkpoint(
                 "lower_loss_weight": lower_loss_weight,
                 "weak_loss_labels": weak_loss_labels,
                 "weak_loss_weight": weak_loss_weight,
+                "folded_loss_weight": folded_loss_weight,
+                "type_loss_weight": type_loss_weight,
                 "mixedcase_extra_roots": [str(path) for path in (mixedcase_extra_roots or [])],
                 "normalization": {"mean": EMNIST_MEAN, "std": EMNIST_STD},
             },
@@ -1348,6 +1415,8 @@ def save_mixedcase_checkpoint(
                 "lower_loss_weight": lower_loss_weight,
                 "weak_loss_labels": weak_loss_labels,
                 "weak_loss_weight": weak_loss_weight,
+                "folded_loss_weight": folded_loss_weight,
+                "type_loss_weight": type_loss_weight,
                 "mixedcase_extra_roots": [str(path) for path in (mixedcase_extra_roots or [])],
                 "per_class_accuracy": per_class_accuracy or {},
                 "best_checkpoint": best_metrics or {"test_accuracy": best_accuracy},
@@ -1380,6 +1449,8 @@ def train_mixedcase(
     lower_loss_weight: float = 1.0,
     weak_loss_labels: str = "",
     weak_loss_weight: float = 1.0,
+    folded_loss_weight: float = 0.0,
+    type_loss_weight: float = 0.0,
 ) -> list[dict[str, float | int]]:
     """Train a 62-class recognizer that distinguishes uppercase and lowercase."""
 
@@ -1453,7 +1524,12 @@ def train_mixedcase(
             targets = targets.to(device)
             optimizer.zero_grad(set_to_none=True)
             outputs = model(images)
-            loss = criterion(outputs, targets)
+            loss = criterion(outputs, targets) + mixedcase_auxiliary_loss(
+                outputs,
+                targets,
+                folded_loss_weight,
+                type_loss_weight,
+            )
             loss.backward()
             optimizer.step()
             train_loss_total += loss.item()
@@ -1514,6 +1590,8 @@ def train_mixedcase(
             lower_loss_weight,
             weak_loss_labels,
             weak_loss_weight,
+            folded_loss_weight,
+            type_loss_weight,
         )
         print(
             f"Epoch {epoch}/{epochs} train_acc={train_accuracy:.2f}% "
@@ -1775,6 +1853,18 @@ def main() -> None:
         default=1.0,
         help="Optional loss multiplier for labels listed in --mixedcase-weak-labels.",
     )
+    parser.add_argument(
+        "--mixedcase-folded-loss-weight",
+        type=float,
+        default=0.0,
+        help="Optional auxiliary loss weight for casefolded digit/A-Z identity.",
+    )
+    parser.add_argument(
+        "--mixedcase-type-loss-weight",
+        type=float,
+        default=0.0,
+        help="Optional auxiliary loss weight for digit/uppercase/lowercase type.",
+    )
     args = parser.parse_args()
     if args.mixed_case:
         train_mixedcase(
@@ -1798,6 +1888,8 @@ def main() -> None:
             lower_loss_weight=args.mixedcase_lower_loss_weight,
             weak_loss_labels=args.mixedcase_weak_labels,
             weak_loss_weight=args.mixedcase_weak_loss_weight,
+            folded_loss_weight=args.mixedcase_folded_loss_weight,
+            type_loss_weight=args.mixedcase_type_loss_weight,
         )
         return
     train(
