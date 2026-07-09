@@ -571,15 +571,23 @@ def evaluate_character_breakdown(
     }
 
 
-def character_loss_weights(labels: list[str], punctuation_weight: float = 1.0) -> torch.Tensor | None:
-    """Return class weights that optionally emphasize punctuation labels."""
+def character_loss_weights(
+    labels: list[str],
+    punctuation_weight: float = 1.0,
+    weak_labels: str = "",
+    weak_weight: float = 1.0,
+) -> torch.Tensor | None:
+    """Return class weights that optionally emphasize punctuation or weak labels."""
 
-    if punctuation_weight <= 1.0:
+    if punctuation_weight <= 1.0 and (not weak_labels or weak_weight <= 1.0):
         return None
+    weak_label_set = set(weak_labels)
     weights = torch.ones(len(labels), dtype=torch.float32)
     for index, label in enumerate(labels):
         if not label.isalnum():
             weights[index] = float(punctuation_weight)
+        if label in weak_label_set:
+            weights[index] *= float(max(weak_weight, 1.0))
     return weights
 
 
@@ -616,6 +624,8 @@ def train_character_model(
     learning_rate: float = 0.001,
     label_smoothing: float = 0.03,
     punctuation_loss_weight: float = 1.0,
+    weak_labels: str = "",
+    weak_loss_weight: float = 1.0,
     seed: int = 42,
     warm_start: bool = False,
     augment: bool = False,
@@ -646,7 +656,7 @@ def train_character_model(
         checkpoint = torch.load(WEIGHTS_PATH, map_location=device, weights_only=True)
         if checkpoint.get("model_type", "mlp") == model_type and list(checkpoint.get("labels", [])) == labels:
             model.load_state_dict(checkpoint["model_state_dict"])
-    loss_weights = character_loss_weights(labels, punctuation_loss_weight)
+    loss_weights = character_loss_weights(labels, punctuation_loss_weight, weak_labels, weak_loss_weight)
     criterion = nn.CrossEntropyLoss(
         weight=loss_weights.to(device) if loss_weights is not None else None,
         label_smoothing=label_smoothing,
@@ -723,6 +733,8 @@ def train_character_model(
             "learning_rate": learning_rate,
             "label_smoothing": label_smoothing,
             "punctuation_loss_weight": punctuation_loss_weight,
+            "weak_labels": weak_labels,
+            "weak_loss_weight": weak_loss_weight,
             "seed": seed,
             "warm_start": warm_start,
             "augment": augment,
@@ -741,6 +753,8 @@ def train_character_model(
                 "learning_rate": learning_rate,
                 "label_smoothing": label_smoothing,
                 "punctuation_loss_weight": punctuation_loss_weight,
+                "weak_labels": weak_labels,
+                "weak_loss_weight": weak_loss_weight,
                 "seed": seed,
                 "device": str(device),
                 "warm_start": warm_start,
@@ -1951,6 +1965,8 @@ def main() -> None:
     parser.add_argument("--learning-rate", type=float, default=0.001)
     parser.add_argument("--label-smoothing", type=float, default=0.03)
     parser.add_argument("--punctuation-loss-weight", type=float, default=1.0)
+    parser.add_argument("--weak-labels", default="")
+    parser.add_argument("--weak-loss-weight", type=float, default=1.0)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--warm-start", action="store_true")
     parser.add_argument("--augment", action="store_true")
@@ -1965,6 +1981,8 @@ def main() -> None:
         learning_rate=args.learning_rate,
         label_smoothing=args.label_smoothing,
         punctuation_loss_weight=args.punctuation_loss_weight,
+        weak_labels=args.weak_labels,
+        weak_loss_weight=args.weak_loss_weight,
         seed=args.seed,
         warm_start=args.warm_start,
         augment=args.augment,

@@ -74,6 +74,13 @@ class CharacterPostprocessingTests(unittest.TestCase):
         self.assertEqual(weights.tolist(), [1.0, 1.0, 2.5, 2.5])
         self.assertIsNone(character_loss_weights(["A", "!"], punctuation_weight=1.0))
 
+    def test_character_loss_weights_can_emphasize_weak_labels(self) -> None:
+        weights = character_loss_weights(["O", "0", "-", "_"], punctuation_weight=1.5, weak_labels="O-", weak_weight=2.0)
+
+        self.assertIsNotNone(weights)
+        assert weights is not None
+        self.assertEqual(weights.tolist(), [2.0, 1.0, 3.0, 1.5])
+
     def test_split_dot_above_stem_becomes_lowercase_i(self) -> None:
         """A detached dot above a skinny stem should read as lowercase i."""
 
