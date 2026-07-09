@@ -11,6 +11,7 @@ restored, so future improvement loops do not repeat known-bad blends.
 - Character model: deployed checkpoint is `90.96%` validation accuracy, with `94.82%` exact punctuation and `98.30%` ambiguity-aware punctuation.
 - App hard-case evaluator: `42/42` exact after adding broader visual-twin, mixed-case, short-word, digit/letter, and punctuation hardcases.
 - App hard-case all-font stress evaluator: `166/168` exact (`98.81%`) and `168/168` ambiguity-aware (`100.00%`) across Bradley Hand Bold, Comic Sans MS, Chalkboard, and Arial. Remaining exact misses are Comic Sans MS and Chalkboard `Yy -> 44`, where the model exposes no safe character alternative; do not add a blanket `44 -> Yy` cleanup because it would break real numeric input.
+- Mixed-case confusion analysis: `scripts/analyze_mixedcase_confusions.py --top 20` confirms the exact gap is dominated by visual twins and case twins. Top misses are `1 -> l`, `0 -> o`, `O -> o`, `9 -> q`, `O -> 0`, `0 -> O`, `F -> f`, `U -> u`, `1 -> I`, and `S -> s`; this explains why exact is `80.50%` while case-or-visual is already `97.02%`.
 
 ## Restored Experiments
 
