@@ -11,6 +11,7 @@ from alnum_model import (
     MIXEDCASE_LABELS,
     _chars74k_sample_label,
     _nist_sd19_label_from_hex,
+    build_or_load_mixedcase_ascii_folder_cache,
     load_correction_cache,
     mixedcase_labels_match_with_ambiguity,
 )
@@ -62,6 +63,22 @@ class ExtraAlnumDatasetTests(unittest.TestCase):
         self.assertEqual(len(MIXEDCASE_LABELS), 62)
         self.assertEqual(MIXEDCASE_LABELS.index("S"), 28)
         self.assertEqual(MIXEDCASE_LABELS.index("s"), 54)
+
+    def test_mixedcase_ascii_folder_loader_preserves_case(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir) / "mixed"
+            for label in ("A", "a"):
+                class_dir = root / str(ord(label))
+                class_dir.mkdir(parents=True)
+                image = Image.new("L", (24, 24), 255)
+                draw = ImageDraw.Draw(image)
+                draw.text((5, 4), label, fill=0)
+                image.save(class_dir / f"{label}.png")
+
+            images, targets = build_or_load_mixedcase_ascii_folder_cache(root)
+
+        self.assertEqual(tuple(images.shape), (2, 1, 28, 28))
+        self.assertEqual(targets.tolist(), [10, 36])
 
     def test_mixedcase_ambiguity_groups_match_known_lookalikes(self) -> None:
         self.assertTrue(mixedcase_labels_match_with_ambiguity("S", "s"))

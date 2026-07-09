@@ -9,6 +9,7 @@ model shown in the UI badge.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import io
 import json
 import tarfile
@@ -36,6 +37,7 @@ MNIST_DATA_ROOT = PROJECT_DIR / "data" / "mnist"
 USPS_DATA_ROOT = PROJECT_DIR / "data" / "usps"
 NIST_SD19_DATA_ROOT = PROJECT_DIR / "data" / "nist_sd19"
 NIST_SD19_BY_CLASS_URL = "https://s3.amazonaws.com/nist-srd/SD19/by_class.zip"
+IMAGE_EXTENSIONS = {".bmp", ".jpeg", ".jpg", ".png", ".tif", ".tiff", ".webp"}
 CORRECTIONS_PATH = PROJECT_DIR / "data" / "corrections" / "corrections.jsonl"
 CORRECTION_UPLOAD_DIR = PROJECT_DIR / "data" / "corrections" / "uploads"
 CHARS74K_DATA_ROOT = PROJECT_DIR / "data" / "chars74k"
@@ -498,6 +500,48 @@ def build_or_load_chars74k_mixedcase_cache() -> tuple[torch.Tensor, torch.Tensor
     return image_tensor, target_tensor
 
 
+def _mixedcase_ascii_folder_cache_path(root: Path) -> Path:
+    """Return a stable cache path for one ASCII-code mixed-case image folder."""
+
+    fingerprint = hashlib.sha1(str(root.resolve()).encode("utf-8")).hexdigest()[:12]
+    return root.parent / f"{root.name}_mixedcase_62_{fingerprint}.pt"
+
+
+def build_or_load_mixedcase_ascii_folder_cache(root: Path) -> tuple[torch.Tensor, torch.Tensor]:
+    """Load ASCII-code folders into the 62-class mixed-case label order."""
+
+    cache_path = _mixedcase_ascii_folder_cache_path(root)
+    if cache_path.exists():
+        cache = torch.load(cache_path, map_location="cpu", weights_only=True)
+        return cache["images"], cache["targets"]
+    if not root.exists() or not root.is_dir():
+        raise RuntimeError(f"Mixed-case extra dataset does not exist: {root}")
+
+    label_to_index = {label: index for index, label in enumerate(MIXEDCASE_LABELS)}
+    images = []
+    targets = []
+    for class_dir in sorted(path for path in root.iterdir() if path.is_dir()):
+        if not class_dir.name.isdigit():
+            raise RuntimeError(f"Mixed-case extra dataset contains non-ASCII-code folder: {class_dir}")
+        label = chr(int(class_dir.name))
+        if label not in label_to_index:
+            continue
+        target = label_to_index[label]
+        for image_path in sorted(class_dir.rglob("*")):
+            if image_path.is_file() and image_path.suffix.lower() in IMAGE_EXTENSIONS:
+                with Image.open(image_path) as image:
+                    images.append(_foreground_tensor_from_image(image))
+                targets.append(target)
+    if not images:
+        raise RuntimeError(f"Mixed-case extra dataset contains no supported labels: {root}")
+
+    image_tensor = torch.stack(images)
+    target_tensor = torch.tensor(targets, dtype=torch.long)
+    cache_path.parent.mkdir(parents=True, exist_ok=True)
+    torch.save({"images": image_tensor, "targets": target_tensor}, cache_path)
+    return image_tensor, target_tensor
+
+
 def build_or_load_emnist_byclass_folded_cache(train: bool) -> tuple[torch.Tensor, torch.Tensor]:
     """Load EMNIST ByClass, folding lowercase samples into uppercase labels.
 
@@ -894,6 +938,7 @@ def make_mixedcase_loaders(
     include_nist_sd19: bool = False,
     nist_samples_per_class: int = 1200,
     include_corrections: bool = False,
+    mixedcase_extra_roots: list[Path] | None = None,
 ) -> tuple[DataLoader, DataLoader, DataLoader, DataLoader, DataLoader]:
     """Build loaders for the 62-class digit/upper/lower recognizer."""
 
@@ -938,6 +983,10 @@ def make_mixedcase_loaders(
             correction_images, correction_targets = corrections
             train_parts.append(TensorDataset(correction_images, correction_targets))
             train_target_parts.append(correction_targets)
+    for extra_root in mixedcase_extra_roots or []:
+        extra_images, extra_targets = build_or_load_mixedcase_ascii_folder_cache(extra_root)
+        train_parts.append(TensorDataset(extra_images, extra_targets))
+        train_target_parts.append(extra_targets)
 
     train_dataset = ConcatDataset(train_parts)
     test_dataset = ConcatDataset(
@@ -1097,6 +1146,7 @@ def save_mixedcase_checkpoint(
     include_corrections: bool = False,
     warm_start: bool = False,
     per_class_accuracy: dict[str, float] | None = None,
+    mixedcase_extra_roots: list[Path] | None = None,
 ) -> None:
     """Persist the best mixed-case weights and metrics."""
 
@@ -1117,6 +1167,7 @@ def save_mixedcase_checkpoint(
                 "nist_samples_per_class": nist_samples_per_class,
                 "include_corrections": include_corrections,
                 "warm_start": warm_start,
+                "mixedcase_extra_roots": [str(path) for path in (mixedcase_extra_roots or [])],
                 "normalization": {"mean": EMNIST_MEAN, "std": EMNIST_STD},
             },
             MIXEDCASE_WEIGHTS_PATH,
@@ -1136,6 +1187,7 @@ def save_mixedcase_checkpoint(
                 "nist_samples_per_class": nist_samples_per_class,
                 "include_corrections": include_corrections,
                 "warm_start": warm_start,
+                "mixedcase_extra_roots": [str(path) for path in (mixedcase_extra_roots or [])],
                 "per_class_accuracy": per_class_accuracy or {},
                 "best_checkpoint": best_metrics or {"test_accuracy": best_accuracy},
                 "history": history,
@@ -1161,6 +1213,7 @@ def train_mixedcase(
     nist_samples_per_class: int = 1200,
     include_corrections: bool = False,
     warm_start: bool = False,
+    mixedcase_extra_roots: list[Path] | None = None,
 ) -> list[dict[str, float | int]]:
     """Train a 62-class recognizer that distinguishes uppercase and lowercase."""
 
@@ -1184,6 +1237,7 @@ def train_mixedcase(
         include_nist_sd19,
         nist_samples_per_class,
         include_corrections,
+        mixedcase_extra_roots,
     )
     model = MODEL_CLASSES[model_type](num_classes=len(MIXEDCASE_LABELS)).to(device)
     criterion = nn.CrossEntropyLoss(label_smoothing=0.03)
@@ -1280,6 +1334,7 @@ def train_mixedcase(
             include_corrections,
             warm_start,
             best_per_class_accuracy,
+            mixedcase_extra_roots,
         )
         print(
             f"Epoch {epoch}/{epochs} train_acc={train_accuracy:.2f}% "
@@ -1511,6 +1566,13 @@ def main() -> None:
         action="store_true",
         help="Initialize from the existing alphanumeric checkpoint before training.",
     )
+    parser.add_argument(
+        "--mixedcase-extra-root",
+        action="append",
+        type=Path,
+        default=[],
+        help="ASCII-code image-folder dataset to append to mixed-case training data.",
+    )
     args = parser.parse_args()
     if args.mixed_case:
         train_mixedcase(
@@ -1528,6 +1590,7 @@ def main() -> None:
             nist_samples_per_class=args.nist_samples_per_class,
             include_corrections=args.include_corrections,
             warm_start=args.warm_start,
+            mixedcase_extra_roots=args.mixedcase_extra_root,
         )
         return
     train(
