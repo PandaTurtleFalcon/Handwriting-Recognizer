@@ -18,10 +18,12 @@ from character_model import (
     _split_touching_character_regions,
     build_or_load_combined_cache,
     character_loss_weights,
+    FocalCrossEntropyLoss,
     labels_match_with_ambiguity,
 )
 from mnist_model import DigitRegion, segment_digit_regions
 from PIL import Image, ImageDraw
+import torch
 
 
 class CharacterPostprocessingTests(unittest.TestCase):
@@ -80,6 +82,17 @@ class CharacterPostprocessingTests(unittest.TestCase):
         self.assertIsNotNone(weights)
         assert weights is not None
         self.assertEqual(weights.tolist(), [2.0, 1.0, 3.0, 1.5])
+
+    def test_focal_cross_entropy_downweights_easy_examples(self) -> None:
+        criterion = FocalCrossEntropyLoss(gamma=1.0)
+        logits = torch.tensor([[4.0, -1.0], [0.2, 0.0]], dtype=torch.float32)
+        targets = torch.tensor([0, 0], dtype=torch.long)
+
+        losses = torch.nn.functional.cross_entropy(logits, targets, reduction="none")
+        focal_loss = criterion(logits, targets)
+
+        self.assertLess(focal_loss.item(), losses.mean().item())
+        self.assertGreater(focal_loss.item(), 0.0)
 
     def test_split_dot_above_stem_becomes_lowercase_i(self) -> None:
         """A detached dot above a skinny stem should read as lowercase i."""
