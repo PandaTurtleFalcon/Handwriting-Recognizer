@@ -878,13 +878,24 @@ def classify_files(files: list[tuple[str, bytes]], model, device) -> list[dict[s
         raw_sequence = "".join(prediction_value(item) for item in predictions)
         raw_row_sequences = build_row_sequences(predictions)
         context = cleanup_context(raw_sequence, raw_row_sequences)
+        correction_predictions = predictions
+        if len(context.rows) < len(raw_row_sequences):
+            visible_rows = set(range(1, len(context.rows) + 1))
+            correction_predictions = [
+                item
+                for item in predictions
+                if isinstance(item, dict) and int(item.get("row", 1)) in visible_rows
+            ]
         results.append(
             {
                 "filename": filename,
                 "sequence": context.display,
+                "raw_sequence": raw_sequence,
                 "row_sequences": context.rows,
+                "raw_row_sequences": raw_row_sequences,
                 "context_notes": context.notes,
                 "predictions": predictions,
+                "correction_predictions": correction_predictions,
                 "preview": image_to_data_url(image),
                 "image_id": image_id,
                 "image_width": image.width,
@@ -1329,12 +1340,14 @@ def render_full_correction_form(result: dict[str, object]) -> str:
     """Render one whole-result correction field for fixing every character."""
 
     sequence = str(result.get("sequence", ""))
+    correction_predictions = result.get("correction_predictions", result.get("predictions", []))
     prediction_boxes = []
-    predictions = result.get("predictions", [])
-    if isinstance(predictions, list):
-        for prediction in predictions:
+    raw_training_sequence = ""
+    if isinstance(correction_predictions, list):
+        for prediction in correction_predictions:
             if not isinstance(prediction, dict):
                 continue
+            raw_training_sequence += prediction_value(prediction)
             prediction_boxes.append(
                 {
                     "original_label": prediction_value(prediction),
@@ -1351,9 +1364,9 @@ def render_full_correction_form(result: dict[str, object]) -> str:
         "correction_kind": "sequence",
         "filename": result.get("filename", ""),
         "image_id": result.get("image_id", ""),
-        "sequence": sequence,
+        "sequence": raw_training_sequence or str(result.get("raw_sequence", sequence)),
         "prediction_index": 0,
-        "original_label": sequence,
+        "original_label": raw_training_sequence or str(result.get("raw_sequence", sequence)),
         "confidence": 0,
         "bbox": "{}",
         "prediction_boxes": json.dumps(prediction_boxes, separators=(",", ":")),

@@ -256,6 +256,31 @@ class WebAppRenderingTests(unittest.TestCase):
         self.assertEqual([item["label"] for item in results[0]["predictions"]], ["H", "L", "!"])
         self.assertTrue(results[0]["context_notes"])
 
+    def test_classify_files_keeps_visible_boxes_for_dropped_context_rows(self) -> None:
+        """Dropped display rows should not make sequence corrections untrainable."""
+
+        fake_predictions = [
+            {"label": "H", "confidence": 0.9, "x": 1, "y": 1, "width": 20, "height": 20, "row": 1},
+            {"label": "L", "confidence": 0.8, "x": 25, "y": 1, "width": 10, "height": 20, "row": 1},
+            {"label": ":", "confidence": 0.9, "x": 12, "y": 40, "width": 5, "height": 18, "row": 2},
+        ]
+        previous_kind = main.MnistWebHandler.recognizer_kind
+        previous_labels = main.MnistWebHandler.labels
+        main.MnistWebHandler.recognizer_kind = "characters"
+        main.MnistWebHandler.labels = ["H", "L", ":"]
+        try:
+            with patch.object(main, "predict_characters", return_value=fake_predictions):
+                with patch.object(main, "load_model", return_value=object()):
+                    with patch.object(main, "predict_digits", return_value=[]):
+                        results = main.classify_files([("greeting.png", png_bytes())], model=object(), device=object())
+        finally:
+            main.MnistWebHandler.recognizer_kind = previous_kind
+            main.MnistWebHandler.labels = previous_labels
+
+        self.assertEqual(results[0]["sequence"], "Hi")
+        self.assertEqual(results[0]["raw_sequence"], "HL:")
+        self.assertEqual([item["label"] for item in results[0]["correction_predictions"]], ["H", "L"])
+
     def test_parse_multipart_accepts_case_insensitive_content_type(self) -> None:
         """Multipart content type parsing should be case-insensitive."""
 
@@ -609,6 +634,32 @@ class WebAppRenderingTests(unittest.TestCase):
         self.assertIn('name="prediction_boxes"', html)
         self.assertIn("&quot;original_label&quot;:&quot;H&quot;", html)
         self.assertIn("&quot;width&quot;:30", html)
+
+    def test_full_result_correction_uses_visible_training_boxes(self) -> None:
+        """A display-cleaned result should post only boxes that match the text field."""
+
+        html = main.render_full_correction_form(
+            {
+                "filename": "sample.png",
+                "image_id": "img123",
+                "sequence": "Hi",
+                "raw_sequence": "HL:",
+                "correction_predictions": [
+                    {"label": "H", "x": 1, "y": 2, "width": 30, "height": 40, "row": 1},
+                    {"label": "L", "x": 45, "y": 2, "width": 10, "height": 40, "row": 1},
+                ],
+                "predictions": [
+                    {"label": "H", "x": 1, "y": 2, "width": 30, "height": 40, "row": 1},
+                    {"label": "L", "x": 45, "y": 2, "width": 10, "height": 40, "row": 1},
+                    {"label": ":", "x": 12, "y": 60, "width": 5, "height": 12, "row": 2},
+                ],
+            }
+        )
+
+        self.assertIn('value="Hi"', html)
+        self.assertIn('name="sequence" value="HL"', html)
+        self.assertIn('name="original_label" value="HL"', html)
+        self.assertNotIn("&quot;original_label&quot;:&quot;:&quot;", html)
 
     def test_character_correction_rejects_multi_character_text(self) -> None:
         """Per-character corrections should be trainable one-character labels."""
