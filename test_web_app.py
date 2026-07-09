@@ -865,6 +865,32 @@ class WebAppRenderingTests(unittest.TestCase):
 
         self.assertEqual("".join(main.prediction_value(item) for item in resolved), "Ss5")
 
+    def test_visual_twin_resolver_handles_tighter_5_width_spread(self) -> None:
+        """Font stress cases have smaller but still useful S/s/5 width spread."""
+
+        predictions = [
+            {"label": "5", "confidence": 0.99, "x": 1, "y": 1, "width": 58, "height": 70, "row": 1, "alternatives": []},
+            {"label": "5", "confidence": 0.99, "x": 70, "y": 1, "width": 44, "height": 52, "row": 1, "alternatives": []},
+            {"label": "5", "confidence": 0.99, "x": 125, "y": 1, "width": 48, "height": 66, "row": 1, "alternatives": []},
+        ]
+
+        resolved = main.resolve_visual_twin_predictions(predictions)
+
+        self.assertEqual("".join(main.prediction_value(item) for item in resolved), "Ss5")
+
+    def test_visual_twin_resolver_handles_mixed_s5s_labels(self) -> None:
+        """S/s/5 can arrive as mixed labels before geometry cleanup."""
+
+        predictions = [
+            {"label": "5", "confidence": 0.99, "x": 1, "y": 1, "width": 49, "height": 63, "row": 1, "alternatives": [{"label": "S", "confidence": 0.65}]},
+            {"label": "5", "confidence": 0.99, "x": 60, "y": 1, "width": 45, "height": 63, "row": 1, "alternatives": []},
+            {"label": "S", "confidence": 0.41, "x": 120, "y": 1, "width": 36, "height": 49, "row": 1, "alternatives": [{"label": "s", "confidence": 0.26}]},
+        ]
+
+        resolved = main.resolve_visual_twin_predictions(predictions)
+
+        self.assertEqual("".join(main.prediction_value(item) for item in resolved), "S5s")
+
     def test_visual_twin_resolver_handles_ooo_shape(self) -> None:
         """Circle glyphs can use row-relative width for O/o/0 ordering."""
 
@@ -878,6 +904,19 @@ class WebAppRenderingTests(unittest.TestCase):
 
         self.assertEqual("".join(main.prediction_value(item) for item in resolved), "Oo0")
 
+    def test_visual_twin_resolver_uses_height_to_break_ooo_ties(self) -> None:
+        """When 0 and o have the same width, the shorter glyph should be o."""
+
+        predictions = [
+            {"label": "o", "confidence": 0.99, "x": 1, "y": 1, "width": 48, "height": 67, "row": 1, "alternatives": [{"label": "0", "confidence": 0.51}]},
+            {"label": "O", "confidence": 0.99, "x": 60, "y": 1, "width": 66, "height": 70, "row": 1, "alternatives": []},
+            {"label": "0", "confidence": 0.99, "x": 135, "y": 1, "width": 48, "height": 52, "row": 1, "alternatives": [{"label": "o", "confidence": 0.17}]},
+        ]
+
+        resolved = main.resolve_visual_twin_predictions(predictions)
+
+        self.assertEqual("".join(main.prediction_value(item) for item in resolved), "0Oo")
+
     def test_visual_twin_resolver_handles_2zz_shape(self) -> None:
         """Relative width can resolve 2/Z/z triples."""
 
@@ -885,6 +924,19 @@ class WebAppRenderingTests(unittest.TestCase):
             {"label": "2", "confidence": 0.99, "x": 1, "y": 1, "width": 57, "height": 51, "row": 1, "alternatives": []},
             {"label": "2", "confidence": 0.99, "x": 70, "y": 1, "width": 79, "height": 59, "row": 1, "alternatives": [{"label": "Z", "confidence": 0.73}]},
             {"label": "Z", "confidence": 0.99, "x": 160, "y": 1, "width": 52, "height": 45, "row": 1, "alternatives": [{"label": "z", "confidence": 0.05}]},
+        ]
+
+        resolved = main.resolve_visual_twin_predictions(predictions)
+
+        self.assertEqual("".join(main.prediction_value(item) for item in resolved), "2Zz")
+
+    def test_visual_twin_resolver_handles_tighter_2zz_width_spread(self) -> None:
+        """Font stress cases have smaller but still useful 2/Z/z width spread."""
+
+        predictions = [
+            {"label": "2", "confidence": 0.99, "x": 1, "y": 1, "width": 49, "height": 66, "row": 1, "alternatives": [{"label": "Z", "confidence": 0.38}]},
+            {"label": "Z", "confidence": 0.99, "x": 60, "y": 1, "width": 56, "height": 66, "row": 1, "alternatives": []},
+            {"label": "Z", "confidence": 0.99, "x": 125, "y": 1, "width": 44, "height": 48, "row": 1, "alternatives": [{"label": "z", "confidence": 0.01}]},
         ]
 
         resolved = main.resolve_visual_twin_predictions(predictions)
@@ -904,6 +956,71 @@ class WebAppRenderingTests(unittest.TestCase):
         resolved = main.resolve_visual_twin_predictions(predictions)
 
         self.assertEqual("".join(main.prediction_value(item) for item in resolved), "Il1!")
+
+    def test_visual_twin_resolver_handles_skinny_strokes_before_bang(self) -> None:
+        """I/l/1/! rows can have the l and 1 labels swapped by the model."""
+
+        predictions = [
+            {"label": "I", "confidence": 0.99, "x": 1, "y": 1, "width": 52, "height": 70, "row": 1, "alternatives": []},
+            {"label": "1", "confidence": 0.99, "x": 62, "y": 1, "width": 26, "height": 78, "row": 1, "alternatives": [{"label": "l", "confidence": 0.58}]},
+            {"label": "1", "confidence": 0.99, "x": 100, "y": 1, "width": 39, "height": 71, "row": 1, "alternatives": [{"label": "I", "confidence": 0.63}]},
+            {"label": "!", "confidence": 0.99, "x": 150, "y": 1, "width": 24, "height": 74, "row": 1, "alternatives": []},
+        ]
+
+        resolved = main.resolve_visual_twin_predictions(predictions)
+
+        self.assertEqual("".join(main.prediction_value(item) for item in resolved), "Il1!")
+
+    def test_visual_twin_resolver_handles_skinny_stroke_triplets(self) -> None:
+        """The final narrow stroke in 1Il/I1l rows is often an l."""
+
+        predictions = [
+            {"label": "1", "confidence": 0.99, "x": 1, "y": 1, "width": 39, "height": 71, "row": 1, "alternatives": []},
+            {"label": "I", "confidence": 0.99, "x": 50, "y": 1, "width": 52, "height": 70, "row": 1, "alternatives": []},
+            {"label": "1", "confidence": 0.99, "x": 110, "y": 1, "width": 26, "height": 78, "row": 1, "alternatives": [{"label": "l", "confidence": 0.58}]},
+        ]
+
+        resolved = main.resolve_visual_twin_predictions(predictions)
+
+        self.assertEqual("".join(main.prediction_value(item) for item in resolved), "1Il")
+
+    def test_visual_twin_resolver_handles_9qg_variants(self) -> None:
+        """9/q/g rows should use alternatives to keep the descender as q."""
+
+        predictions = [
+            {"label": "G", "confidence": 0.97, "x": 1, "y": 1, "width": 53, "height": 74, "row": 1, "alternatives": [{"label": "9", "confidence": 0.52}]},
+            {"label": "Q", "confidence": 0.91, "x": 62, "y": 1, "width": 47, "height": 73, "row": 1, "alternatives": [{"label": "q", "confidence": 0.44}]},
+            {"label": "g", "confidence": 0.86, "x": 120, "y": 1, "width": 50, "height": 73, "row": 1, "alternatives": []},
+        ]
+
+        resolved = main.resolve_visual_twin_predictions(predictions)
+
+        self.assertEqual("".join(main.prediction_value(item) for item in resolved), "9qg")
+
+    def test_visual_twin_resolver_handles_y_pair_with_strong_alternative(self) -> None:
+        """A leading Y can be classified as 4 while still exposing Y as an alt."""
+
+        predictions = [
+            {"label": "4", "confidence": 0.96, "x": 1, "y": 1, "width": 61, "height": 66, "row": 1, "alternatives": [{"label": "Y", "confidence": 0.93}]},
+            {"label": "y", "confidence": 0.71, "x": 70, "y": 1, "width": 49, "height": 67, "row": 1, "alternatives": []},
+        ]
+
+        resolved = main.resolve_visual_twin_predictions(predictions)
+
+        self.assertEqual("".join(main.prediction_value(item) for item in resolved), "Yy")
+
+    def test_visual_twin_resolver_handles_g6b_with_weak_six_alternative(self) -> None:
+        """Arial-like G6b can expose the 6 only as a weak alternative."""
+
+        predictions = [
+            {"label": "G", "confidence": 0.99, "x": 1, "y": 1, "width": 64, "height": 70, "row": 1, "alternatives": []},
+            {"label": "G", "confidence": 0.97, "x": 75, "y": 1, "width": 49, "height": 67, "row": 1, "alternatives": [{"label": "6", "confidence": 0.03}]},
+            {"label": "b", "confidence": 0.91, "x": 135, "y": 1, "width": 47, "height": 67, "row": 1, "alternatives": []},
+        ]
+
+        resolved = main.resolve_visual_twin_predictions(predictions)
+
+        self.assertEqual("".join(main.prediction_value(item) for item in resolved), "G6b")
 
     def test_visual_twin_resolver_handles_three_skinny_strokes(self) -> None:
         """Width order can separate 1/I/l when the third stroke has l alternatives."""

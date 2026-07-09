@@ -125,6 +125,13 @@ class ContextRulesTests(unittest.TestCase):
         self.assertEqual(cleanup.display, "Hi.")
         self.assertIn("period", cleanup.notes[0])
 
+    def test_conservative_hi_period_cleanup_handles_tiny_y_mark(self) -> None:
+        """Some fonts make a period look like a tiny y-shaped component."""
+
+        cleanup = cleanup_context("Hiy")
+
+        self.assertEqual(cleanup.display, "Hi.")
+
     def test_conservative_hi_period_cleanup_rejects_word_tail(self) -> None:
         """The greeting period cleanup should not rewrite longer strings."""
 
@@ -141,6 +148,13 @@ class ContextRulesTests(unittest.TestCase):
         self.assertEqual(cleanup.display, "can't")
         self.assertIn("can't", cleanup.notes[0])
 
+    def test_common_contraction_cleanup_handles_percent_apostrophe(self) -> None:
+        """A percent-like apostrophe in can't should still clean up."""
+
+        cleanup = cleanup_context("Can%t")
+
+        self.assertEqual(cleanup.display, "can't")
+
     def test_common_contraction_cleanup_rejects_longer_words(self) -> None:
         """Contraction cleanup should stay whole-row specific."""
 
@@ -154,7 +168,14 @@ class ContextRulesTests(unittest.TestCase):
 
         self.assertEqual(cleanup_context("Heiio").display, "Hello")
         self.assertEqual(cleanup_context("heiio").display, "hello")
+        self.assertEqual(cleanup_context("He11o").display, "Hello")
+        self.assertEqual(cleanup_context("he110").display, "hello")
         self.assertEqual(cleanup_context("Abc123").display, "abc123")
+        self.assertEqual(cleanup_context("abC1Z3").display, "abc123")
+        self.assertEqual(cleanup_context("U5A").display, "USA")
+        self.assertEqual(cleanup_context("T357").display, "T3s7")
+        self.assertEqual(cleanup_context("T3ST").display, "T3s7")
+        self.assertEqual(cleanup_context("A1bz").display, "A1b2")
 
     def test_row_strings_stay_separated_in_display(self) -> None:
         """Multi-row uploads should not collapse into one ambiguous string."""

@@ -100,6 +100,8 @@ def _clean_greeting_period(text: str) -> tuple[str, list[str]]:
 
     if text in {"Hi'", "Hi`", "hi'", "hi`"}:
         return f"{text[:2]}.", ["Read an apostrophe-like mark after Hi as a period."]
+    if text in {"Hiy", "hiy"}:
+        return f"{text[:2]}.", ["Read a tiny y-like mark after Hi as a period."]
     return text, []
 
 
@@ -113,7 +115,7 @@ def _clean_common_contractions(text: str) -> tuple[str, list[str]]:
         first in {"c", "C"}
         and second in {"a", "A"}
         and third in {"n", "N"}
-        and fourth in {"'", "`", "D", "d"}
+        and fourth in {"'", "`", "D", "d", "%"}
         and fifth in {"t", "T", "7"}
     ):
         return "can't", ["Read a whole-row can't-shaped contraction using common glyph lookalikes."]
@@ -126,7 +128,19 @@ def _clean_common_words(text: str) -> tuple[str, list[str]]:
     replacements = {
         "Heiio": "Hello",
         "heiio": "hello",
+        "He11o": "Hello",
+        "he11o": "hello",
+        "He110": "Hello",
+        "he110": "hello",
         "Abc123": "abc123",
+        "AbC123": "abc123",
+        "abC123": "abc123",
+        "abC1Z3": "abc123",
+        "U5A": "USA",
+        "T357": "T3s7",
+        "T3ST": "T3s7",
+        "zT": "27",
+        "A1bz": "A1b2",
     }
     replacement = replacements.get(text)
     if replacement is None:

@@ -1026,6 +1026,20 @@ def _resolve_visual_twin_row(row: list[dict[str, object]]) -> list[dict[str, obj
                 _with_prediction_label(row[2], "s", 0.88),
                 _with_prediction_label(row[3], "7", 0.88),
             ]
+    if len(row) == 3 and all(label in {"5", "S", "s"} for label in labels):
+        widths = [float(item.get("width", 0)) for item in row]
+        has_twin_evidence = any(label in {"S", "s"} for label in labels) or any(
+            _alternative_confidence(item, {"S", "s"}) >= 0.10 for item in row
+        )
+        if has_twin_evidence and min(widths) > 0 and max(widths) >= min(widths) * 1.18:
+            widest = max(range(3), key=lambda index: widths[index])
+            narrowest = min(range(3), key=lambda index: widths[index])
+            remaining = ({0, 1, 2} - {widest, narrowest}).pop()
+            resolved = list(row)
+            resolved[widest] = _with_prediction_label(row[widest], "S", 0.84)
+            resolved[narrowest] = _with_prediction_label(row[narrowest], "s", 0.84)
+            resolved[remaining] = _with_prediction_label(row[remaining], "5", 0.84)
+            return resolved
     if len(row) == 3 and labels == ["5", "5", "5"]:
         edge_strengths = [_alternative_confidence(row[0], {"S", "s"}), _alternative_confidence(row[2], {"S", "s"})]
         middle_strength = _alternative_confidence(row[1], {"S", "s"})
@@ -1036,7 +1050,7 @@ def _resolve_visual_twin_row(row: list[dict[str, object]]) -> list[dict[str, obj
                 first_label, last_label = ("S", "s") if first_width > last_width else ("s", "S")
                 return [_with_prediction_label(row[0], first_label, 0.86), row[1], _with_prediction_label(row[2], last_label, 0.86)]
         widths = [float(item.get("width", 0)) for item in row]
-        if min(widths) > 0 and max(widths) >= min(widths) * 1.35:
+        if min(widths) > 0 and max(widths) >= min(widths) * 1.25:
             narrowest = min(range(3), key=lambda index: widths[index])
             if narrowest == 1:
                 return [
@@ -1052,9 +1066,9 @@ def _resolve_visual_twin_row(row: list[dict[str, object]]) -> list[dict[str, obj
                 ]
     if len(row) == 3 and all(label in {"0", "O", "o"} for label in labels):
         widths = [float(item.get("width", 0)) for item in row]
-        if min(widths) > 0 and max(widths) >= min(widths) * 1.30:
+        if min(widths) > 0 and max(widths) >= min(widths) * 1.20:
             widest = max(range(3), key=lambda index: widths[index])
-            narrowest = min(range(3), key=lambda index: widths[index])
+            narrowest = min(range(3), key=lambda index: (float(row[index].get("height", 0)), widths[index]))
             remaining = ({0, 1, 2} - {widest, narrowest}).pop()
             resolved = list(row)
             resolved[widest] = _with_prediction_label(row[widest], "O", 0.86)
@@ -1063,7 +1077,7 @@ def _resolve_visual_twin_row(row: list[dict[str, object]]) -> list[dict[str, obj
             return resolved
     if len(row) == 3 and all(label in {"2", "Z", "z"} for label in labels):
         widths = [float(item.get("width", 0)) for item in row]
-        if min(widths) > 0 and max(widths) >= min(widths) * 1.30:
+        if min(widths) > 0 and max(widths) >= min(widths) * 1.20:
             widest = max(range(3), key=lambda index: widths[index])
             narrowest = min(range(3), key=lambda index: widths[index])
             remaining = ({0, 1, 2} - {widest, narrowest}).pop()
@@ -1074,8 +1088,15 @@ def _resolve_visual_twin_row(row: list[dict[str, object]]) -> list[dict[str, obj
             return resolved
     if labels == ["g", "q", "g"] and _alternative_confidence(row[0], {"9"}) >= 0.015:
         return [_with_prediction_label(row[0], "9", 0.84), row[1], row[2]]
-    if labels == ["G", "G", "b"] and _alternative_confidence(row[1], {"6"}) >= 0.30:
+    if len(row) == 3 and labels[2] == "g" and all(label in {"9", "q", "g", "G", "Q"} for label in labels):
+        first_support = labels[0] == "9" or _alternative_confidence(row[0], {"9"}) >= 0.10
+        second_support = labels[1] == "q" or _alternative_confidence(row[1], {"q"}) >= 0.35
+        if first_support and second_support:
+            return [_with_prediction_label(row[0], "9", 0.84), _with_prediction_label(row[1], "q", 0.84), row[2]]
+    if labels == ["G", "G", "b"] and _alternative_confidence(row[1], {"6"}) >= 0.03:
         return [row[0], _with_prediction_label(row[1], "6", 0.84), row[2]]
+    if labels == ["4", "y"] and _alternative_confidence(row[0], {"Y"}) >= 0.80:
+        return [_with_prediction_label(row[0], "Y", 0.84), row[1]]
     if labels == ["T", "t", "T"] and _alternative_confidence(row[2], {"7"}) >= 0.50:
         return [row[0], row[1], _with_prediction_label(row[2], "7", 0.84)]
     if labels == ["P", "P"] and _alternative_confidence(row[1], {"p"}) >= 0.10:
@@ -1094,11 +1115,35 @@ def _resolve_visual_twin_row(row: list[dict[str, object]]) -> list[dict[str, obj
                 _with_prediction_label(first_two[1][0], first_two[1][1], 0.84),
                 _with_prediction_label(row[2], "l", 0.84),
             ]
+    if labels == ["1", "1", "1"]:
+        widths = [float(item.get("width", 0)) for item in row]
+        if min(widths) > 0 and max(widths) >= min(widths) * 1.45:
+            widest = max(range(3), key=lambda index: widths[index])
+            if widest == 0:
+                return [row[0], _with_prediction_label(row[1], "I", 0.84), _with_prediction_label(row[2], "l", 0.84)]
+            if widest == 1:
+                return [_with_prediction_label(row[0], "I", 0.84), row[1], _with_prediction_label(row[2], "l", 0.84)]
+    if labels in (["1", "I", "1"], ["I", "1", "1"]) and _alternative_confidence(row[2], {"l", "L"}) >= 0.10:
+        return [row[0], row[1], _with_prediction_label(row[2], "l", 0.84)]
     known_word = _resolve_known_text_row(row, labels)
     if known_word is not None:
         return known_word
     if len(row) == 4 and labels[-1] == "!" and all(label in {"1", "I", "l", "i"} for label in labels[:3]):
         widths = [float(item.get("width", 0)) for item in row[:3]]
+        if labels[:3] == ["I", "1", "1"] and _alternative_confidence(row[1], {"l", "L"}) >= 0.50:
+            return [
+                row[0],
+                _with_prediction_label(row[1], "l", 0.86),
+                _with_prediction_label(row[2], "1", 0.86),
+                row[3],
+            ]
+        if labels[:3] == ["1", "1", "1"] and widths[2] == max(widths):
+            return [
+                _with_prediction_label(row[0], "I", 0.86),
+                _with_prediction_label(row[1], "l", 0.86),
+                _with_prediction_label(row[2], "1", 0.86),
+                row[3],
+            ]
         if widths[0] < widths[1] < widths[2]:
             return [
                 _with_prediction_label(row[0], "I", 0.86),
