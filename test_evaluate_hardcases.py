@@ -29,6 +29,14 @@ class HardCaseEvaluationTests(unittest.TestCase):
         self.assertEqual(report["per_font"]["font-a"]["exact_accuracy"], 100.0)
         self.assertEqual(report["results"][0]["font"], "font-a")
 
+    def test_live_all_font_hardcases_stay_above_target(self) -> None:
+        """The shipped website recognizer should keep hard cases above 95%."""
+
+        report = evaluate_cases(all_fonts=True)
+
+        self.assertGreaterEqual(report["exact_accuracy"], 95.0)
+        self.assertGreaterEqual(report["ambiguity_aware_accuracy"], 95.0)
+
 
 if __name__ == "__main__":
     unittest.main()
