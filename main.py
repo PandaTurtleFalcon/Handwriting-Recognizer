@@ -1265,6 +1265,14 @@ def build_correction_record(form: dict[str, str]) -> dict[str, object]:
                 )
             except (TypeError, ValueError):
                 continue
+        corrected_label = normalize_sequence_correction_label(
+            corrected_label,
+            original_label=str(form.get("original_label", "")),
+            display_sequence=str(form.get("display_sequence", form.get("sequence", ""))),
+            prediction_box_count=len(cleaned_prediction_boxes),
+        )
+        if len(corrected_label) != len(cleaned_prediction_boxes):
+            raise ValueError("Whole-result corrections must match the detected character count.")
     return {
         "correction_kind": correction_kind,
         "filename": form.get("filename", "")[:255],
@@ -1284,6 +1292,27 @@ def build_correction_record(form: dict[str, str]) -> dict[str, object]:
         "prediction_boxes": cleaned_prediction_boxes,
         "timestamp": dt.datetime.now(dt.UTC).isoformat(),
     }
+
+
+def normalize_sequence_correction_label(
+    corrected_label: str,
+    original_label: str,
+    display_sequence: str,
+    prediction_box_count: int,
+) -> str:
+    """Return the box-aligned label string that is safe to use for training."""
+
+    if prediction_box_count <= 0:
+        return corrected_label
+    compact_label = "".join(character for character in corrected_label if character not in {"\n", "\r"})
+    compact_display = "".join(character for character in display_sequence if character not in {"\n", "\r"})
+    if corrected_label == display_sequence and len(original_label) == prediction_box_count:
+        return original_label
+    if compact_label == compact_display and len(original_label) == prediction_box_count:
+        return original_label
+    if len(compact_label) == prediction_box_count:
+        return compact_label
+    return corrected_label
 
 
 def save_correction(record: dict[str, object], path: Path = CORRECTIONS_PATH) -> None:
@@ -1520,6 +1549,7 @@ def render_full_correction_form(result: dict[str, object]) -> str:
         "filename": result.get("filename", ""),
         "image_id": result.get("image_id", ""),
         "sequence": raw_training_sequence or str(result.get("raw_sequence", sequence)),
+        "display_sequence": sequence,
         "prediction_index": 0,
         "original_label": raw_training_sequence or str(result.get("raw_sequence", sequence)),
         "confidence": 0,

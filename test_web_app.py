@@ -651,7 +651,11 @@ class WebAppRenderingTests(unittest.TestCase):
         body = (
             b"correction_kind=sequence&filename=sample.png&sequence=HL%3A&prediction_index=0"
             b"&original_label=HL%3A&corrected_label=Hi%21&confidence=0&bbox=%7B%7D"
-            b"&prediction_boxes=%5B%7B%22original_label%22%3A%22H%22%2C%22bbox%22%3A%7B%22x%22%3A1%2C%22y%22%3A2%2C%22width%22%3A3%2C%22height%22%3A4%2C%22row%22%3A1%7D%7D%5D"
+            b"&prediction_boxes=%5B"
+            b"%7B%22original_label%22%3A%22H%22%2C%22bbox%22%3A%7B%22x%22%3A1%2C%22y%22%3A2%2C%22width%22%3A3%2C%22height%22%3A4%2C%22row%22%3A1%7D%7D%2C"
+            b"%7B%22original_label%22%3A%22L%22%2C%22bbox%22%3A%7B%22x%22%3A5%2C%22y%22%3A2%2C%22width%22%3A3%2C%22height%22%3A4%2C%22row%22%3A1%7D%7D%2C"
+            b"%7B%22original_label%22%3A%22%3A%22%2C%22bbox%22%3A%7B%22x%22%3A9%2C%22y%22%3A2%2C%22width%22%3A3%2C%22height%22%3A4%2C%22row%22%3A1%7D%7D"
+            b"%5D"
         )
 
         form = main.parse_correction_form(body)
@@ -663,8 +667,62 @@ class WebAppRenderingTests(unittest.TestCase):
         self.assertEqual(record["corrected_label"], "Hi!")
         self.assertEqual(
             record["prediction_boxes"],
-            [{"original_label": "H", "bbox": {"x": 1.0, "y": 2.0, "width": 3.0, "height": 4.0, "row": 1}}],
+            [
+                {"original_label": "H", "bbox": {"x": 1.0, "y": 2.0, "width": 3.0, "height": 4.0, "row": 1}},
+                {"original_label": "L", "bbox": {"x": 5.0, "y": 2.0, "width": 3.0, "height": 4.0, "row": 1}},
+                {"original_label": ":", "bbox": {"x": 9.0, "y": 2.0, "width": 3.0, "height": 4.0, "row": 1}},
+            ],
         )
+
+    def test_sequence_correction_rejects_unaligned_text(self) -> None:
+        """Whole-result training records need one corrected label per box."""
+
+        body = (
+            b"correction_kind=sequence&filename=sample.png&sequence=H&prediction_index=0"
+            b"&original_label=H&corrected_label=Hi%21&confidence=0&bbox=%7B%7D"
+            b"&prediction_boxes=%5B%7B%22original_label%22%3A%22H%22%2C%22bbox%22%3A%7B%22x%22%3A1%7D%7D%5D"
+        )
+
+        form = main.parse_correction_form(body)
+
+        with self.assertRaisesRegex(ValueError, "detected character count"):
+            main.build_correction_record(form)
+
+    def test_unchanged_cleaned_sequence_saves_raw_training_labels(self) -> None:
+        """Saving a cleaned display unchanged should not train on cleanup output."""
+
+        body = (
+            b"correction_kind=sequence&filename=sample.png&sequence=HL&display_sequence=Hi&prediction_index=0"
+            b"&original_label=HL&corrected_label=Hi&confidence=0&bbox=%7B%7D"
+            b"&prediction_boxes=%5B"
+            b"%7B%22original_label%22%3A%22H%22%2C%22bbox%22%3A%7B%22x%22%3A1%7D%7D%2C"
+            b"%7B%22original_label%22%3A%22L%22%2C%22bbox%22%3A%7B%22x%22%3A2%7D%7D"
+            b"%5D"
+        )
+
+        form = main.parse_correction_form(body)
+        record = main.build_correction_record(form)
+
+        self.assertEqual(record["corrected_label"], "HL")
+
+    def test_multiline_sequence_correction_flattens_row_separators(self) -> None:
+        """Multi-row corrections should train the four boxes, not include newlines."""
+
+        body = (
+            b"correction_kind=sequence&filename=sample.png&sequence=ABCD&display_sequence=AB%0ACD&prediction_index=0"
+            b"&original_label=ABCD&corrected_label=AX%0ACY&confidence=0&bbox=%7B%7D"
+            b"&prediction_boxes=%5B"
+            b"%7B%22original_label%22%3A%22A%22%2C%22bbox%22%3A%7B%22x%22%3A1%7D%7D%2C"
+            b"%7B%22original_label%22%3A%22B%22%2C%22bbox%22%3A%7B%22x%22%3A2%7D%7D%2C"
+            b"%7B%22original_label%22%3A%22C%22%2C%22bbox%22%3A%7B%22x%22%3A3%7D%7D%2C"
+            b"%7B%22original_label%22%3A%22D%22%2C%22bbox%22%3A%7B%22x%22%3A4%7D%7D"
+            b"%5D"
+        )
+
+        form = main.parse_correction_form(body)
+        record = main.build_correction_record(form)
+
+        self.assertEqual(record["corrected_label"], "AXCY")
 
     def test_full_result_correction_includes_prediction_boxes(self) -> None:
         """Whole-result corrections should include per-glyph boxes for training."""
@@ -708,6 +766,7 @@ class WebAppRenderingTests(unittest.TestCase):
 
         self.assertIn('value="Hi"', html)
         self.assertIn('name="sequence" value="HL"', html)
+        self.assertIn('name="display_sequence" value="Hi"', html)
         self.assertIn('name="original_label" value="HL"', html)
         self.assertNotIn("&quot;original_label&quot;:&quot;:&quot;", html)
 
