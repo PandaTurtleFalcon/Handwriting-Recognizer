@@ -430,6 +430,47 @@ class WebAppRenderingTests(unittest.TestCase):
 
         self.assertFalse(main.should_use_digit_specialist_predictions(character_predictions, digit_predictions))
 
+    def test_visual_twin_resolver_uses_row_height_for_case(self) -> None:
+        """Short glyphs in a mixed-height row can resolve to lowercase twins."""
+
+        predictions = [
+            {"label": "T", "confidence": 0.94, "x": 0, "height": 60, "row": 1, "alternatives": []},
+            {"label": "E", "confidence": 0.90, "x": 30, "height": 58, "row": 1, "alternatives": []},
+            {
+                "label": "S",
+                "confidence": 0.71,
+                "x": 60,
+                "height": 34,
+                "row": 1,
+                "alternatives": [{"label": "s", "confidence": 0.25}, {"label": "S", "confidence": 0.71}],
+            },
+            {"label": "T", "confidence": 0.93, "x": 90, "height": 60, "row": 1, "alternatives": []},
+        ]
+
+        resolved = main.resolve_visual_twin_predictions(predictions)
+
+        self.assertEqual([item["label"] for item in resolved], ["T", "E", "s", "T"])
+
+    def test_visual_twin_resolver_requires_clear_height_evidence_for_case(self) -> None:
+        """Case geometry should not rewrite rows whose glyph heights are similar."""
+
+        predictions = [
+            {"label": "T", "confidence": 0.94, "x": 0, "height": 60, "row": 1, "alternatives": []},
+            {"label": "E", "confidence": 0.90, "x": 30, "height": 56, "row": 1, "alternatives": []},
+            {
+                "label": "S",
+                "confidence": 0.71,
+                "x": 60,
+                "height": 52,
+                "row": 1,
+                "alternatives": [{"label": "s", "confidence": 0.25}, {"label": "S", "confidence": 0.71}],
+            },
+        ]
+
+        resolved = main.resolve_visual_twin_predictions(predictions)
+
+        self.assertEqual([item["label"] for item in resolved], ["T", "E", "S"])
+
     def test_result_cards_show_top_three_guesses(self) -> None:
         """Ambiguous predictions should expose the strongest alternatives."""
 

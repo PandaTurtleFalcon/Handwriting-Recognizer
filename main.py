@@ -76,6 +76,28 @@ DISPLAY_AMBIGUITY_GROUPS = [
     frozenset("NnMm"),
     frozenset("Jj"),
 ]
+CASE_GEOMETRY_PAIRS = {
+    "C": "c",
+    "F": "f",
+    "K": "k",
+    "M": "m",
+    "N": "n",
+    "O": "o",
+    "P": "p",
+    "S": "s",
+    "U": "u",
+    "V": "v",
+    "W": "w",
+    "X": "x",
+    "Y": "y",
+    "Z": "z",
+}
+CASE_GEOMETRY_PAIRS.update({lower: upper for upper, lower in list(CASE_GEOMETRY_PAIRS.items())})
+CASE_GEOMETRY_MIN_ROW_ITEMS = 3
+CASE_GEOMETRY_MIN_HEIGHT_SPREAD = 1.28
+CASE_GEOMETRY_SHORT_RATIO = 0.76
+CASE_GEOMETRY_TALL_RATIO = 0.92
+CASE_GEOMETRY_MIN_ALT_CONFIDENCE = 0.12
 # Set well above MAX_IMAGE_PIXELS so PIL's own decompression-bomb guard
 # never fires before this app's own size check in classify_files runs (and
 # reports a friendlier error); the 2x margin is just headroom, not a real limit.
@@ -977,6 +999,8 @@ def resolve_visual_twin_predictions(predictions: list[dict[str, object]]) -> lis
         ordered = sorted(row_items, key=lambda item: float(item[1].get("x", 0)))
         resolved = _resolve_visual_twin_row([item for _, item in ordered])
         if resolved is None:
+            resolved = _resolve_case_by_row_geometry([item for _, item in ordered])
+        if resolved is None:
             continue
         for (index, original), replacement in zip(ordered, resolved):
             if replacement is not original:
@@ -1028,6 +1052,39 @@ def _resolve_visual_twin_row(row: list[dict[str, object]]) -> list[dict[str, obj
                 row[3],
             ]
     return None
+
+
+def _resolve_case_by_row_geometry(row: list[dict[str, object]]) -> list[dict[str, object]] | None:
+    """Use row-relative glyph height to resolve likely upper/lowercase twins."""
+
+    if len(row) < CASE_GEOMETRY_MIN_ROW_ITEMS:
+        return None
+    heights = [float(item.get("height", 0)) for item in row]
+    positive_heights = [height for height in heights if height > 0]
+    if len(positive_heights) != len(row):
+        return None
+    tallest = max(positive_heights)
+    shortest = min(positive_heights)
+    if tallest <= 0 or tallest < shortest * CASE_GEOMETRY_MIN_HEIGHT_SPREAD:
+        return None
+
+    resolved = list(row)
+    changed = False
+    for index, item in enumerate(row):
+        label = prediction_value(item)
+        counterpart = CASE_GEOMETRY_PAIRS.get(label)
+        if counterpart is None:
+            continue
+        if _alternative_confidence(item, {counterpart}) < CASE_GEOMETRY_MIN_ALT_CONFIDENCE:
+            continue
+        height_ratio = heights[index] / tallest
+        if label.isupper() and height_ratio <= CASE_GEOMETRY_SHORT_RATIO:
+            resolved[index] = _with_prediction_label(item, counterpart, 0.84)
+            changed = True
+        elif label.islower() and height_ratio >= CASE_GEOMETRY_TALL_RATIO:
+            resolved[index] = _with_prediction_label(item, counterpart, 0.84)
+            changed = True
+    return resolved if changed else None
 
 
 def _alternative_confidence(prediction: dict[str, object], labels: set[str]) -> float:
