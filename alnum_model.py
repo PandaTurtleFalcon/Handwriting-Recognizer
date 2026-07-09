@@ -29,7 +29,7 @@ from torchvision import datasets, transforms
 from emnist_experiment import DATA_ROOT as EMNIST_DATA_ROOT
 from emnist_experiment import EMNIST_MEAN, EMNIST_STD, EmnistCNN, EmnistMLP, TinyEmnistCNN, WideEmnistCNN, build_or_load_emnist_cache
 from extra_alnum_datasets import load_labeled_image_folder
-from mnist_model import get_device
+from mnist_model import get_device, segment_digit_regions
 
 
 PROJECT_DIR = Path(__file__).resolve().parent
@@ -342,7 +342,8 @@ def load_correction_cache(
             continue
         with Image.open(image_path) as image:
             source_image = ImageOps.exif_transpose(image).convert("RGB")
-            for corrected_label, bbox in _correction_training_items(record, label_to_index):
+            training_record = _record_with_legacy_sequence_boxes(record, source_image)
+            for corrected_label, bbox in _correction_training_items(training_record, label_to_index):
                 try:
                     x0 = max(0, int(round(float(bbox.get("x", 0)))))
                     y0 = max(0, int(round(float(bbox.get("y", 0)))))
@@ -357,6 +358,35 @@ def load_correction_cache(
     if not images:
         return None
     return torch.stack(images), torch.tensor(targets, dtype=torch.long)
+
+
+def _record_with_legacy_sequence_boxes(record: dict[str, object], image: Image.Image) -> dict[str, object]:
+    """Add segmentation boxes for older sequence corrections when possible."""
+
+    if record.get("correction_kind") != "sequence" or record.get("prediction_boxes"):
+        return record
+    corrected_text = str(record.get("corrected_label", ""))
+    if not corrected_text:
+        return record
+    regions = segment_digit_regions(image, split_wide=False, min_component_pixels=4, merge_marks=True)
+    if len(regions) != len(corrected_text):
+        return record
+    prediction_boxes = []
+    for region in regions:
+        x0, y0, x1, y1 = region.box
+        prediction_boxes.append(
+            {
+                "original_label": "",
+                "bbox": {
+                    "x": x0,
+                    "y": y0,
+                    "width": x1 - x0,
+                    "height": y1 - y0,
+                    "row": region.row,
+                },
+            }
+        )
+    return {**record, "prediction_boxes": prediction_boxes}
 
 
 def _correction_training_items(

@@ -165,6 +165,37 @@ class ExtraAlnumDatasetTests(unittest.TestCase):
         self.assertEqual(tuple(images.shape), (2, 1, 28, 28))
         self.assertEqual(targets.tolist(), [0, 1])
 
+    def test_loads_legacy_sequence_corrections_by_resegmenting_upload(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            upload_dir = root / "uploads"
+            upload_dir.mkdir()
+            image_id = "legacy123"
+            image = Image.new("RGB", (120, 80), "white")
+            draw = ImageDraw.Draw(image)
+            draw.line((20, 15, 20, 65), fill="black", width=5)
+            draw.line((75, 15, 75, 65), fill="black", width=5)
+            image.save(upload_dir / f"{image_id}.png")
+            corrections_path = root / "corrections.jsonl"
+            corrections_path.write_text(
+                json.dumps(
+                    {
+                        "correction_kind": "sequence",
+                        "image_id": image_id,
+                        "corrected_label": "11",
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            loaded = load_correction_cache(["0", "1"], corrections_path, upload_dir)
+
+        self.assertIsNotNone(loaded)
+        images, targets = loaded
+        self.assertEqual(tuple(images.shape), (2, 1, 28, 28))
+        self.assertEqual(targets.tolist(), [1, 1])
+
 
 if __name__ == "__main__":
     unittest.main()
