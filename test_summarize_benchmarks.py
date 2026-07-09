@@ -2,8 +2,9 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
-from scripts.summarize_benchmarks import summarize_saved_metrics
+from scripts.summarize_benchmarks import summarize_app_hardcases, summarize_saved_metrics
 
 
 class BenchmarkSummaryTests(unittest.TestCase):
@@ -53,6 +54,18 @@ class BenchmarkSummaryTests(unittest.TestCase):
         self.assertTrue(by_name["mixedcase_case_or_visual"]["passed"])
         self.assertFalse(by_name["character_exact"]["passed"])
         self.assertTrue(by_name["punctuation_exact"]["passed"])
+
+    def test_summarizes_app_hardcase_gates_on_demand(self) -> None:
+        with patch(
+            "scripts.evaluate_hardcases.evaluate_cases",
+            return_value={"exact_accuracy": 100.0, "ambiguity_aware_accuracy": 100.0},
+        ) as evaluate:
+            report = summarize_app_hardcases(target=95.0, all_fonts=False)
+
+        evaluate.assert_called_once_with(all_fonts=False)
+        by_name = {str(item["name"]): item for item in report}
+        self.assertTrue(by_name["app_hardcase_exact"]["passed"])
+        self.assertTrue(by_name["app_hardcase_ambiguity"]["passed"])
 
 
 if __name__ == "__main__":

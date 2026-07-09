@@ -61,6 +61,18 @@ def summarize_saved_metrics(project_dir: Path = PROJECT_DIR, target: float = 95.
     ]
 
 
+def summarize_app_hardcases(target: float = 95.0, all_fonts: bool = True) -> list[dict[str, object]]:
+    """Return app-level generated hard-case gates for the live recognizer stack."""
+
+    from scripts.evaluate_hardcases import evaluate_cases
+
+    report = evaluate_cases(all_fonts=all_fonts)
+    return [
+        _gate("app_hardcase_exact", _float_or_none(report.get("exact_accuracy")), target),
+        _gate("app_hardcase_ambiguity", _float_or_none(report.get("ambiguity_aware_accuracy")), target),
+    ]
+
+
 def _float_or_none(value: object) -> float | None:
     """Convert metric values to float when possible."""
 
@@ -88,9 +100,21 @@ def main() -> None:
 
     parser = argparse.ArgumentParser(description="Summarize saved recognizer benchmark gates.")
     parser.add_argument("--target", type=float, default=95.0)
+    parser.add_argument(
+        "--include-app-hardcases",
+        action="store_true",
+        help="Also run generated app-level hard cases through the live recognizer.",
+    )
+    parser.add_argument(
+        "--single-font-hardcases",
+        action="store_true",
+        help="Use one font instead of all fonts when --include-app-hardcases is set.",
+    )
     parser.add_argument("--json", action="store_true")
     args = parser.parse_args()
     report = summarize_saved_metrics(target=args.target)
+    if args.include_app_hardcases:
+        report.extend(summarize_app_hardcases(target=args.target, all_fonts=not args.single_font_hardcases))
     if args.json:
         print(json.dumps(report, indent=2))
         return
