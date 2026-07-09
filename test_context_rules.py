@@ -45,6 +45,22 @@ class ContextRulesTests(unittest.TestCase):
         self.assertEqual(cleanup.display, "7:5T9")
         self.assertEqual(cleanup.notes, [])
 
+    def test_conservative_numeric_pair_cleanup_handles_saved_15_case(self) -> None:
+        """A whole-row p5 shape can be the saved 15 correction."""
+
+        cleanup = cleanup_context("p5")
+
+        self.assertEqual(cleanup.display, "15")
+        self.assertIn("15", cleanup.notes[0])
+
+    def test_conservative_numeric_pair_cleanup_rejects_longer_strings(self) -> None:
+        """The p5 cleanup should not rewrite word-like strings."""
+
+        cleanup = cleanup_context("p50")
+
+        self.assertEqual(cleanup.display, "p50")
+        self.assertEqual(cleanup.notes, [])
+
     def test_conservative_hi_cleanup_allows_punctuation_tail(self) -> None:
         """HL! is a safe greeting correction because no word tail is guessed."""
 
@@ -69,6 +85,23 @@ class ContextRulesTests(unittest.TestCase):
         self.assertEqual(cleanup.display, "Hi!\n123")
         self.assertEqual(cleanup.rows, ["Hi!", "123"])
         self.assertTrue(any("2 detected rows" in note for note in cleanup.notes))
+
+    def test_drops_isolated_colon_after_hi_row(self) -> None:
+        """The saved Hi correction should drop its stray punctuation-only row."""
+
+        cleanup = cleanup_context("H1:", ["H1", ":"])
+
+        self.assertEqual(cleanup.display, "Hi")
+        self.assertEqual(cleanup.rows, ["Hi"])
+        self.assertTrue(any("punctuation row" in note for note in cleanup.notes))
+
+    def test_keeps_other_punctuation_rows(self) -> None:
+        """Only the exact Hi + colon stray row is dropped."""
+
+        cleanup = cleanup_context("OK:", ["OK", ":"])
+
+        self.assertEqual(cleanup.display, "OK\n:")
+        self.assertEqual(cleanup.rows, ["OK", ":"])
 
 
 if __name__ == "__main__":

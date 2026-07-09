@@ -40,6 +40,8 @@ def cleanup_context(predicted: str, row_strings: Sequence[str] | None = None) ->
         row, row_notes = _clean_one_row(row)
         cleaned_rows.append(row)
         notes.extend(row_notes)
+    cleaned_rows, dropped_notes = _drop_stray_greeting_punctuation_row(cleaned_rows)
+    notes.extend(dropped_notes)
 
     if len(cleaned_rows) > 1:
         notes.append(f"Kept {len(cleaned_rows)} detected rows separated for reading.")
@@ -56,6 +58,8 @@ def _clean_one_row(text: str) -> tuple[str, list[str]]:
     notes.extend(greeting_notes)
     cleaned, test_notes = _clean_test_word(cleaned)
     notes.extend(test_notes)
+    cleaned, numeric_notes = _clean_numeric_pair(cleaned)
+    notes.extend(numeric_notes)
     cleaned, parenthesis_notes = _balance_parentheses(cleaned)
     notes.extend(parenthesis_notes)
     return cleaned, notes
@@ -97,6 +101,22 @@ def _clean_test_word(text: str) -> tuple[str, list[str]]:
     ):
         return "Test", ["Read a four-character Test-shaped row using common T/e/s/t lookalikes."]
     return text, []
+
+
+def _clean_numeric_pair(text: str) -> tuple[str, list[str]]:
+    """Fix a whole-row 15 pair when the leading 1 was read as p/P."""
+
+    if text in {"p5", "P5"}:
+        return "15", ["Read a two-character p5-shaped row as the number 15."]
+    return text, []
+
+
+def _drop_stray_greeting_punctuation_row(rows: list[str]) -> tuple[list[str], list[str]]:
+    """Drop the isolated colon row produced by a known Hi correction case."""
+
+    if len(rows) == 2 and rows[0] == "Hi" and rows[1] == ":":
+        return ["Hi"], ["Dropped an isolated punctuation row after the greeting 'Hi'."]
+    return rows, []
 
 
 def _balance_parentheses(text: str) -> tuple[str, list[str]]:
