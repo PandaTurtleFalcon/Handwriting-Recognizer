@@ -183,12 +183,12 @@ def main() -> None:
     for group, accuracy in report["group_accuracy"].items():
         ambiguity = report["group_ambiguity_accuracy"][group]
         print(f"  {group}: exact={accuracy:.2f}% ambiguity={ambiguity:.2f}%")
-    print("top punctuation confusions:")
-    for item in report["top_confusions_by_group"]["punctuation"]:
-        print(f"  {item['expected']} -> {item['predicted']}: {item['count']}")
-    print("worst punctuation labels:")
-    punctuation_labels = [item for item in report["worst_labels"] if item["group"] == "punctuation"]
-    for item in punctuation_labels[: args.top]:
+    for group in ("digits", "letters", "punctuation"):
+        print(f"top {group} confusions:")
+        for item in report["top_confusions_by_group"][group]:
+            print(f"  {item['expected']} -> {item['predicted']}: {item['count']}")
+    print("worst labels:")
+    for item in report["worst_labels"][: args.top]:
         print(f"  {item['label']}: {item['accuracy']:.2f}% ({item['correct']}/{item['total']})")
 
 
