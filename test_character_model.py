@@ -26,7 +26,7 @@ class CharacterPostprocessingTests(unittest.TestCase):
         predictions = [
             {"label": "H", "confidence": 0.97, "x": 40, "y": 55, "width": 90, "height": 120, "row": 1},
             {"label": ":", "confidence": 0.91, "x": 184, "y": 40, "width": 12, "height": 12, "row": 1},
-            {"label": "L", "confidence": 0.81, "x": 180, "y": 70, "width": 14, "height": 105, "row": 2},
+            {"label": "L", "confidence": 0.81, "x": 180, "y": 70, "width": 14, "height": 105, "row": 1},
         ]
 
         cleaned = _postprocess_lowercase_i(predictions)
@@ -40,7 +40,7 @@ class CharacterPostprocessingTests(unittest.TestCase):
 
         predictions = [
             {"label": "Q", "confidence": 0.80, "x": 50, "y": 30, "width": 14, "height": 14, "row": 1},
-            {"label": "Q", "confidence": 0.80, "x": 51, "y": 76, "width": 14, "height": 14, "row": 2},
+            {"label": "Q", "confidence": 0.80, "x": 51, "y": 76, "width": 14, "height": 14, "row": 1},
         ]
 
         cleaned = _postprocess_colons(predictions)
@@ -53,13 +53,39 @@ class CharacterPostprocessingTests(unittest.TestCase):
 
         predictions = [
             {"label": "1", "confidence": 0.98, "x": 50, "y": 15, "width": 12, "height": 80, "row": 1},
-            {"label": "0", "confidence": 0.81, "x": 48, "y": 112, "width": 15, "height": 15, "row": 2},
+            {"label": "0", "confidence": 0.81, "x": 48, "y": 112, "width": 15, "height": 15, "row": 1},
         ]
 
         cleaned = _postprocess_exclamations(predictions)
 
         self.assertEqual("".join(str(item["label"]) for item in cleaned), "!")
         self.assertEqual(len(cleaned), 1)
+
+    def test_dot_postprocessing_does_not_merge_across_rows(self) -> None:
+        """Detached dots should only merge with stems or dots on the same row."""
+
+        colon = _postprocess_colons(
+            [
+                {"label": "Q", "confidence": 0.80, "x": 50, "y": 30, "width": 14, "height": 14, "row": 1},
+                {"label": "Q", "confidence": 0.80, "x": 51, "y": 76, "width": 14, "height": 14, "row": 2},
+            ]
+        )
+        lowercase_i = _postprocess_lowercase_i(
+            [
+                {"label": ":", "confidence": 0.91, "x": 184, "y": 40, "width": 12, "height": 12, "row": 1},
+                {"label": "L", "confidence": 0.81, "x": 180, "y": 70, "width": 14, "height": 105, "row": 2},
+            ]
+        )
+        exclamation = _postprocess_exclamations(
+            [
+                {"label": "1", "confidence": 0.98, "x": 50, "y": 15, "width": 12, "height": 80, "row": 1},
+                {"label": "0", "confidence": 0.81, "x": 48, "y": 112, "width": 15, "height": 15, "row": 2},
+            ]
+        )
+
+        self.assertEqual(len(colon), 2)
+        self.assertEqual(len(lowercase_i), 2)
+        self.assertEqual(len(exclamation), 2)
 
     def test_dot_below_stem_stays_exclamation_mark(self) -> None:
         """A dot below a vertical stem should stay an exclamation mark."""

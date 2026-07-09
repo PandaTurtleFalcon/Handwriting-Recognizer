@@ -300,6 +300,20 @@ class WebAppRenderingTests(unittest.TestCase):
 
         self.assertFalse(main.should_use_digit_specialist_predictions(character_predictions, digit_predictions))
 
+    def test_digit_specialist_router_keeps_ambiguous_real_letters(self) -> None:
+        """High-confidence B/S/O-style letters should not become all digits."""
+
+        character_predictions = [
+            {"label": "B", "confidence": 0.91, "row": 1},
+            {"label": "7", "confidence": 0.94, "row": 1},
+        ]
+        digit_predictions = [
+            {"digit": 8, "confidence": 0.99, "row": 1},
+            {"digit": 7, "confidence": 0.98, "row": 1},
+        ]
+
+        self.assertFalse(main.should_use_digit_specialist_predictions(character_predictions, digit_predictions))
+
     def test_result_cards_show_top_three_guesses(self) -> None:
         """Ambiguous predictions should expose the strongest alternatives."""
 

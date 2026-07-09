@@ -51,6 +51,7 @@ LOW_CONFIDENCE_THRESHOLD = 0.80
 CLOSE_GUESS_MARGIN = 0.12
 TOP_GUESS_LIMIT = 3
 DIGIT_SPECIALIST_COMPATIBLE_LABELS = set("0123456789BIJLOSYZlo")
+DIGIT_SPECIALIST_LETTER_BLOCKERS = set("BOSo")
 # Set well above MAX_IMAGE_PIXELS so PIL's own decompression-bomb guard
 # never fires before this app's own size check in classify_files runs (and
 # reports a friendlier error); the 2x margin is just headroom, not a real limit.
@@ -832,6 +833,11 @@ def should_use_digit_specialist_predictions(
     labels = [prediction_value(item) for item in character_predictions]
     if any(label not in DIGIT_SPECIALIST_COMPATIBLE_LABELS for label in labels):
         return False
+    if any(
+        label in DIGIT_SPECIALIST_LETTER_BLOCKERS and float(item.get("confidence", 0)) >= 0.82
+        for label, item in zip(labels, character_predictions)
+    ):
+        return False
     digit_confidences = [float(item.get("confidence", 0)) for item in digit_predictions]
     if min(digit_confidences, default=0) < 0.88:
         return False
@@ -1019,9 +1025,8 @@ def render_page(
     if MIXEDCASE_WEIGHTS_PATH.exists():
         mixedcase_metrics = read_metrics(MIXEDCASE_METRICS_PATH)
         if isinstance(mixedcase_metrics, dict):
-            history = mixedcase_metrics.get("history", [])
-            if history:
-                best = max(history, key=lambda item: item.get("test_accuracy", 0))
+            best = best_metric_entry(mixedcase_metrics)
+            if best:
                 metrics_text = (
                     f"Mixed-case test accuracy: {best['test_accuracy']:.2f}% "
                     f"(digits {best.get('digit_test_accuracy', 0):.2f}%, "
@@ -1331,22 +1336,22 @@ def run(host: str = HOST, port: int = PORT) -> None:
     """Load the best available recognizer and start the local HTTP server.
 
     Model selection prefers the expanded character recognizer (which itself
-    layers letter/mixed-case/alnum models on top, see `character_model.predict_characters`)
+    layers letter/alnum models on top, see `character_model.predict_characters`)
     and only falls back to the plain digit-only CNN when the character
-    weights were never trained. The mixed-case (upper+lower) alnum model is
-    preferred over the case-folded one when both exist, since it's strictly
-    more capable.
+    weights were never trained. The case-folded 36-class alnum model is
+    preferred for identity because its held-out accuracy is much higher than
+    the isolated 62-class mixed-case model.
     """
 
     if CHARACTER_WEIGHTS_PATH.exists():
         MnistWebHandler.device = get_device()
         MnistWebHandler.model, MnistWebHandler.labels = load_character_model(device=MnistWebHandler.device)
         MnistWebHandler.letter_model, MnistWebHandler.letter_labels = load_letter_model(device=MnistWebHandler.device)
-        MnistWebHandler.alnum_model, MnistWebHandler.alnum_labels = load_mixedcase_model(
-            device=MnistWebHandler.device
-        )
+        MnistWebHandler.alnum_model, MnistWebHandler.alnum_labels = load_alnum_model(device=MnistWebHandler.device)
         if MnistWebHandler.alnum_model is None:
-            MnistWebHandler.alnum_model, MnistWebHandler.alnum_labels = load_alnum_model(device=MnistWebHandler.device)
+            MnistWebHandler.alnum_model, MnistWebHandler.alnum_labels = load_mixedcase_model(
+                device=MnistWebHandler.device
+            )
         MnistWebHandler.recognizer_kind = "characters"
     elif WEIGHTS_PATH.exists():
         MnistWebHandler.device = get_device()

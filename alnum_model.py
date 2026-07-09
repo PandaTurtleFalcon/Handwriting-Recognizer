@@ -290,6 +290,51 @@ def build_or_load_chars74k_cache() -> tuple[torch.Tensor, torch.Tensor]:
     return image_tensor, target_tensor
 
 
+def _chars74k_sample_mixedcase_label(sample_dir: Path) -> int | None:
+    """Map Chars74K Sample001..062 folders into 0-9/A-Z/a-z labels."""
+
+    try:
+        sample_number = int(sample_dir.name.replace("Sample", ""))
+    except ValueError:
+        return None
+    if 1 <= sample_number <= 10:
+        return sample_number - 1
+    if 11 <= sample_number <= 36:
+        return 10 + sample_number - 11
+    if 37 <= sample_number <= 62:
+        return 36 + sample_number - 37
+    return None
+
+
+def build_or_load_chars74k_mixedcase_cache() -> tuple[torch.Tensor, torch.Tensor]:
+    """Load Chars74K EnglishHnd tensors as distinct digit/upper/lower labels."""
+
+    cache_path = CHARS74K_DATA_ROOT / "cache_english_hnd_62.pt"
+    if cache_path.exists():
+        cache = torch.load(cache_path, map_location="cpu", weights_only=True)
+        return cache["images"], cache["targets"]
+
+    image_root = ensure_chars74k_english_hnd()
+    images = []
+    targets = []
+    for sample_dir in sorted(path for path in image_root.iterdir() if path.is_dir()):
+        target = _chars74k_sample_mixedcase_label(sample_dir)
+        if target is None:
+            continue
+        for image_path in sorted(sample_dir.glob("*.png")):
+            with Image.open(image_path) as image:
+                images.append(_foreground_tensor_from_image(image))
+            targets.append(target)
+    if not images:
+        raise RuntimeError("No Chars74K mixed-case images were loaded.")
+
+    image_tensor = torch.stack(images)
+    target_tensor = torch.tensor(targets, dtype=torch.long)
+    cache_path.parent.mkdir(parents=True, exist_ok=True)
+    torch.save({"images": image_tensor, "targets": target_tensor}, cache_path)
+    return image_tensor, target_tensor
+
+
 def build_or_load_emnist_byclass_folded_cache(train: bool) -> tuple[torch.Tensor, torch.Tensor]:
     """Load EMNIST ByClass, folding lowercase samples into uppercase labels.
 
@@ -553,10 +598,41 @@ def _target_range_loader(images: torch.Tensor, targets: torch.Tensor, start: int
     return DataLoader(TensorDataset(images[mask], targets[mask]), batch_size=batch_size)
 
 
+def evaluate_per_class(
+    model: nn.Module,
+    loader: DataLoader,
+    labels: list[str],
+    device: torch.device,
+) -> dict[str, float]:
+    """Return per-label accuracy percentages for a loader."""
+
+    model.eval()
+    correct = torch.zeros(len(labels), dtype=torch.long)
+    total = torch.zeros(len(labels), dtype=torch.long)
+    with torch.no_grad():
+        for images, targets in loader:
+            outputs = model(images.to(device))
+            predictions = outputs.argmax(dim=1).cpu()
+            targets_cpu = targets.cpu()
+            for label_index in range(len(labels)):
+                mask = targets_cpu == label_index
+                if not bool(mask.any()):
+                    continue
+                total[label_index] += int(mask.sum().item())
+                correct[label_index] += int((predictions[mask] == targets_cpu[mask]).sum().item())
+    return {
+        label: 100.0 * int(correct[index].item()) / max(int(total[index].item()), 1)
+        for index, label in enumerate(labels)
+        if int(total[index].item()) > 0
+    }
+
+
 def make_mixedcase_loaders(
     batch_size: int,
     samples_per_class: int | None,
     seed: int,
+    include_chars74k: bool = False,
+    include_usps: bool = False,
 ) -> tuple[DataLoader, DataLoader, DataLoader, DataLoader, DataLoader]:
     """Build loaders for the 62-class digit/upper/lower recognizer."""
 
@@ -578,19 +654,28 @@ def make_mixedcase_loaders(
         seed + 1,
     )
 
-    train_dataset = ConcatDataset(
-        [
-            TensorDataset(mnist_train_images, mnist_train_targets),
-            TensorDataset(byclass_train_images, byclass_train_targets),
-        ]
-    )
+    train_parts = [
+        TensorDataset(mnist_train_images, mnist_train_targets),
+        TensorDataset(byclass_train_images, byclass_train_targets),
+    ]
+    train_target_parts = [mnist_train_targets, byclass_train_targets]
+    if include_chars74k:
+        chars_images, chars_targets = build_or_load_chars74k_mixedcase_cache()
+        train_parts.append(TensorDataset(chars_images, chars_targets))
+        train_target_parts.append(chars_targets)
+    if include_usps:
+        usps_train_images, usps_train_targets = build_or_load_usps_cache(train=True)
+        train_parts.append(TensorDataset(usps_train_images, usps_train_targets))
+        train_target_parts.append(usps_train_targets)
+
+    train_dataset = ConcatDataset(train_parts)
     test_dataset = ConcatDataset(
         [
             TensorDataset(mnist_test_images, mnist_test_targets),
             TensorDataset(byclass_test_images, byclass_test_targets),
         ]
     )
-    train_targets = torch.cat([mnist_train_targets, byclass_train_targets]).numpy()
+    train_targets = torch.cat(train_target_parts).numpy()
     class_counts = np.bincount(train_targets, minlength=len(MIXEDCASE_LABELS))
     sample_weights = [1.0 / max(class_counts[int(target)], 1) for target in train_targets]
     sampler = WeightedRandomSampler(sample_weights, num_samples=len(train_targets), replacement=True)
@@ -730,6 +815,10 @@ def save_mixedcase_checkpoint(
     seed: int,
     device: torch.device,
     samples_per_class: int | None,
+    include_chars74k: bool = False,
+    include_usps: bool = False,
+    warm_start: bool = False,
+    per_class_accuracy: dict[str, float] | None = None,
 ) -> None:
     """Persist the best mixed-case weights and metrics."""
 
@@ -744,6 +833,9 @@ def save_mixedcase_checkpoint(
                 "seed": seed,
                 "device": str(device),
                 "samples_per_class": samples_per_class,
+                "include_chars74k": include_chars74k,
+                "include_usps": include_usps,
+                "warm_start": warm_start,
                 "normalization": {"mean": EMNIST_MEAN, "std": EMNIST_STD},
             },
             MIXEDCASE_WEIGHTS_PATH,
@@ -757,6 +849,10 @@ def save_mixedcase_checkpoint(
                 "seed": seed,
                 "device": str(device),
                 "samples_per_class": samples_per_class,
+                "include_chars74k": include_chars74k,
+                "include_usps": include_usps,
+                "warm_start": warm_start,
+                "per_class_accuracy": per_class_accuracy or {},
                 "history": history,
             },
             indent=2,
@@ -774,6 +870,9 @@ def train_mixedcase(
     model_type: str,
     samples_per_class: int | None,
     device_name: str,
+    include_chars74k: bool = False,
+    include_usps: bool = False,
+    warm_start: bool = False,
 ) -> list[dict[str, float | int]]:
     """Train a 62-class recognizer that distinguishes uppercase and lowercase."""
 
@@ -792,14 +891,25 @@ def train_mixedcase(
         batch_size,
         samples_per_class,
         seed,
+        include_chars74k,
+        include_usps,
     )
     model = MODEL_CLASSES[model_type](num_classes=len(MIXEDCASE_LABELS)).to(device)
     criterion = nn.CrossEntropyLoss(label_smoothing=0.03)
+    if warm_start and MIXEDCASE_WEIGHTS_PATH.exists():
+        checkpoint = torch.load(MIXEDCASE_WEIGHTS_PATH, map_location=device, weights_only=True)
+        if list(checkpoint.get("labels", [])) == list(MIXEDCASE_LABELS) and checkpoint.get("model_type", "cnn") == model_type:
+            model.load_state_dict(checkpoint["model_state_dict"])
     optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate, weight_decay=0.0005)
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=epochs)
     history: list[dict[str, float | int]] = []
     best_accuracy = 0.0
     best_state = None
+    best_per_class_accuracy: dict[str, float] = {}
+    if warm_start:
+        _, best_accuracy = evaluate(model, test_loader, criterion, device)
+        best_state = {key: value.detach().cpu() for key, value in model.state_dict().items()}
+        best_per_class_accuracy = evaluate_per_class(model, test_loader, list(MIXEDCASE_LABELS), device)
 
     for epoch in range(1, epochs + 1):
         start = time.time()
@@ -841,6 +951,7 @@ def train_mixedcase(
         if test_accuracy > best_accuracy:
             best_accuracy = test_accuracy
             best_state = {key: value.detach().cpu() for key, value in model.state_dict().items()}
+            best_per_class_accuracy = evaluate_per_class(model, test_loader, list(MIXEDCASE_LABELS), device)
         save_mixedcase_checkpoint(
             history,
             best_state,
@@ -850,6 +961,10 @@ def train_mixedcase(
             seed,
             device,
             samples_per_class,
+            include_chars74k,
+            include_usps,
+            warm_start,
+            best_per_class_accuracy,
         )
         print(
             f"Epoch {epoch}/{epochs} train_acc={train_accuracy:.2f}% "
@@ -1072,6 +1187,9 @@ def main() -> None:
             model_type=args.model,
             samples_per_class=args.samples_per_class,
             device_name=args.device,
+            include_chars74k=args.include_chars74k,
+            include_usps=args.include_usps,
+            warm_start=args.warm_start,
         )
         return
     train(

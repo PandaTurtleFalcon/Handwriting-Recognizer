@@ -1097,6 +1097,8 @@ def _postprocess_colons(predictions: list[dict[str, float | int | str]]) -> list
         for second_index, second in enumerate(predictions[first_index + 1 :], start=first_index + 1):
             if second_index in merged_indexes or not _is_detached_colon_dot(second):
                 continue
+            if int(first["row"]) != int(second["row"]):
+                continue
             second_center_x = float(second["x"]) + float(second["width"]) / 2.0
             vertical_gap = float(second["y"]) - first_bottom
             if abs(second_center_x - first_center_x) <= 14 and 8 <= vertical_gap <= 80:
@@ -1138,6 +1140,7 @@ def _postprocess_lowercase_i(predictions: list[dict[str, float | int | str]]) ->
                 for index, candidate in enumerate(predictions)
                 if index != stem_index
                 and index not in used_dot_indexes
+                and int(candidate["row"]) == int(prediction["row"])
                 and _is_detached_i_dot(candidate)
                 and _is_dot_above_stem(candidate, prediction)
             ),
@@ -1185,6 +1188,7 @@ def _postprocess_exclamations(predictions: list[dict[str, float | int | str]]) -
                 for index, candidate in enumerate(predictions)
                 if index != stem_index
                 and index not in used_dot_indexes
+                and int(candidate["row"]) == int(prediction["row"])
                 and _is_detached_exclamation_dot(candidate)
                 and _is_dot_below_stem(candidate, prediction)
             ),
@@ -1312,7 +1316,7 @@ def _split_one_touching_character_region(region: DigitRegion) -> list[DigitRegio
 
     mask = _foreground_from_image(region.image) > 0.18
     height, width = mask.shape
-    if height <= 0 or width <= 0 or width / max(height, 1) < 0.85 or width < 90:
+    if height <= 0 or width <= 0 or width / max(height, 1) < 0.85 or width < 48:
         return [region]
 
     projection = mask.sum(axis=0).astype(np.float32)
