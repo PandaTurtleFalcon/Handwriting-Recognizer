@@ -984,6 +984,7 @@ def save_mixedcase_checkpoint(
     history: list[dict[str, float | int]],
     best_state: dict[str, torch.Tensor] | None,
     best_accuracy: float,
+    best_metrics: dict[str, float | str] | None,
     model_type: str,
     learning_rate: float,
     seed: int,
@@ -1036,6 +1037,7 @@ def save_mixedcase_checkpoint(
                 "include_corrections": include_corrections,
                 "warm_start": warm_start,
                 "per_class_accuracy": per_class_accuracy or {},
+                "best_checkpoint": best_metrics or {"test_accuracy": best_accuracy},
                 "history": history,
             },
             indent=2,
@@ -1095,10 +1097,22 @@ def train_mixedcase(
     best_accuracy = 0.0
     best_state = None
     best_per_class_accuracy: dict[str, float] = {}
+    best_metrics: dict[str, float | str] | None = None
     if warm_start:
-        _, best_accuracy = evaluate(model, test_loader, criterion, device)
+        best_loss, best_accuracy = evaluate(model, test_loader, criterion, device)
+        _, best_digit_accuracy = evaluate(model, digit_test_loader, criterion, device)
+        _, best_upper_accuracy = evaluate(model, upper_test_loader, criterion, device)
+        _, best_lower_accuracy = evaluate(model, lower_test_loader, criterion, device)
         best_state = {key: value.detach().cpu() for key, value in model.state_dict().items()}
         best_per_class_accuracy = evaluate_per_class(model, test_loader, list(MIXEDCASE_LABELS), device)
+        best_metrics = {
+            "test_loss": best_loss,
+            "test_accuracy": best_accuracy,
+            "digit_test_accuracy": best_digit_accuracy,
+            "upper_test_accuracy": best_upper_accuracy,
+            "lower_test_accuracy": best_lower_accuracy,
+            "source": "warm_start_seed",
+        }
 
     for epoch in range(1, epochs + 1):
         start = time.time()
@@ -1141,10 +1155,19 @@ def train_mixedcase(
             best_accuracy = test_accuracy
             best_state = {key: value.detach().cpu() for key, value in model.state_dict().items()}
             best_per_class_accuracy = evaluate_per_class(model, test_loader, list(MIXEDCASE_LABELS), device)
+            best_metrics = {
+                "test_loss": test_loss,
+                "test_accuracy": test_accuracy,
+                "digit_test_accuracy": digit_accuracy,
+                "upper_test_accuracy": upper_accuracy,
+                "lower_test_accuracy": lower_accuracy,
+                "source": f"epoch_{epoch}",
+            }
         save_mixedcase_checkpoint(
             history,
             best_state,
             best_accuracy,
+            best_metrics,
             model_type,
             learning_rate,
             seed,
