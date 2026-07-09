@@ -400,8 +400,23 @@ class WebAppRenderingTests(unittest.TestCase):
         self.assertIn("top guesses:", html)
         self.assertIn("<b>s</b> 58.0%", html)
         self.assertIn("<b>S</b> 32.0%", html)
+        self.assertIn("ambiguous with s 58.0%", html)
         self.assertIn('class="digit uncertain"', html)
         self.assertIn('class="digit-box uncertain"', html)
+
+    def test_ambiguity_note_ignores_unrelated_alternatives(self) -> None:
+        """Only known visual lookalikes should get a special ambiguity note."""
+
+        prediction = {
+            "label": "A",
+            "confidence": 0.90,
+            "alternatives": [
+                {"label": "A", "confidence": 0.90},
+                {"label": "R", "confidence": 0.30},
+            ],
+        }
+
+        self.assertEqual(main.ambiguity_note(prediction), "")
 
     def test_render_result_shows_context_notes(self) -> None:
         """Context cleanup notes should be visible in the result panel."""
@@ -501,6 +516,7 @@ class WebAppRenderingTests(unittest.TestCase):
         }
 
         self.assertTrue(main.is_prediction_uncertain(prediction))
+        self.assertEqual(main.ambiguity_note(prediction), "ambiguous with s 80.0%")
 
     def test_parse_correction_form_builds_training_record(self) -> None:
         """Correction forms should produce stable JSONL-ready records."""

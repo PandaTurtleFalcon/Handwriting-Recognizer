@@ -54,6 +54,27 @@ TOP_GUESS_LIMIT = 3
 DIGIT_SPECIALIST_COMPATIBLE_LABELS = set("0123456789BIJLOSYZlo")
 DIGIT_SPECIALIST_LETTER_BLOCKERS = set("BOSo")
 DIGIT_SPECIALIST_MAX_LETTER_RATIO = 0.25
+DISPLAY_AMBIGUITY_GROUPS = [
+    frozenset("0Oo"),
+    frozenset("1Il|!/"),
+    frozenset("5Ss"),
+    frozenset("2Zz"),
+    frozenset("8B"),
+    frozenset("Cc"),
+    frozenset("Xx"),
+    frozenset("Vv"),
+    frozenset("Kk"),
+    frozenset("Pp"),
+    frozenset("-_"),
+    frozenset(".'`"),
+    frozenset(":;i!"),
+    frozenset("+t"),
+    frozenset("9qg"),
+    frozenset("Yy4"),
+    frozenset("Uuv"),
+    frozenset("NnMm"),
+    frozenset("Jj"),
+]
 # Set well above MAX_IMAGE_PIXELS so PIL's own decompression-bomb guard
 # never fires before this app's own size check in classify_files runs (and
 # reports a friendlier error); the 2x margin is just headroom, not a real limit.
@@ -420,6 +441,13 @@ input[type="text"]:focus-visible {
 }
 .alternatives b {
   color: var(--ink);
+}
+.ambiguity-note {
+  margin-top: 7px;
+  font-size: 12.5px;
+  line-height: 1.35;
+  color: var(--warn);
+  font-weight: 700;
 }
 .uncertain-note {
   display: inline-flex;
@@ -922,6 +950,24 @@ def is_prediction_uncertain(prediction: dict[str, object]) -> bool:
     return top_confidence - second_confidence <= CLOSE_GUESS_MARGIN
 
 
+def ambiguity_note(prediction: dict[str, object]) -> str:
+    """Return a short note when a top guess is a known visual lookalike."""
+
+    displayed = prediction_value(prediction)
+    guesses = top_guesses(prediction)
+    displayed_confidence = float(prediction.get("confidence", 0))
+    for guess in guesses:
+        label = str(guess.get("label", ""))
+        if label == displayed:
+            continue
+        confidence = float(guess.get("confidence", 0))
+        if confidence < 0.18 and displayed_confidence - confidence > 0.20:
+            continue
+        if any(displayed in group and label in group for group in DISPLAY_AMBIGUITY_GROUPS):
+            return f"ambiguous with {label} {confidence * 100:.1f}%"
+    return ""
+
+
 def image_to_data_url(image: Image.Image) -> str:
     """Convert a preview image into an inline browser-safe data URL.
 
@@ -1204,13 +1250,15 @@ def render_result(result: dict[str, object]) -> str:
                 items.append(f"<b>{label}</b> {alt_confidence:.1f}%")
             if items:
                 alternatives_html = f'<div class="alternatives">top guesses: {" / ".join(items)}</div>'
+        ambiguity = ambiguity_note(prediction)
+        ambiguity_html = f'<div class="ambiguity-note">{html.escape(ambiguity)}</div>' if ambiguity else ""
         uncertain_html = '<span class="uncertain-note">uncertain</span>' if uncertain else ""
         card_class = "digit uncertain" if uncertain else "digit"
         correction_html = render_correction_form(result, prediction, index)
         digit_cards.append(
             f'<div class="{card_class}"><strong><span class="digit-index">#{index}</span> {digit}</strong>'
-            f'<span>confidence {confidence:.1f}%</span>{uncertain_html}{alternatives_html}{correction_html}</div>'
-    )
+            f'<span>confidence {confidence:.1f}%</span>{uncertain_html}{alternatives_html}{ambiguity_html}{correction_html}</div>'
+        )
     overlay_html = render_overlays(result, predictions)
     row_html = render_row_sequences(result.get("row_sequences", []))
     context_html = render_context_notes(result.get("context_notes", []))
