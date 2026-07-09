@@ -149,6 +149,13 @@ class ContextRulesTests(unittest.TestCase):
         self.assertEqual(cleanup.display, "CAnDts")
         self.assertEqual(cleanup.notes, [])
 
+    def test_common_word_cleanup_handles_known_lookalikes(self) -> None:
+        """Whole-row common words can use strong visual-lookalike cleanup."""
+
+        self.assertEqual(cleanup_context("Heiio").display, "Hello")
+        self.assertEqual(cleanup_context("heiio").display, "hello")
+        self.assertEqual(cleanup_context("Abc123").display, "abc123")
+
     def test_row_strings_stay_separated_in_display(self) -> None:
         """Multi-row uploads should not collapse into one ambiguous string."""
 

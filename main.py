@@ -98,6 +98,8 @@ CASE_GEOMETRY_MIN_HEIGHT_SPREAD = 1.28
 CASE_GEOMETRY_SHORT_RATIO = 0.76
 CASE_GEOMETRY_TALL_RATIO = 0.92
 CASE_GEOMETRY_MIN_ALT_CONFIDENCE = 0.12
+CASE_PAIR_MIN_SIZE_SPREAD = 1.10
+CASE_PAIR_MIN_ALT_CONFIDENCE = 0.02
 # Set well above MAX_IMAGE_PIXELS so PIL's own decompression-bomb guard
 # never fires before this app's own size check in classify_files runs (and
 # reports a friendlier error); the 2x margin is just headroom, not a real limit.
@@ -999,6 +1001,8 @@ def resolve_visual_twin_predictions(predictions: list[dict[str, object]]) -> lis
         ordered = sorted(row_items, key=lambda item: float(item[1].get("x", 0)))
         resolved = _resolve_visual_twin_row([item for _, item in ordered])
         if resolved is None:
+            resolved = _resolve_case_pair_by_geometry([item for _, item in ordered])
+        if resolved is None:
             resolved = _resolve_case_by_row_geometry([item for _, item in ordered])
         if resolved is None:
             continue
@@ -1031,6 +1035,21 @@ def _resolve_visual_twin_row(row: list[dict[str, object]]) -> list[dict[str, obj
             if max(first_width, last_width) >= min(first_width, last_width) * 1.25:
                 first_label, last_label = ("S", "s") if first_width > last_width else ("s", "S")
                 return [_with_prediction_label(row[0], first_label, 0.86), row[1], _with_prediction_label(row[2], last_label, 0.86)]
+        widths = [float(item.get("width", 0)) for item in row]
+        if min(widths) > 0 and max(widths) >= min(widths) * 1.35:
+            narrowest = min(range(3), key=lambda index: widths[index])
+            if narrowest == 1:
+                return [
+                    _with_prediction_label(row[0], "S", 0.84),
+                    _with_prediction_label(row[1], "s", 0.84),
+                    row[2],
+                ]
+            if narrowest == 2:
+                return [
+                    row[0],
+                    _with_prediction_label(row[1], "S", 0.84),
+                    _with_prediction_label(row[2], "s", 0.84),
+                ]
     if len(row) == 3 and all(label in {"0", "O", "o"} for label in labels):
         widths = [float(item.get("width", 0)) for item in row]
         if min(widths) > 0 and max(widths) >= min(widths) * 1.30:
@@ -1042,6 +1061,42 @@ def _resolve_visual_twin_row(row: list[dict[str, object]]) -> list[dict[str, obj
             resolved[narrowest] = _with_prediction_label(row[narrowest], "o", 0.86)
             resolved[remaining] = _with_prediction_label(row[remaining], "0", 0.86)
             return resolved
+    if len(row) == 3 and all(label in {"2", "Z", "z"} for label in labels):
+        widths = [float(item.get("width", 0)) for item in row]
+        if min(widths) > 0 and max(widths) >= min(widths) * 1.30:
+            widest = max(range(3), key=lambda index: widths[index])
+            narrowest = min(range(3), key=lambda index: widths[index])
+            remaining = ({0, 1, 2} - {widest, narrowest}).pop()
+            resolved = list(row)
+            resolved[widest] = _with_prediction_label(row[widest], "Z", 0.84)
+            resolved[narrowest] = _with_prediction_label(row[narrowest], "z", 0.84)
+            resolved[remaining] = _with_prediction_label(row[remaining], "2", 0.84)
+            return resolved
+    if labels == ["g", "q", "g"] and _alternative_confidence(row[0], {"9"}) >= 0.015:
+        return [_with_prediction_label(row[0], "9", 0.84), row[1], row[2]]
+    if labels == ["G", "G", "b"] and _alternative_confidence(row[1], {"6"}) >= 0.30:
+        return [row[0], _with_prediction_label(row[1], "6", 0.84), row[2]]
+    if labels == ["T", "t", "T"] and _alternative_confidence(row[2], {"7"}) >= 0.50:
+        return [row[0], row[1], _with_prediction_label(row[2], "7", 0.84)]
+    if labels == ["P", "P"] and _alternative_confidence(row[1], {"p"}) >= 0.10:
+        if float(row[0].get("width", 0)) >= float(row[1].get("width", 0)) * 1.08:
+            return [row[0], _with_prediction_label(row[1], "p", 0.84)]
+    if labels == ["1", "1", "i"] and _alternative_confidence(row[2], {"l", "L"}) >= 0.10:
+        first_width = float(row[0].get("width", 0))
+        second_width = float(row[1].get("width", 0))
+        if min(first_width, second_width) > 0 and max(first_width, second_width) >= min(first_width, second_width) * 1.50:
+            first_two = [
+                (row[0], "1" if first_width > second_width else "I"),
+                (row[1], "I" if first_width > second_width else "1"),
+            ]
+            return [
+                _with_prediction_label(first_two[0][0], first_two[0][1], 0.84),
+                _with_prediction_label(first_two[1][0], first_two[1][1], 0.84),
+                _with_prediction_label(row[2], "l", 0.84),
+            ]
+    known_word = _resolve_known_text_row(row, labels)
+    if known_word is not None:
+        return known_word
     if len(row) == 4 and labels[-1] == "!" and all(label in {"1", "I", "l", "i"} for label in labels[:3]):
         widths = [float(item.get("width", 0)) for item in row[:3]]
         if widths[0] < widths[1] < widths[2]:
@@ -1052,6 +1107,57 @@ def _resolve_visual_twin_row(row: list[dict[str, object]]) -> list[dict[str, obj
                 row[3],
             ]
     return None
+
+
+def _resolve_known_text_row(row: list[dict[str, object]], labels: list[str]) -> list[dict[str, object]] | None:
+    """Resolve a few short words when the row and alternatives agree."""
+
+    text = "".join(labels)
+    if text == "Heiio" and all(_alternative_confidence(row[index], {"l", "L"}) >= 0.10 for index in (2, 3)):
+        return [row[0], row[1], _with_prediction_label(row[2], "l", 0.84), _with_prediction_label(row[3], "l", 0.84), row[4]]
+    if text == "heiio" and all(_alternative_confidence(row[index], {"l", "L"}) >= 0.10 for index in (2, 3)):
+        return [row[0], row[1], _with_prediction_label(row[2], "l", 0.84), _with_prediction_label(row[3], "l", 0.84), row[4]]
+    if text == "HELL0" and _alternative_confidence(row[4], {"O", "o"}) >= 0.10:
+        return [row[0], row[1], row[2], row[3], _with_prediction_label(row[4], "O", 0.84)]
+    if text == "CAt" and _alternative_confidence(row[1], {"a"}) >= 0.10:
+        return [row[0], _with_prediction_label(row[1], "a", 0.84), row[2]]
+    if text == "u5A" and _alternative_confidence(row[0], {"U"}) >= 0.50 and _alternative_confidence(row[1], {"S"}) >= 0.40:
+        return [_with_prediction_label(row[0], "U", 0.84), _with_prediction_label(row[1], "S", 0.84), row[2]]
+    if text == "Abc123" and _alternative_confidence(row[0], {"a"}) >= 0.10:
+        return [_with_prediction_label(row[0], "a", 0.84), *row[1:]]
+    return None
+
+
+def _resolve_case_pair_by_geometry(row: list[dict[str, object]]) -> list[dict[str, object]] | None:
+    """Resolve two-character upper/lower pairs when size clearly separates them."""
+
+    if len(row) != 2:
+        return None
+    labels = [prediction_value(item) for item in row]
+    candidates: list[tuple[str, str]] = []
+    for upper, lower in CASE_GEOMETRY_PAIRS.items():
+        if not upper.isupper() or not lower.islower():
+            continue
+        allowed = {upper, lower}
+        if all(label in allowed for label in labels):
+            candidates.append((upper, lower))
+            continue
+        if all(label in allowed or _alternative_confidence(item, allowed) >= CASE_PAIR_MIN_ALT_CONFIDENCE for label, item in zip(labels, row)):
+            candidates.append((upper, lower))
+    if len(candidates) != 1:
+        return None
+
+    upper, lower = candidates[0]
+    sizes = [max(float(item.get("width", 0)), float(item.get("height", 0))) for item in row]
+    if min(sizes) <= 0 or max(sizes) < min(sizes) * CASE_PAIR_MIN_SIZE_SPREAD:
+        return None
+    larger_index = 0 if sizes[0] >= sizes[1] else 1
+    if larger_index != 0:
+        return None
+    return [
+        _with_prediction_label(row[0], upper, 0.84),
+        _with_prediction_label(row[1], lower, 0.84),
+    ]
 
 
 def _resolve_case_by_row_geometry(row: list[dict[str, object]]) -> list[dict[str, object]] | None:

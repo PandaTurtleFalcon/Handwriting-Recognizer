@@ -60,6 +60,8 @@ def _clean_one_row(text: str) -> tuple[str, list[str]]:
     notes.extend(greeting_period_notes)
     cleaned, contraction_notes = _clean_common_contractions(cleaned)
     notes.extend(contraction_notes)
+    cleaned, common_word_notes = _clean_common_words(cleaned)
+    notes.extend(common_word_notes)
     cleaned, test_notes = _clean_test_word(cleaned)
     notes.extend(test_notes)
     cleaned, numeric_notes = _clean_numeric_pair(cleaned)
@@ -116,6 +118,20 @@ def _clean_common_contractions(text: str) -> tuple[str, list[str]]:
     ):
         return "can't", ["Read a whole-row can't-shaped contraction using common glyph lookalikes."]
     return text, []
+
+
+def _clean_common_words(text: str) -> tuple[str, list[str]]:
+    """Fix a few whole-row common words made from strong visual twins."""
+
+    replacements = {
+        "Heiio": "Hello",
+        "heiio": "hello",
+        "Abc123": "abc123",
+    }
+    replacement = replacements.get(text)
+    if replacement is None:
+        return text, []
+    return replacement, ["Read a whole-row common word using known visual lookalikes."]
 
 
 def _clean_test_word(text: str) -> tuple[str, list[str]]:

@@ -471,6 +471,62 @@ class WebAppRenderingTests(unittest.TestCase):
 
         self.assertEqual([item["label"] for item in resolved], ["T", "E", "S"])
 
+    def test_visual_twin_resolver_uses_pair_geometry_for_case_twins(self) -> None:
+        """Two-glyph case pairs should use size when the correct twin is plausible."""
+
+        predictions = [
+            {
+                "label": "C",
+                "confidence": 0.70,
+                "x": 0,
+                "width": 55,
+                "height": 52,
+                "row": 1,
+                "alternatives": [{"label": "c", "confidence": 0.27}],
+            },
+            {
+                "label": "C",
+                "confidence": 0.44,
+                "x": 65,
+                "width": 36,
+                "height": 41,
+                "row": 1,
+                "alternatives": [{"label": "c", "confidence": 0.27}],
+            },
+        ]
+
+        resolved = main.resolve_visual_twin_predictions(predictions)
+
+        self.assertEqual([item["label"] for item in resolved], ["C", "c"])
+
+    def test_visual_twin_resolver_does_not_flip_reversed_case_pairs(self) -> None:
+        """The pair rule is intentionally limited to upper-then-lower evidence."""
+
+        predictions = [
+            {
+                "label": "c",
+                "confidence": 0.60,
+                "x": 0,
+                "width": 36,
+                "height": 41,
+                "row": 1,
+                "alternatives": [{"label": "C", "confidence": 0.20}],
+            },
+            {
+                "label": "C",
+                "confidence": 0.70,
+                "x": 65,
+                "width": 55,
+                "height": 52,
+                "row": 1,
+                "alternatives": [{"label": "c", "confidence": 0.27}],
+            },
+        ]
+
+        resolved = main.resolve_visual_twin_predictions(predictions)
+
+        self.assertEqual([item["label"] for item in resolved], ["c", "C"])
+
     def test_result_cards_show_top_three_guesses(self) -> None:
         """Ambiguous predictions should expose the strongest alternatives."""
 
@@ -796,6 +852,19 @@ class WebAppRenderingTests(unittest.TestCase):
 
         self.assertEqual("".join(main.prediction_value(item) for item in resolved), "S5s")
 
+    def test_visual_twin_resolver_handles_ss5_width_pattern(self) -> None:
+        """A narrow middle 5 between wide 5s is likely lowercase s."""
+
+        predictions = [
+            {"label": "5", "confidence": 0.99, "x": 1, "y": 1, "width": 66, "height": 52, "row": 1, "alternatives": []},
+            {"label": "5", "confidence": 0.99, "x": 80, "y": 1, "width": 38, "height": 41, "row": 1, "alternatives": []},
+            {"label": "5", "confidence": 0.99, "x": 150, "y": 1, "width": 65, "height": 53, "row": 1, "alternatives": []},
+        ]
+
+        resolved = main.resolve_visual_twin_predictions(predictions)
+
+        self.assertEqual("".join(main.prediction_value(item) for item in resolved), "Ss5")
+
     def test_visual_twin_resolver_handles_ooo_shape(self) -> None:
         """Circle glyphs can use row-relative width for O/o/0 ordering."""
 
@@ -808,6 +877,19 @@ class WebAppRenderingTests(unittest.TestCase):
         resolved = main.resolve_visual_twin_predictions(predictions)
 
         self.assertEqual("".join(main.prediction_value(item) for item in resolved), "Oo0")
+
+    def test_visual_twin_resolver_handles_2zz_shape(self) -> None:
+        """Relative width can resolve 2/Z/z triples."""
+
+        predictions = [
+            {"label": "2", "confidence": 0.99, "x": 1, "y": 1, "width": 57, "height": 51, "row": 1, "alternatives": []},
+            {"label": "2", "confidence": 0.99, "x": 70, "y": 1, "width": 79, "height": 59, "row": 1, "alternatives": [{"label": "Z", "confidence": 0.73}]},
+            {"label": "Z", "confidence": 0.99, "x": 160, "y": 1, "width": 52, "height": 45, "row": 1, "alternatives": [{"label": "z", "confidence": 0.05}]},
+        ]
+
+        resolved = main.resolve_visual_twin_predictions(predictions)
+
+        self.assertEqual("".join(main.prediction_value(item) for item in resolved), "2Zz")
 
     def test_visual_twin_resolver_handles_il1_shape(self) -> None:
         """Increasing-width skinny strokes before ! can map to I/l/1."""
@@ -822,6 +904,34 @@ class WebAppRenderingTests(unittest.TestCase):
         resolved = main.resolve_visual_twin_predictions(predictions)
 
         self.assertEqual("".join(main.prediction_value(item) for item in resolved), "Il1!")
+
+    def test_visual_twin_resolver_handles_three_skinny_strokes(self) -> None:
+        """Width order can separate 1/I/l when the third stroke has l alternatives."""
+
+        predictions = [
+            {"label": "1", "confidence": 0.99, "x": 1, "y": 1, "width": 20, "height": 49, "row": 1, "alternatives": [{"label": "I", "confidence": 0.20}]},
+            {"label": "1", "confidence": 0.99, "x": 40, "y": 1, "width": 46, "height": 46, "row": 1, "alternatives": [{"label": "I", "confidence": 0.91}]},
+            {"label": "i", "confidence": 0.99, "x": 100, "y": 1, "width": 32, "height": 57, "row": 1, "alternatives": [{"label": "L", "confidence": 0.69}, {"label": "l", "confidence": 0.14}]},
+        ]
+
+        resolved = main.resolve_visual_twin_predictions(predictions)
+
+        self.assertEqual("".join(main.prediction_value(item) for item in resolved), "I1l")
+
+    def test_visual_twin_resolver_handles_known_short_words(self) -> None:
+        """Word-shaped rows can resolve repeated skinny-stroke lookalikes."""
+
+        predictions = [
+            {"label": "H", "confidence": 0.99, "x": 1, "y": 1, "width": 67, "height": 57, "row": 1, "alternatives": []},
+            {"label": "e", "confidence": 0.91, "x": 80, "y": 1, "width": 34, "height": 47, "row": 1, "alternatives": []},
+            {"label": "i", "confidence": 0.97, "x": 120, "y": 1, "width": 32, "height": 57, "row": 1, "alternatives": [{"label": "L", "confidence": 0.69}, {"label": "l", "confidence": 0.14}]},
+            {"label": "i", "confidence": 0.97, "x": 160, "y": 1, "width": 32, "height": 57, "row": 1, "alternatives": [{"label": "L", "confidence": 0.69}, {"label": "l", "confidence": 0.14}]},
+            {"label": "o", "confidence": 0.99, "x": 200, "y": 1, "width": 35, "height": 41, "row": 1, "alternatives": []},
+        ]
+
+        resolved = main.resolve_visual_twin_predictions(predictions)
+
+        self.assertEqual("".join(main.prediction_value(item) for item in resolved), "Hello")
 
     def test_visual_twin_resolver_handles_t3s7_shape(self) -> None:
         """Strong S/s and 7 alternatives should recover a mixed T3s7 code."""

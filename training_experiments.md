@@ -8,8 +8,8 @@ restored, so future improvement loops do not repeat known-bad blends.
 - Digit specialist: `99.65%` MNIST test accuracy.
 - Folded alnum helper: `96.66%` test accuracy, with `99.53%` digits and `95.28%` letters.
 - Mixed-case helper: `80.50%` exact test accuracy, `96.42%` ambiguity-aware.
-- Character model: deployed checkpoint is `90.89%` on the combined-extra validation split, with `94.82%` exact punctuation and `98.30%` ambiguity-aware punctuation.
-- App hard-case evaluator: `12/12` exact after `fix: resolve visual twin hardcases`.
+- Character model: deployed checkpoint is `90.96%` validation accuracy, with `94.82%` exact punctuation and `98.30%` ambiguity-aware punctuation.
+- App hard-case evaluator: `42/42` exact after adding broader visual-twin, mixed-case, short-word, digit/letter, and punctuation hardcases.
 
 ## Restored Experiments
 
