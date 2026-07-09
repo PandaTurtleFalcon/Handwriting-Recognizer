@@ -270,10 +270,17 @@ class CharacterPostprocessingTests(unittest.TestCase):
     def test_letter_model_needs_margin_to_replace_digits(self) -> None:
         """A weak letter vote should not steal a stronger digit prediction."""
 
-        self.assertFalse(_letter_should_override("5", 0.95, 0.80, False))
-        self.assertFalse(_letter_should_override("4", 0.98, 0.90, False))
-        self.assertTrue(_letter_should_override("5", 0.80, 0.93, False))
-        self.assertFalse(_letter_should_override("5", 0.80, 0.99, True))
+        self.assertFalse(_letter_should_override("5", 0.95, "S", 0.80, False))
+        self.assertFalse(_letter_should_override("4", 0.98, "Y", 0.90, False))
+        self.assertTrue(_letter_should_override("5", 0.80, "S", 0.93, False))
+        self.assertFalse(_letter_should_override("5", 0.80, "S", 0.99, True))
+
+    def test_letter_model_only_replaces_same_alphabetic_label(self) -> None:
+        """Uppercase-only letter votes should not erase case or change letters."""
+
+        self.assertTrue(_letter_should_override("S", 0.72, "S", 0.90, False))
+        self.assertFalse(_letter_should_override("s", 0.72, "S", 0.99, False))
+        self.assertFalse(_letter_should_override("H", 0.72, "L", 0.99, False))
 
     def test_alnum_model_needs_margin_to_flip_case(self) -> None:
         """Mixed-case predictions should not erase lowercase on tiny margins."""

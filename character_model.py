@@ -1074,6 +1074,7 @@ def _digit_beats_ambiguous_letter(
 def _letter_should_override(
     current_label: str,
     current_confidence: float,
+    letter_label: str,
     letter_confidence: float,
     digit_was_used: bool,
 ) -> bool:
@@ -1084,7 +1085,9 @@ def _letter_should_override(
     strong evidence already, so it shouldn't be second-guessed here. When
     the current label isn't alphanumeric at all (e.g. punctuation), a modest
     0.55 confidence is enough since there's little to lose. When it's
-    already a letter, only a same-or-better (within 0.03) letter guess wins.
+    already a letter, only an exact matching letter guess wins. This keeps the
+    uppercase-only EMNIST helper from erasing lowercase labels or replacing one
+    confident alphabetic prediction with another.
     When it's a digit, the bar is much higher (0.92, and must beat the
     current confidence by 0.08) since replacing a digit with a letter is a
     bigger, riskier change.
@@ -1095,6 +1098,8 @@ def _letter_should_override(
     if not current_label.isalnum():
         return letter_confidence >= 0.55
     if current_label.isalpha():
+        if letter_label != current_label:
+            return False
         return letter_confidence >= 0.70 and letter_confidence >= current_confidence - 0.03
     return letter_confidence >= 0.92 and letter_confidence >= current_confidence + 0.08
 
@@ -1811,7 +1816,7 @@ def predict_characters(
 
             if letter_match is not None and not digit_was_used:
                 letter_label, letter_confidence = letter_match
-                if _letter_should_override(str(label), confidence_value, letter_confidence, digit_was_used):
+                if _letter_should_override(str(label), confidence_value, letter_label, letter_confidence, digit_was_used):
                     label = letter_label
                     confidence_value = max(confidence_value, letter_confidence)
             # Final geometric tie-breakers for the handful of shape confusions

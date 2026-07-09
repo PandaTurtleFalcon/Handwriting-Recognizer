@@ -1519,26 +1519,39 @@ def best_metric_entry(metrics: object, key: str = "test_accuracy") -> dict[str, 
     return max(candidates, key=lambda item: float(item.get(key, 0)))
 
 
+def load_character_recognizer_stack(
+    device: torch.device,
+) -> tuple[object, list[str], object | None, list[str] | None, object | None, list[str] | None]:
+    """Load the character model plus optional exact-case helper models."""
+
+    model, labels = load_character_model(device=device)
+    letter_model, letter_labels = load_letter_model(device=device)
+    alnum_model, alnum_labels = load_mixedcase_model(device=device)
+    if alnum_model is None:
+        alnum_model, alnum_labels = load_alnum_model(device=device)
+    return model, labels, letter_model, letter_labels, alnum_model, alnum_labels
+
+
 def run(host: str = HOST, port: int = PORT) -> None:
     """Load the best available recognizer and start the local HTTP server.
 
     Model selection prefers the expanded character recognizer (which itself
     layers letter/alnum models on top, see `character_model.predict_characters`)
     and only falls back to the plain digit-only CNN when the character
-    weights were never trained. The case-folded 36-class alnum model is
-    preferred for identity because its held-out accuracy is much higher than
-    the isolated 62-class mixed-case model.
+    weights were never trained. The exact-case 62-class alnum model is
+    preferred when present so lowercase user corrections can survive serving.
     """
 
     if CHARACTER_WEIGHTS_PATH.exists():
         MnistWebHandler.device = get_device()
-        MnistWebHandler.model, MnistWebHandler.labels = load_character_model(device=MnistWebHandler.device)
-        MnistWebHandler.letter_model, MnistWebHandler.letter_labels = load_letter_model(device=MnistWebHandler.device)
-        MnistWebHandler.alnum_model, MnistWebHandler.alnum_labels = load_alnum_model(device=MnistWebHandler.device)
-        if MnistWebHandler.alnum_model is None:
-            MnistWebHandler.alnum_model, MnistWebHandler.alnum_labels = load_mixedcase_model(
-                device=MnistWebHandler.device
-            )
+        (
+            MnistWebHandler.model,
+            MnistWebHandler.labels,
+            MnistWebHandler.letter_model,
+            MnistWebHandler.letter_labels,
+            MnistWebHandler.alnum_model,
+            MnistWebHandler.alnum_labels,
+        ) = load_character_recognizer_stack(MnistWebHandler.device)
         MnistWebHandler.recognizer_kind = "characters"
     elif WEIGHTS_PATH.exists():
         MnistWebHandler.device = get_device()

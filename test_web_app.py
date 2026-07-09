@@ -214,6 +214,23 @@ class WebAppRenderingTests(unittest.TestCase):
 
         self.assertEqual(main.best_metric_entry(metrics, key="validation_accuracy")["validation_accuracy"], 90.5)
 
+    def test_character_stack_prefers_exact_case_alnum_model(self) -> None:
+        """Serving should use the mixed-case helper before the folded helper."""
+
+        character_model = object()
+        letter_model = object()
+        mixedcase_model = object()
+        folded_model = object()
+
+        with patch.object(main, "load_character_model", return_value=(character_model, ["H"])):
+            with patch.object(main, "load_letter_model", return_value=(letter_model, ["H"])):
+                with patch.object(main, "load_mixedcase_model", return_value=(mixedcase_model, ["H", "i"])):
+                    with patch.object(main, "load_alnum_model", return_value=(folded_model, ["H"])) as folded_loader:
+                        stack = main.load_character_recognizer_stack(object())
+
+        self.assertEqual(stack, (character_model, ["H"], letter_model, ["H"], mixedcase_model, ["H", "i"]))
+        folded_loader.assert_not_called()
+
     def test_classify_files_applies_context_cleanup_to_display(self) -> None:
         """Obvious context cleanup should affect display text, not predictions."""
 
