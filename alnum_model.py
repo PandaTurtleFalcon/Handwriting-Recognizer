@@ -906,7 +906,7 @@ def evaluate_per_class(
 
 
 def mixedcase_labels_match_with_ambiguity(expected: str, predicted: str) -> bool:
-    """Return true for exact or visually ambiguous mixed-case alnum labels."""
+    """Return true for exact, case-folded, or visually ambiguous labels."""
 
     if expected == predicted:
         return True
@@ -918,6 +918,22 @@ def mixedcase_labels_match_with_ambiguity(expected: str, predicted: str) -> bool
         and expected.lower() == predicted.lower()
     ):
         return True
+    return any(expected in group and predicted in group for group in MIXEDCASE_AMBIGUITY_GROUPS)
+
+
+def mixedcase_labels_match_with_visual_ambiguity(expected: str, predicted: str) -> bool:
+    """Return true for exact or non-case visual ambiguity matches."""
+
+    if expected == predicted:
+        return True
+    if (
+        len(expected) == 1
+        and len(predicted) == 1
+        and expected.isalpha()
+        and predicted.isalpha()
+        and expected.lower() == predicted.lower()
+    ):
+        return False
     return any(expected in group and predicted in group for group in MIXEDCASE_AMBIGUITY_GROUPS)
 
 
@@ -935,9 +951,11 @@ def evaluate_mixedcase_breakdown(
     exact_correct = 0
     casefold_correct = 0
     ambiguity_correct = 0
+    case_or_ambiguity_correct = 0
     total = 0
     group_correct = {"digit": 0, "upper": 0, "lower": 0}
     group_ambiguity_correct = {"digit": 0, "upper": 0, "lower": 0}
+    group_case_or_ambiguity_correct = {"digit": 0, "upper": 0, "lower": 0}
     group_total = {"digit": 0, "upper": 0, "lower": 0}
     with torch.no_grad():
         for images, targets in loader:
@@ -952,10 +970,12 @@ def evaluate_mixedcase_breakdown(
                 casefold = exact or (
                     expected.isalpha() and predicted.isalpha() and expected.lower() == predicted.lower()
                 )
-                ambiguity = mixedcase_labels_match_with_ambiguity(expected, predicted)
+                ambiguity = mixedcase_labels_match_with_visual_ambiguity(expected, predicted)
+                case_or_ambiguity = mixedcase_labels_match_with_ambiguity(expected, predicted)
                 exact_correct += int(exact)
                 casefold_correct += int(casefold)
                 ambiguity_correct += int(ambiguity)
+                case_or_ambiguity_correct += int(case_or_ambiguity)
                 total += 1
                 if expected.isdigit():
                     group = "digit"
@@ -965,12 +985,14 @@ def evaluate_mixedcase_breakdown(
                     group = "lower"
                 group_correct[group] += int(exact)
                 group_ambiguity_correct[group] += int(ambiguity)
+                group_case_or_ambiguity_correct[group] += int(case_or_ambiguity)
                 group_total[group] += 1
     return {
         "test_loss": loss_total / max(len(loader), 1),
         "test_accuracy": 100.0 * exact_correct / max(total, 1),
         "casefold_test_accuracy": 100.0 * casefold_correct / max(total, 1),
         "ambiguity_aware_test_accuracy": 100.0 * ambiguity_correct / max(total, 1),
+        "case_or_ambiguity_aware_test_accuracy": 100.0 * case_or_ambiguity_correct / max(total, 1),
         "digit_test_accuracy": 100.0 * group_correct["digit"] / max(group_total["digit"], 1),
         "upper_test_accuracy": 100.0 * group_correct["upper"] / max(group_total["upper"], 1),
         "lower_test_accuracy": 100.0 * group_correct["lower"] / max(group_total["lower"], 1),
@@ -982,6 +1004,15 @@ def evaluate_mixedcase_breakdown(
         / max(group_total["upper"], 1),
         "lower_ambiguity_aware_test_accuracy": 100.0
         * group_ambiguity_correct["lower"]
+        / max(group_total["lower"], 1),
+        "digit_case_or_ambiguity_aware_test_accuracy": 100.0
+        * group_case_or_ambiguity_correct["digit"]
+        / max(group_total["digit"], 1),
+        "upper_case_or_ambiguity_aware_test_accuracy": 100.0
+        * group_case_or_ambiguity_correct["upper"]
+        / max(group_total["upper"], 1),
+        "lower_case_or_ambiguity_aware_test_accuracy": 100.0
+        * group_case_or_ambiguity_correct["lower"]
         / max(group_total["lower"], 1),
     }
 

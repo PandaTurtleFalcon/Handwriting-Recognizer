@@ -17,6 +17,7 @@ from alnum_model import (
     evaluate_mixedcase_breakdown,
     load_correction_cache,
     mixedcase_labels_match_with_ambiguity,
+    mixedcase_labels_match_with_visual_ambiguity,
 )
 from extra_alnum_datasets import load_labeled_image_folder
 
@@ -92,6 +93,12 @@ class ExtraAlnumDatasetTests(unittest.TestCase):
         self.assertTrue(mixedcase_labels_match_with_ambiguity("T", "7"))
         self.assertFalse(mixedcase_labels_match_with_ambiguity("A", "B"))
 
+    def test_mixedcase_visual_ambiguity_keeps_casefold_separate(self) -> None:
+        self.assertFalse(mixedcase_labels_match_with_visual_ambiguity("S", "s"))
+        self.assertFalse(mixedcase_labels_match_with_visual_ambiguity("A", "a"))
+        self.assertTrue(mixedcase_labels_match_with_visual_ambiguity("0", "O"))
+        self.assertTrue(mixedcase_labels_match_with_visual_ambiguity("T", "7"))
+
     def test_mixedcase_breakdown_reports_casefold_and_ambiguity_metrics(self) -> None:
         class FixedPredictionModel(nn.Module):
             def __init__(self, predictions: list[int]) -> None:
@@ -124,10 +131,12 @@ class ExtraAlnumDatasetTests(unittest.TestCase):
 
         self.assertAlmostEqual(metrics["test_accuracy"], 25.0)
         self.assertAlmostEqual(metrics["casefold_test_accuracy"], 50.0)
-        self.assertAlmostEqual(metrics["ambiguity_aware_test_accuracy"], 100.0)
+        self.assertAlmostEqual(metrics["ambiguity_aware_test_accuracy"], 75.0)
+        self.assertAlmostEqual(metrics["case_or_ambiguity_aware_test_accuracy"], 100.0)
         self.assertAlmostEqual(metrics["digit_ambiguity_aware_test_accuracy"], 100.0)
         self.assertAlmostEqual(metrics["upper_ambiguity_aware_test_accuracy"], 100.0)
-        self.assertAlmostEqual(metrics["lower_ambiguity_aware_test_accuracy"], 100.0)
+        self.assertAlmostEqual(metrics["lower_ambiguity_aware_test_accuracy"], 0.0)
+        self.assertAlmostEqual(metrics["lower_case_or_ambiguity_aware_test_accuracy"], 100.0)
 
     def test_nist_sd19_hex_labels_map_to_mixedcase_targets(self) -> None:
         self.assertEqual(_nist_sd19_label_from_hex("30"), 0)

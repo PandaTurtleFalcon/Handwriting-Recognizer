@@ -188,7 +188,7 @@ class WebAppRenderingTests(unittest.TestCase):
             html = main.render_page()
 
         self.assertIn("alnum", html)
-        self.assertIn("ambiguity-aware 96.42%", html)
+        self.assertIn("visual ambiguity 96.42%", html)
         self.assertIn("digit specialist", html)
         self.assertIn("punctuation 88.41%", html)
         self.assertIn("ambiguity-aware 95.99%", html)

@@ -1467,12 +1467,19 @@ def render_page(
             best = best_metric_entry(mixedcase_metrics)
             if best:
                 ambiguity = best.get("ambiguity_aware_test_accuracy")
-                ambiguity_text = f", ambiguity-aware {ambiguity:.2f}%" if ambiguity is not None else ""
+                casefold = best.get("casefold_test_accuracy")
+                case_or_ambiguity = best.get("case_or_ambiguity_aware_test_accuracy")
+                casefold_text = f", casefold {casefold:.2f}%" if casefold is not None else ""
+                ambiguity_text = f", visual ambiguity {ambiguity:.2f}%" if ambiguity is not None else ""
+                case_or_ambiguity_text = (
+                    f", case/visual {case_or_ambiguity:.2f}%" if case_or_ambiguity is not None else ""
+                )
                 metrics_text = (
                     f"Mixed-case test accuracy: {best['test_accuracy']:.2f}% "
                     f"(digits {best.get('digit_test_accuracy', 0):.2f}%, "
                     f"upper {best.get('upper_test_accuracy', 0):.2f}%, "
-                    f"lower {best.get('lower_test_accuracy', 0):.2f}%{ambiguity_text})"
+                    f"lower {best.get('lower_test_accuracy', 0):.2f}%{casefold_text}"
+                    f"{ambiguity_text}{case_or_ambiguity_text})"
                 )
     if LETTER_WEIGHTS_PATH.exists():
         letter_metrics = read_metrics(LETTER_METRICS_PATH)
