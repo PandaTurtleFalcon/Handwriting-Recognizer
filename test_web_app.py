@@ -203,6 +203,17 @@ class WebAppRenderingTests(unittest.TestCase):
 
         self.assertEqual(main.best_metric_entry(metrics)["test_accuracy"], 97.0)
 
+    def test_best_metric_entry_considers_named_checkpoint_evals(self) -> None:
+        """Named side-eval checkpoints should be eligible for badge display."""
+
+        metrics = {
+            "history": [{"validation_accuracy": 88.0}],
+            "best_checkpoint": {"validation_accuracy": 89.0},
+            "combined_extra_best_checkpoint": {"validation_accuracy": 90.5},
+        }
+
+        self.assertEqual(main.best_metric_entry(metrics, key="validation_accuracy")["validation_accuracy"], 90.5)
+
     def test_classify_files_applies_context_cleanup_to_display(self) -> None:
         """Obvious context cleanup should affect display text, not predictions."""
 

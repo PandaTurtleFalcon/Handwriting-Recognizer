@@ -1507,6 +1507,11 @@ def best_metric_entry(metrics: object, key: str = "test_accuracy") -> dict[str, 
         checkpoint = metrics.get("best_checkpoint")
         if isinstance(checkpoint, dict):
             candidates.append(checkpoint)
+        candidates.extend(
+            value
+            for name, value in metrics.items()
+            if name.endswith("_best_checkpoint") and isinstance(value, dict)
+        )
     elif isinstance(metrics, list):
         candidates.extend(item for item in metrics if isinstance(item, dict))
     if not candidates:
