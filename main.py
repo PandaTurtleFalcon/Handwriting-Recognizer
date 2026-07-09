@@ -50,6 +50,7 @@ LOW_CONFIDENCE_THRESHOLD = 0.80
 # was effectively torn between two answers.
 CLOSE_GUESS_MARGIN = 0.12
 TOP_GUESS_LIMIT = 3
+DIGIT_SPECIALIST_COMPATIBLE_LABELS = set("0123456789BIJLOSYZlo")
 # Set well above MAX_IMAGE_PIXELS so PIL's own decompression-bomb guard
 # never fires before this app's own size check in classify_files runs (and
 # reports a friendlier error); the 2x margin is just headroom, not a real limit.
@@ -781,6 +782,9 @@ def classify_files(files: list[tuple[str, bytes]], model, device) -> list[dict[s
                 alnum_model=MnistWebHandler.alnum_model,
                 alnum_labels=MnistWebHandler.alnum_labels,
             )
+            digit_predictions = predict_digits(load_model(device=device), image, device)
+            if should_use_digit_specialist_predictions(predictions, digit_predictions):
+                predictions = digit_predictions
         else:
             predictions = predict_digits(model, image, device)
         if not predictions:
@@ -811,6 +815,27 @@ def classify_files(files: list[tuple[str, bytes]], model, device) -> list[dict[s
             }
         )
     return results
+
+
+def should_use_digit_specialist_predictions(
+    character_predictions: list[dict[str, object]],
+    digit_predictions: list[dict[str, object]],
+) -> bool:
+    """Use MNIST output when the combined recognizer is only seeing digit-like glyphs."""
+
+    if not character_predictions or len(character_predictions) != len(digit_predictions):
+        return False
+    character_rows = [int(item.get("row", 1)) for item in character_predictions]
+    digit_rows = [int(item.get("row", 1)) for item in digit_predictions]
+    if character_rows != digit_rows:
+        return False
+    labels = [prediction_value(item) for item in character_predictions]
+    if any(label not in DIGIT_SPECIALIST_COMPATIBLE_LABELS for label in labels):
+        return False
+    digit_confidences = [float(item.get("confidence", 0)) for item in digit_predictions]
+    if min(digit_confidences, default=0) < 0.88:
+        return False
+    return sum(digit_confidences) / len(digit_confidences) >= 0.95
 
 
 def build_row_sequences(predictions: list[dict[str, object]]) -> list[str]:

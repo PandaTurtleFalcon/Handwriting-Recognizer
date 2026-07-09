@@ -170,7 +170,9 @@ class WebAppRenderingTests(unittest.TestCase):
         main.MnistWebHandler.labels = ["H", "L", "!"]
         try:
             with patch.object(main, "predict_characters", return_value=fake_predictions):
-                results = main.classify_files([("greeting.png", png_bytes())], model=object(), device=object())
+                with patch.object(main, "load_model", return_value=object()):
+                    with patch.object(main, "predict_digits", return_value=[]):
+                        results = main.classify_files([("greeting.png", png_bytes())], model=object(), device=object())
         finally:
             main.MnistWebHandler.recognizer_kind = previous_kind
             main.MnistWebHandler.labels = previous_labels
@@ -240,9 +242,10 @@ class WebAppRenderingTests(unittest.TestCase):
         main.MnistWebHandler.alnum_model = alnum_model
         main.MnistWebHandler.alnum_labels = ["0", "A"]
         try:
-            with patch.object(main, "predict_digits") as mock_digits:
-                with patch.object(main, "predict_characters", return_value=fake_predictions) as mock_characters:
-                    results = main.classify_files([("letter.png", png_bytes())], model=object(), device=object())
+            with patch.object(main, "load_model", return_value=object()):
+                with patch.object(main, "predict_digits", return_value=[]) as mock_digits:
+                    with patch.object(main, "predict_characters", return_value=fake_predictions) as mock_characters:
+                        results = main.classify_files([("letter.png", png_bytes())], model=object(), device=object())
         finally:
             main.MnistWebHandler.recognizer_kind = previous_kind
             main.MnistWebHandler.labels = previous_labels
@@ -251,12 +254,40 @@ class WebAppRenderingTests(unittest.TestCase):
             main.MnistWebHandler.alnum_model = previous_alnum_model
             main.MnistWebHandler.alnum_labels = previous_alnum_labels
 
-        mock_digits.assert_not_called()
+        mock_digits.assert_called_once()
         self.assertIs(mock_characters.call_args.kwargs["letter_model"], letter_model)
         self.assertEqual(mock_characters.call_args.kwargs["letter_labels"], ["A"])
         self.assertIs(mock_characters.call_args.kwargs["alnum_model"], alnum_model)
         self.assertEqual(mock_characters.call_args.kwargs["alnum_labels"], ["0", "A"])
         self.assertEqual(results[0]["sequence"], "A")
+
+    def test_digit_specialist_router_takes_digit_like_predictions(self) -> None:
+        """High-confidence digit predictions should win all-digit-like uploads."""
+
+        character_predictions = [
+            {"label": "Y", "confidence": 0.98, "row": 1},
+            {"label": "J", "confidence": 0.97, "row": 1},
+        ]
+        digit_predictions = [
+            {"digit": 4, "confidence": 0.99, "row": 1},
+            {"digit": 5, "confidence": 0.98, "row": 1},
+        ]
+
+        self.assertTrue(main.should_use_digit_specialist_predictions(character_predictions, digit_predictions))
+
+    def test_digit_specialist_router_keeps_real_letters(self) -> None:
+        """The digit route should not steal uploads containing clear letters."""
+
+        character_predictions = [
+            {"label": "H", "confidence": 0.98, "row": 1},
+            {"label": "i", "confidence": 0.97, "row": 1},
+        ]
+        digit_predictions = [
+            {"digit": 4, "confidence": 0.99, "row": 1},
+            {"digit": 1, "confidence": 0.98, "row": 1},
+        ]
+
+        self.assertFalse(main.should_use_digit_specialist_predictions(character_predictions, digit_predictions))
 
     def test_result_cards_show_top_three_guesses(self) -> None:
         """Ambiguous predictions should expose the strongest alternatives."""
