@@ -7,7 +7,13 @@ import numpy as np
 import torch
 from PIL import Image, ImageDraw
 
-from alnum_model import MIXEDCASE_LABELS, _chars74k_sample_label, _nist_sd19_label_from_hex, load_correction_cache
+from alnum_model import (
+    MIXEDCASE_LABELS,
+    _chars74k_sample_label,
+    _nist_sd19_label_from_hex,
+    load_correction_cache,
+    mixedcase_labels_match_with_ambiguity,
+)
 from extra_alnum_datasets import load_labeled_image_folder
 
 
@@ -56,6 +62,13 @@ class ExtraAlnumDatasetTests(unittest.TestCase):
         self.assertEqual(len(MIXEDCASE_LABELS), 62)
         self.assertEqual(MIXEDCASE_LABELS.index("S"), 28)
         self.assertEqual(MIXEDCASE_LABELS.index("s"), 54)
+
+    def test_mixedcase_ambiguity_groups_match_known_lookalikes(self) -> None:
+        self.assertTrue(mixedcase_labels_match_with_ambiguity("S", "s"))
+        self.assertTrue(mixedcase_labels_match_with_ambiguity("0", "O"))
+        self.assertTrue(mixedcase_labels_match_with_ambiguity("1", "l"))
+        self.assertTrue(mixedcase_labels_match_with_ambiguity("q", "9"))
+        self.assertFalse(mixedcase_labels_match_with_ambiguity("A", "B"))
 
     def test_nist_sd19_hex_labels_map_to_mixedcase_targets(self) -> None:
         self.assertEqual(_nist_sd19_label_from_hex("30"), 0)

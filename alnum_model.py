@@ -61,6 +61,25 @@ MODEL_CLASSES = {
 }
 
 
+MIXEDCASE_AMBIGUITY_GROUPS = [
+    frozenset("0Oo"),
+    frozenset("1Il|!/"),
+    frozenset("5Ss"),
+    frozenset("2Zz"),
+    frozenset("8B"),
+    frozenset("Cc"),
+    frozenset("Xx"),
+    frozenset("Vv"),
+    frozenset("Kk"),
+    frozenset("Pp"),
+    frozenset("9qg"),
+    frozenset("Yy4"),
+    frozenset("Uuv"),
+    frozenset("NnMm"),
+    frozenset("Jj"),
+]
+
+
 @dataclass(frozen=True)
 class AlnumEpochMetrics:
     """Metrics captured at the end of each combined training epoch.
@@ -782,6 +801,87 @@ def evaluate_per_class(
         label: 100.0 * int(correct[index].item()) / max(int(total[index].item()), 1)
         for index, label in enumerate(labels)
         if int(total[index].item()) > 0
+    }
+
+
+def mixedcase_labels_match_with_ambiguity(expected: str, predicted: str) -> bool:
+    """Return true for exact or visually ambiguous mixed-case alnum labels."""
+
+    if expected == predicted:
+        return True
+    if (
+        len(expected) == 1
+        and len(predicted) == 1
+        and expected.isalpha()
+        and predicted.isalpha()
+        and expected.lower() == predicted.lower()
+    ):
+        return True
+    return any(expected in group and predicted in group for group in MIXEDCASE_AMBIGUITY_GROUPS)
+
+
+def evaluate_mixedcase_breakdown(
+    model: nn.Module,
+    loader: DataLoader,
+    criterion: nn.Module,
+    labels: list[str],
+    device: torch.device,
+) -> dict[str, float]:
+    """Evaluate exact, case-folded, and ambiguity-aware mixed-case metrics."""
+
+    model.eval()
+    loss_total = 0.0
+    exact_correct = 0
+    casefold_correct = 0
+    ambiguity_correct = 0
+    total = 0
+    group_correct = {"digit": 0, "upper": 0, "lower": 0}
+    group_ambiguity_correct = {"digit": 0, "upper": 0, "lower": 0}
+    group_total = {"digit": 0, "upper": 0, "lower": 0}
+    with torch.no_grad():
+        for images, targets in loader:
+            images = images.to(device)
+            outputs = model(images)
+            loss_total += criterion(outputs, targets.to(device)).item()
+            predictions = outputs.argmax(dim=1).cpu()
+            for expected_index, predicted_index in zip(targets.tolist(), predictions.tolist()):
+                expected = labels[int(expected_index)]
+                predicted = labels[int(predicted_index)]
+                exact = expected == predicted
+                casefold = exact or (
+                    expected.isalpha() and predicted.isalpha() and expected.lower() == predicted.lower()
+                )
+                ambiguity = mixedcase_labels_match_with_ambiguity(expected, predicted)
+                exact_correct += int(exact)
+                casefold_correct += int(casefold)
+                ambiguity_correct += int(ambiguity)
+                total += 1
+                if expected.isdigit():
+                    group = "digit"
+                elif expected.isupper():
+                    group = "upper"
+                else:
+                    group = "lower"
+                group_correct[group] += int(exact)
+                group_ambiguity_correct[group] += int(ambiguity)
+                group_total[group] += 1
+    return {
+        "test_loss": loss_total / max(len(loader), 1),
+        "test_accuracy": 100.0 * exact_correct / max(total, 1),
+        "casefold_test_accuracy": 100.0 * casefold_correct / max(total, 1),
+        "ambiguity_aware_test_accuracy": 100.0 * ambiguity_correct / max(total, 1),
+        "digit_test_accuracy": 100.0 * group_correct["digit"] / max(group_total["digit"], 1),
+        "upper_test_accuracy": 100.0 * group_correct["upper"] / max(group_total["upper"], 1),
+        "lower_test_accuracy": 100.0 * group_correct["lower"] / max(group_total["lower"], 1),
+        "digit_ambiguity_aware_test_accuracy": 100.0
+        * group_ambiguity_correct["digit"]
+        / max(group_total["digit"], 1),
+        "upper_ambiguity_aware_test_accuracy": 100.0
+        * group_ambiguity_correct["upper"]
+        / max(group_total["upper"], 1),
+        "lower_ambiguity_aware_test_accuracy": 100.0
+        * group_ambiguity_correct["lower"]
+        / max(group_total["lower"], 1),
     }
 
 

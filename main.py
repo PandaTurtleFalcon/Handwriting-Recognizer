@@ -1044,11 +1044,13 @@ def render_page(
         if isinstance(mixedcase_metrics, dict):
             best = best_metric_entry(mixedcase_metrics)
             if best:
+                ambiguity = best.get("ambiguity_aware_test_accuracy")
+                ambiguity_text = f", ambiguity-aware {ambiguity:.2f}%" if ambiguity is not None else ""
                 metrics_text = (
                     f"Mixed-case test accuracy: {best['test_accuracy']:.2f}% "
                     f"(digits {best.get('digit_test_accuracy', 0):.2f}%, "
                     f"upper {best.get('upper_test_accuracy', 0):.2f}%, "
-                    f"lower {best.get('lower_test_accuracy', 0):.2f}%)"
+                    f"lower {best.get('lower_test_accuracy', 0):.2f}%{ambiguity_text})"
                 )
     if LETTER_WEIGHTS_PATH.exists():
         letter_metrics = read_metrics(LETTER_METRICS_PATH)

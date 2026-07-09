@@ -239,9 +239,31 @@
   "best_checkpoint": {
     "test_loss": 0.7558329903310345,
     "test_accuracy": 80.50236299011264,
-    "digit_test_accuracy": 99.08,
+    "casefold_test_accuracy": 87.1891896170927,
+    "ambiguity_aware_test_accuracy": 96.41949605376693,
+    "digit_test_accuracy": 83.03836979887511,
     "upper_test_accuracy": 71.90072098513367,
     "lower_test_accuracy": 84.10140803429543,
-    "source": "direct_eval_after_nist_guarded_warm_start"
-  }
+    "digit_ambiguity_aware_test_accuracy": 95.95688918990547,
+    "upper_ambiguity_aware_test_accuracy": 97.72538760926435,
+    "lower_ambiguity_aware_test_accuracy": 96.06785173140175,
+    "source": "direct_eval_with_mixedcase_ambiguity_groups"
+  },
+  "ambiguity_groups": [
+    "0Oo",
+    "!/1Il|",
+    "5Ss",
+    "2Zz",
+    "8B",
+    "Cc",
+    "Xx",
+    "Vv",
+    "Kk",
+    "Pp",
+    "9gq",
+    "4Yy",
+    "Uuv",
+    "MNmn",
+    "Jj"
+  ]
 }

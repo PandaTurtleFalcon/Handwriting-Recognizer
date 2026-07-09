@@ -170,6 +170,7 @@ class WebAppRenderingTests(unittest.TestCase):
                         "digit_test_accuracy": 99.08,
                         "upper_test_accuracy": 71.90,
                         "lower_test_accuracy": 84.10,
+                        "ambiguity_aware_test_accuracy": 96.42,
                     }
                 }
             if path == main.CHARACTER_METRICS_PATH:
@@ -187,6 +188,7 @@ class WebAppRenderingTests(unittest.TestCase):
             html = main.render_page()
 
         self.assertIn("alnum", html)
+        self.assertIn("ambiguity-aware 96.42%", html)
         self.assertIn("digit specialist", html)
         self.assertIn("punctuation 88.41%", html)
         self.assertIn("ambiguity-aware 95.99%", html)
