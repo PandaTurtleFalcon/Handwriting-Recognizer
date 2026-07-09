@@ -10,8 +10,10 @@ from torch.utils.data import DataLoader, TensorDataset
 from PIL import Image, ImageDraw
 
 from alnum_model import (
+    AugmentedTensorDataset,
     MIXEDCASE_LABELS,
     _chars74k_sample_label,
+    _mixedcase_train_dataset,
     _nist_sd19_label_from_hex,
     build_or_load_mixedcase_ascii_folder_cache,
     evaluate_mixedcase_breakdown,
@@ -83,6 +85,20 @@ class ExtraAlnumDatasetTests(unittest.TestCase):
 
         self.assertEqual(tuple(images.shape), (2, 1, 28, 28))
         self.assertEqual(targets.tolist(), [10, 36])
+
+    def test_mixedcase_train_dataset_can_enable_tensor_augmentation(self) -> None:
+        images = torch.zeros((2, 1, 28, 28), dtype=torch.float32)
+        targets = torch.tensor([0, 1], dtype=torch.long)
+
+        plain = _mixedcase_train_dataset(images, targets, augment=False)
+        augmented = _mixedcase_train_dataset(images, targets, augment=True)
+
+        self.assertIsInstance(plain, TensorDataset)
+        self.assertIsInstance(augmented, AugmentedTensorDataset)
+        self.assertEqual(len(augmented), 2)
+        image, target = augmented[0]
+        self.assertEqual(tuple(image.shape), (1, 28, 28))
+        self.assertEqual(int(target), 0)
 
     def test_mixedcase_ambiguity_groups_match_known_lookalikes(self) -> None:
         self.assertTrue(mixedcase_labels_match_with_ambiguity("S", "s"))

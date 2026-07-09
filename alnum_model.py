@@ -61,6 +61,7 @@ MODEL_CLASSES = {
     "cnn": EmnistCNN,
     "widecnn": WideEmnistCNN,
 }
+NORMALIZED_BACKGROUND_FILL = float((0.0 - EMNIST_MEAN) / EMNIST_STD)
 
 
 MIXEDCASE_AMBIGUITY_GROUPS = [
@@ -690,6 +691,39 @@ def _limit_per_class(
     return images[merged_indices], targets[merged_indices]
 
 
+class AugmentedTensorDataset(torch.utils.data.Dataset):
+    """Apply light image augmentation to cached normalized glyph tensors."""
+
+    def __init__(self, images: torch.Tensor, targets: torch.Tensor) -> None:
+        self.images = images
+        self.targets = targets
+        self.transform = transforms.RandomAffine(
+            degrees=7,
+            translate=(0.05, 0.05),
+            scale=(0.94, 1.06),
+            shear=4,
+            fill=NORMALIZED_BACKGROUND_FILL,
+        )
+
+    def __len__(self) -> int:
+        return int(self.targets.shape[0])
+
+    def __getitem__(self, index: int) -> tuple[torch.Tensor, torch.Tensor]:
+        return self.transform(self.images[index]), self.targets[index]
+
+
+def _mixedcase_train_dataset(
+    images: torch.Tensor,
+    targets: torch.Tensor,
+    augment: bool,
+) -> torch.utils.data.Dataset:
+    """Return a mixed-case training dataset, optionally with live augmentation."""
+
+    if augment:
+        return AugmentedTensorDataset(images, targets)
+    return TensorDataset(images, targets)
+
+
 def make_cached_loaders(
     batch_size: int,
     samples_per_class: int | None,
@@ -1027,6 +1061,7 @@ def make_mixedcase_loaders(
     nist_samples_per_class: int = 1200,
     include_corrections: bool = False,
     mixedcase_extra_roots: list[Path] | None = None,
+    augment: bool = False,
 ) -> tuple[DataLoader, DataLoader, DataLoader, DataLoader, DataLoader]:
     """Build loaders for the 62-class digit/upper/lower recognizer."""
 
@@ -1049,31 +1084,31 @@ def make_mixedcase_loaders(
     )
 
     train_parts = [
-        TensorDataset(mnist_train_images, mnist_train_targets),
-        TensorDataset(byclass_train_images, byclass_train_targets),
+        _mixedcase_train_dataset(mnist_train_images, mnist_train_targets, augment),
+        _mixedcase_train_dataset(byclass_train_images, byclass_train_targets, augment),
     ]
     train_target_parts = [mnist_train_targets, byclass_train_targets]
     if include_chars74k:
         chars_images, chars_targets = build_or_load_chars74k_mixedcase_cache()
-        train_parts.append(TensorDataset(chars_images, chars_targets))
+        train_parts.append(_mixedcase_train_dataset(chars_images, chars_targets, augment))
         train_target_parts.append(chars_targets)
     if include_usps:
         usps_train_images, usps_train_targets = build_or_load_usps_cache(train=True)
-        train_parts.append(TensorDataset(usps_train_images, usps_train_targets))
+        train_parts.append(_mixedcase_train_dataset(usps_train_images, usps_train_targets, augment))
         train_target_parts.append(usps_train_targets)
     if include_nist_sd19:
         nist_images, nist_targets = build_or_load_nist_sd19_mixedcase_cache(nist_samples_per_class, seed)
-        train_parts.append(TensorDataset(nist_images, nist_targets))
+        train_parts.append(_mixedcase_train_dataset(nist_images, nist_targets, augment))
         train_target_parts.append(nist_targets)
     if include_corrections:
         corrections = load_correction_cache(list(MIXEDCASE_LABELS))
         if corrections is not None:
             correction_images, correction_targets = corrections
-            train_parts.append(TensorDataset(correction_images, correction_targets))
+            train_parts.append(_mixedcase_train_dataset(correction_images, correction_targets, augment))
             train_target_parts.append(correction_targets)
     for extra_root in mixedcase_extra_roots or []:
         extra_images, extra_targets = build_or_load_mixedcase_ascii_folder_cache(extra_root)
-        train_parts.append(TensorDataset(extra_images, extra_targets))
+        train_parts.append(_mixedcase_train_dataset(extra_images, extra_targets, augment))
         train_target_parts.append(extra_targets)
 
     train_dataset = ConcatDataset(train_parts)
@@ -1235,6 +1270,7 @@ def save_mixedcase_checkpoint(
     warm_start: bool = False,
     per_class_accuracy: dict[str, float] | None = None,
     mixedcase_extra_roots: list[Path] | None = None,
+    augment: bool = False,
 ) -> None:
     """Persist the best mixed-case weights and metrics."""
 
@@ -1255,6 +1291,7 @@ def save_mixedcase_checkpoint(
                 "nist_samples_per_class": nist_samples_per_class,
                 "include_corrections": include_corrections,
                 "warm_start": warm_start,
+                "augment": augment,
                 "mixedcase_extra_roots": [str(path) for path in (mixedcase_extra_roots or [])],
                 "normalization": {"mean": EMNIST_MEAN, "std": EMNIST_STD},
             },
@@ -1275,6 +1312,7 @@ def save_mixedcase_checkpoint(
                 "nist_samples_per_class": nist_samples_per_class,
                 "include_corrections": include_corrections,
                 "warm_start": warm_start,
+                "augment": augment,
                 "mixedcase_extra_roots": [str(path) for path in (mixedcase_extra_roots or [])],
                 "per_class_accuracy": per_class_accuracy or {},
                 "best_checkpoint": best_metrics or {"test_accuracy": best_accuracy},
@@ -1302,6 +1340,7 @@ def train_mixedcase(
     include_corrections: bool = False,
     warm_start: bool = False,
     mixedcase_extra_roots: list[Path] | None = None,
+    augment: bool = False,
 ) -> list[dict[str, float | int]]:
     """Train a 62-class recognizer that distinguishes uppercase and lowercase."""
 
@@ -1326,6 +1365,7 @@ def train_mixedcase(
         nist_samples_per_class,
         include_corrections,
         mixedcase_extra_roots,
+        augment,
     )
     model = MODEL_CLASSES[model_type](num_classes=len(MIXEDCASE_LABELS)).to(device)
     criterion = nn.CrossEntropyLoss(label_smoothing=0.03)
@@ -1420,6 +1460,7 @@ def train_mixedcase(
             warm_start,
             best_per_class_accuracy,
             mixedcase_extra_roots,
+            augment,
         )
         print(
             f"Epoch {epoch}/{epochs} train_acc={train_accuracy:.2f}% "
@@ -1676,6 +1717,7 @@ def main() -> None:
             include_corrections=args.include_corrections,
             warm_start=args.warm_start,
             mixedcase_extra_roots=args.mixedcase_extra_root,
+            augment=args.augment,
         )
         return
     train(
