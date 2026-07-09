@@ -27,6 +27,26 @@
           <button class="primary-button" type="submit">Recognize</button>
         </form>
 
+        <section class="practice-panel" aria-label="Practice correction samples">
+          <div class="practice-head">
+            <div>
+              <h2>Practice Corrections</h2>
+              <p class="model-note">Draw one weak-label sample and save it for retraining.</p>
+            </div>
+            <div class="practice-target" id="practice-target">0</div>
+          </div>
+          <div class="practice-labels" id="practice-labels" aria-label="Practice label choices"></div>
+          <div class="practice-pad-wrap">
+            <canvas id="practice-canvas" width="220" height="220" aria-label="Draw practice sample"></canvas>
+          </div>
+          <form class="practice-actions" id="practice-form">
+            <input class="text-input" id="practice-label-input" name="corrected_label" type="text" maxlength="1" autocomplete="off" aria-label="Practice sample label">
+            <button class="save-button" type="button" id="practice-clear">Clear</button>
+            <button class="primary-button" type="submit">Save sample</button>
+            <span class="correction-status" id="practice-status" aria-live="polite"></span>
+          </form>
+        </section>
+
         <div class="status-line" id="status-line" role="status" aria-live="polite"></div>
         <section class="results" id="results" aria-label="Recognition results"></section>
       </section>

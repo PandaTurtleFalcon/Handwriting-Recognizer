@@ -4,9 +4,19 @@ const resultsEl = document.querySelector("#results");
 const statusEl = document.querySelector("#status-line");
 const serverPill = document.querySelector("#server-pill");
 const modelNote = document.querySelector("#model-note");
+const practiceCanvas = document.querySelector("#practice-canvas");
+const practiceForm = document.querySelector("#practice-form");
+const practiceLabelsEl = document.querySelector("#practice-labels");
+const practiceLabelInput = document.querySelector("#practice-label-input");
+const practiceTargetEl = document.querySelector("#practice-target");
+const practiceClearButton = document.querySelector("#practice-clear");
+const practiceStatus = document.querySelector("#practice-status");
 
 const lowConfidenceThreshold = 0.8;
 const closeGuessMargin = 0.12;
+const practiceLabels = ["0", "O", "o", "1", "I", "l", "i", "S", "s", "5", "C", "c", "-", "_", ".", "'", "|", "/"];
+let practicePointerDown = false;
+let practiceHasInk = false;
 
 function text(value) {
   return value === undefined || value === null ? "" : String(value);
@@ -105,6 +115,152 @@ function bindCorrectionForm(form) {
     const statusTarget = form.querySelector("[data-correction-status]");
     postCorrection(form, statusTarget);
   });
+}
+
+function practiceContext() {
+  return practiceCanvas.getContext("2d");
+}
+
+function clearPracticeCanvas(clearStatus = true) {
+  const context = practiceContext();
+  context.fillStyle = "#ffffff";
+  context.fillRect(0, 0, practiceCanvas.width, practiceCanvas.height);
+  context.lineCap = "round";
+  context.lineJoin = "round";
+  context.strokeStyle = "#111111";
+  context.lineWidth = 9;
+  practiceHasInk = false;
+  if (clearStatus) {
+    practiceStatus.textContent = "";
+  }
+}
+
+function setPracticeLabel(label) {
+  practiceLabelInput.value = label;
+  practiceTargetEl.textContent = label;
+  practiceLabelsEl.querySelectorAll("button").forEach((button) => {
+    button.classList.toggle("selected", button.dataset.label === label);
+  });
+}
+
+function practicePoint(event) {
+  const rect = practiceCanvas.getBoundingClientRect();
+  return {
+    x: ((event.clientX - rect.left) * practiceCanvas.width) / rect.width,
+    y: ((event.clientY - rect.top) * practiceCanvas.height) / rect.height,
+  };
+}
+
+function beginPracticeStroke(event) {
+  event.preventDefault();
+  practicePointerDown = true;
+  practiceCanvas.setPointerCapture(event.pointerId);
+  const point = practicePoint(event);
+  const context = practiceContext();
+  context.beginPath();
+  context.moveTo(point.x, point.y);
+}
+
+function drawPracticeStroke(event) {
+  if (!practicePointerDown) {
+    return;
+  }
+  event.preventDefault();
+  const point = practicePoint(event);
+  const context = practiceContext();
+  context.lineTo(point.x, point.y);
+  context.stroke();
+  practiceHasInk = true;
+}
+
+function endPracticeStroke(event) {
+  if (!practicePointerDown) {
+    return;
+  }
+  event.preventDefault();
+  practicePointerDown = false;
+  try {
+    practiceCanvas.releasePointerCapture(event.pointerId);
+  } catch {
+    // Some browsers release capture automatically when the pointer leaves.
+  }
+}
+
+function practiceImageId() {
+  if (window.crypto && typeof window.crypto.randomUUID === "function") {
+    return `practice-${window.crypto.randomUUID()}`;
+  }
+  return `practice-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+}
+
+async function savePracticeSample(event) {
+  event.preventDefault();
+  const label = text(practiceLabelInput.value).trim();
+  if (label.length !== 1) {
+    practiceStatus.textContent = "Pick one label.";
+    practiceLabelInput.focus();
+    return;
+  }
+  if (!practiceHasInk) {
+    practiceStatus.textContent = "Draw the sample first.";
+    return;
+  }
+  const imageId = practiceImageId();
+  const payload = new URLSearchParams({
+    correction_kind: "character",
+    filename: `${imageId}.png`,
+    image_id: imageId,
+    sequence: label,
+    prediction_index: "1",
+    original_label: label,
+    corrected_label: label,
+    confidence: "1",
+    bbox: JSON.stringify({x: 0, y: 0, width: practiceCanvas.width, height: practiceCanvas.height, row: 1}),
+    prediction_boxes: "[]",
+    source_image: practiceCanvas.toDataURL("image/png"),
+  });
+  practiceStatus.textContent = "Saving...";
+  const button = practiceForm.querySelector("button[type='submit']");
+  button.disabled = true;
+  try {
+    const response = await fetch("/api/correct", {
+      method: "POST",
+      headers: {"Content-Type": "application/x-www-form-urlencoded;charset=UTF-8"},
+      body: payload,
+    });
+    const result = await response.json();
+    if (!response.ok || !result.ok) {
+      throw new Error(result.error || "Could not save that sample.");
+    }
+    practiceStatus.textContent = `Saved ${label}.`;
+    clearPracticeCanvas(false);
+  } catch (error) {
+    practiceStatus.textContent = error.message;
+  } finally {
+    button.disabled = false;
+  }
+}
+
+function setupPracticeMode() {
+  if (!practiceCanvas || !practiceForm) {
+    return;
+  }
+  practiceLabels.forEach((label) => {
+    const button = makeElement("button", "practice-label-button", label);
+    button.type = "button";
+    button.dataset.label = label;
+    button.addEventListener("click", () => setPracticeLabel(label));
+    practiceLabelsEl.append(button);
+  });
+  practiceCanvas.addEventListener("pointerdown", beginPracticeStroke);
+  practiceCanvas.addEventListener("pointermove", drawPracticeStroke);
+  practiceCanvas.addEventListener("pointerup", endPracticeStroke);
+  practiceCanvas.addEventListener("pointercancel", endPracticeStroke);
+  practiceClearButton.addEventListener("click", clearPracticeCanvas);
+  practiceLabelInput.addEventListener("input", () => setPracticeLabel(text(practiceLabelInput.value).slice(0, 1)));
+  practiceForm.addEventListener("submit", savePracticeSample);
+  setPracticeLabel(practiceLabels[0]);
+  clearPracticeCanvas();
 }
 
 function predictionBoxData(prediction) {
@@ -349,3 +505,4 @@ async function checkHealth() {
 }
 
 checkHealth();
+setupPracticeMode();

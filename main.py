@@ -8,6 +8,7 @@ renders the original image with numbered bounding boxes that match the cards.
 from __future__ import annotations
 
 import base64
+import binascii
 import datetime as dt
 import hashlib
 import html
@@ -48,6 +49,7 @@ from mnist_model import METRICS_PATH, WEIGHTS_PATH, get_device, load_model, pred
 HOST = "127.0.0.1"
 PORT = 8000
 MAX_UPLOAD_BYTES = 8 * 1024 * 1024
+MAX_CORRECTION_BYTES = MAX_UPLOAD_BYTES + 16_384
 MAX_IMAGE_PIXELS = 4_000_000
 MAX_DECODE_IMAGE_PIXELS = 60_000_000
 MAX_FILES = 20
@@ -835,7 +837,7 @@ class MnistWebHandler(BaseHTTPRequestHandler):
         except ValueError:
             self._send_html(render_page(error="Correction request is malformed."), HTTPStatus.BAD_REQUEST)
             return
-        if length <= 0 or length > 16_384:
+        if length <= 0 or length > MAX_CORRECTION_BYTES:
             self._send_html(render_page(error="Correction request is malformed."), HTTPStatus.BAD_REQUEST)
             return
         body = self.rfile.read(length)
@@ -867,6 +869,7 @@ class MnistWebHandler(BaseHTTPRequestHandler):
         try:
             form = parse_correction_form(body)
             record = build_correction_record(form)
+            save_practice_source_image(form, str(record.get("image_id", "")))
             save_correction(record)
         except ValueError as exc:
             self._send_json({"ok": False, "error": str(exc)}, HTTPStatus.BAD_REQUEST)
@@ -1111,6 +1114,30 @@ def save_correction_source_image(image_id: str, image: Image.Image) -> None:
     target = CORRECTION_UPLOAD_DIR / f"{image_id}.png"
     if not target.exists():
         image.save(target)
+
+
+def save_practice_source_image(form: dict[str, str], image_id: str) -> None:
+    """Persist a generated practice glyph image sent with a correction."""
+
+    source_image = form.get("source_image", "")
+    if not source_image:
+        return
+    if not image_id:
+        raise ValueError("Practice correction is missing its image id.")
+    prefix = "data:image/png;base64,"
+    if not source_image.startswith(prefix):
+        raise ValueError("Practice correction image is malformed.")
+    try:
+        image_bytes = base64.b64decode(source_image[len(prefix) :], validate=True)
+    except (ValueError, binascii.Error) as exc:
+        raise ValueError("Practice correction image is malformed.") from exc
+    if len(image_bytes) > MAX_UPLOAD_BYTES:
+        raise ValueError("Practice correction image is too large.")
+    try:
+        with Image.open(io.BytesIO(image_bytes)) as image:
+            save_correction_source_image(image_id, ImageOps.exif_transpose(image).convert("RGB"))
+    except (UnidentifiedImageError, OSError) as exc:
+        raise ValueError("Practice correction image is malformed.") from exc
 
 
 def should_use_digit_specialist_predictions(

@@ -89,6 +89,7 @@ h1 {
 }
 
 .upload-panel,
+.practice-panel,
 .result-panel {
   background: var(--panel);
   border: 1px solid var(--line);
@@ -156,6 +157,98 @@ h1 {
 .save-button:disabled {
   cursor: wait;
   opacity: 0.68;
+}
+
+.practice-panel {
+  display: grid;
+  gap: 16px;
+  padding: 20px;
+}
+
+.practice-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 18px;
+  align-items: flex-start;
+}
+
+h2 {
+  margin: 0;
+  font-size: 1.6rem;
+  line-height: 1.1;
+  letter-spacing: 0;
+}
+
+.practice-target {
+  display: grid;
+  place-items: center;
+  min-width: 72px;
+  min-height: 72px;
+  padding: 8px 14px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  color: var(--accent);
+  background: #f8faff;
+  font-size: 3rem;
+  line-height: 1;
+  font-weight: 950;
+}
+
+.practice-labels {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.practice-label-button {
+  min-width: 42px;
+  min-height: 42px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+  color: var(--ink);
+  cursor: pointer;
+  font-size: 1.2rem;
+  font-weight: 900;
+}
+
+.practice-label-button.selected {
+  border-color: var(--accent);
+  background: #eef3ff;
+  color: var(--accent);
+}
+
+.practice-pad-wrap {
+  width: min(100%, 320px);
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #f9fbfe;
+}
+
+#practice-canvas {
+  display: block;
+  width: 100%;
+  aspect-ratio: 1;
+  border: 1px solid #cbd6e4;
+  border-radius: 8px;
+  background: #fff;
+  touch-action: none;
+  cursor: crosshair;
+}
+
+.practice-actions {
+  display: grid;
+  grid-template-columns: minmax(64px, 96px) auto auto;
+  gap: 10px;
+  align-items: center;
+  max-width: 560px;
+}
+
+.practice-actions .text-input {
+  text-align: center;
+  font-size: 1.45rem;
+  font-weight: 900;
 }
 
 .status-line {
@@ -405,12 +498,18 @@ h1 {
 
   .topbar,
   .upload-panel,
+  .practice-head,
+  .practice-actions,
   .result-head,
   .full-correction {
     grid-template-columns: 1fr;
   }
 
   .topbar {
+    display: grid;
+  }
+
+  .practice-head {
     display: grid;
   }
 

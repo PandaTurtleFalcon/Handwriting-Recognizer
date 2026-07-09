@@ -1,3 +1,4 @@
+import base64
 import io
 import json
 import tempfile
@@ -655,14 +656,20 @@ class WebAppRenderingTests(unittest.TestCase):
         js = (main.WEB_ROOT / "app.js").read_text(encoding="utf-8")
 
         self.assertIn('<form class="upload-panel" id="upload-form"', html)
+        self.assertIn('id="practice-canvas"', html)
+        self.assertIn('id="practice-form"', html)
         self.assertIn("HEIC", html)
         self.assertIn(".heif", html)
         self.assertIn('href="/styles.css"', html)
         self.assertIn('src="/app.js"', html)
         self.assertIn(".correction-form", css)
+        self.assertIn(".practice-panel", css)
+        self.assertIn("touch-action: none", css)
         self.assertIn("grid-template-columns: minmax(52px, 1fr) auto", css)
         self.assertIn('fetch("/api/predict"', js)
         self.assertIn('fetch("/api/correct"', js)
+        self.assertIn("practiceLabels", js)
+        self.assertIn("source_image", js)
 
     def test_low_confidence_prediction_is_marked_uncertain(self) -> None:
         """Low-confidence predictions should be visually marked as uncertain."""
@@ -1221,6 +1228,26 @@ class WebAppRenderingTests(unittest.TestCase):
         self.assertEqual(len(lines), 2)
         self.assertEqual(json.loads(lines[0])["corrected_label"], "s")
         self.assertEqual(json.loads(lines[1])["corrected_label"], "5")
+
+    def test_save_practice_source_image_accepts_png_data_url(self) -> None:
+        """Generated practice corrections should save a crop source image."""
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            upload_dir = Path(temp_dir) / "uploads"
+            data_url = "data:image/png;base64," + base64.b64encode(png_bytes()).decode("ascii")
+            with patch.object(main, "CORRECTION_UPLOAD_DIR", upload_dir):
+                main.save_practice_source_image({"source_image": data_url}, "practice-abc")
+
+            saved = upload_dir / "practice-abc.png"
+            self.assertTrue(saved.exists())
+            with Image.open(saved) as image:
+                self.assertEqual(image.size, (32, 32))
+
+    def test_save_practice_source_image_rejects_bad_data_url(self) -> None:
+        """Practice image upload should reject non-PNG data urls."""
+
+        with self.assertRaises(ValueError):
+            main.save_practice_source_image({"source_image": "data:text/plain;base64,abc"}, "practice-abc")
 
 
 if __name__ == "__main__":
