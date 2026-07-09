@@ -28,6 +28,13 @@ python3 emnist_experiment.py --split letters --model cnn --epochs 30 --batch-siz
 
 The checked-in `emnist_experiment.pt` checkpoint reached **95.125% test accuracy** on the EMNIST letters test split.
 
+If torchvision cannot download USPS because of a local certificate error, fetch the archives with verified MD5 hashes first:
+
+```bash
+python3 scripts/download_usps.py --insecure-ssl
+python3 alnum_model.py --epochs 5 --batch-size 2048 --learning-rate 0.00012 --warm-start --include-usps --device mps
+```
+
 ## Run
 
 ```bash

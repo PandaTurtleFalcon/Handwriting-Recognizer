@@ -1,6 +1,7 @@
 __pycache__/
 *.py[cod]
 .DS_Store
+.claude/
 data/
 .training_backups/
 .venv/
