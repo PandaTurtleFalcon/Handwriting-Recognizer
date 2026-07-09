@@ -9,10 +9,12 @@ model shown in the UI badge.
 from __future__ import annotations
 
 import argparse
+import io
 import json
 import tarfile
 import time
 import urllib.request
+import zipfile
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
@@ -32,6 +34,10 @@ from mnist_model import get_device
 PROJECT_DIR = Path(__file__).resolve().parent
 MNIST_DATA_ROOT = PROJECT_DIR / "data" / "mnist"
 USPS_DATA_ROOT = PROJECT_DIR / "data" / "usps"
+NIST_SD19_DATA_ROOT = PROJECT_DIR / "data" / "nist_sd19"
+NIST_SD19_BY_CLASS_URL = "https://s3.amazonaws.com/nist-srd/SD19/by_class.zip"
+CORRECTIONS_PATH = PROJECT_DIR / "data" / "corrections" / "corrections.jsonl"
+CORRECTION_UPLOAD_DIR = PROJECT_DIR / "data" / "corrections" / "uploads"
 CHARS74K_DATA_ROOT = PROJECT_DIR / "data" / "chars74k"
 CHARS74K_ENGLISH_HND_URL = "https://drive.google.com/uc?export=download&id=1FCH2jjo9Z1HbPVDWAEfvE3ZKaPpaXogg"
 WEIGHTS_PATH = PROJECT_DIR / "alnum_cnn.pt"
@@ -198,6 +204,144 @@ def build_or_load_usps_cache(train: bool) -> tuple[torch.Tensor, torch.Tensor]:
     cache_path.parent.mkdir(parents=True, exist_ok=True)
     torch.save({"images": image_tensor, "targets": target_tensor}, cache_path)
     return image_tensor, target_tensor
+
+
+def ensure_nist_sd19_by_class() -> Path:
+    """Download the raw NIST SD19 by_class archive if it is missing."""
+
+    archive_path = NIST_SD19_DATA_ROOT / "by_class.zip"
+    if archive_path.exists():
+        return archive_path
+    archive_path.parent.mkdir(parents=True, exist_ok=True)
+    with urllib.request.urlopen(NIST_SD19_BY_CLASS_URL, timeout=300) as response:
+        archive_path.write_bytes(response.read())
+    return archive_path
+
+
+def _nist_sd19_label_from_hex(hex_label: str) -> int | None:
+    """Map a NIST SD19 hex ASCII folder name to MIXEDCASE_LABELS index."""
+
+    try:
+        label = chr(int(hex_label, 16))
+    except ValueError:
+        return None
+    if label.isdigit():
+        return int(label)
+    if "A" <= label <= "Z":
+        return 10 + ord(label) - ord("A")
+    if "a" <= label <= "z":
+        return 36 + ord(label) - ord("a")
+    return None
+
+
+def build_or_load_nist_sd19_mixedcase_cache(
+    samples_per_class: int = 1200,
+    seed: int = 42,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """Load a balanced 62-class sample from raw NIST SD19 by_class.zip.
+
+    The archive contains more than 1.5 million files, so this reads directly
+    from the zip and caches only a deterministic balanced subset instead of
+    extracting everything into the workspace.
+    """
+
+    cache_path = NIST_SD19_DATA_ROOT / f"cache_mixedcase_62_{samples_per_class}_seed{seed}.pt"
+    if cache_path.exists():
+        cache = torch.load(cache_path, map_location="cpu", weights_only=True)
+        return cache["images"], cache["targets"]
+
+    archive_path = ensure_nist_sd19_by_class()
+    grouped: dict[int, list[str]] = {index: [] for index in range(len(MIXEDCASE_LABELS))}
+    with zipfile.ZipFile(archive_path) as archive:
+        for name in archive.namelist():
+            if not name.lower().endswith(".png"):
+                continue
+            parts = name.split("/")
+            if len(parts) < 4 or parts[0] != "by_class":
+                continue
+            target = _nist_sd19_label_from_hex(parts[1])
+            if target is not None:
+                grouped[target].append(name)
+
+        generator = np.random.default_rng(seed)
+        images = []
+        targets = []
+        for target, names in grouped.items():
+            if not names:
+                continue
+            selected = generator.choice(
+                np.array(names, dtype=object),
+                size=min(samples_per_class, len(names)),
+                replace=False,
+            )
+            for name in selected.tolist():
+                with Image.open(io.BytesIO(archive.read(str(name)))) as image:
+                    images.append(_foreground_tensor_from_image(image))
+                targets.append(target)
+
+    if not images:
+        raise RuntimeError("No NIST SD19 mixed-case images were loaded.")
+
+    image_tensor = torch.stack(images)
+    target_tensor = torch.tensor(targets, dtype=torch.long)
+    cache_path.parent.mkdir(parents=True, exist_ok=True)
+    torch.save({"images": image_tensor, "targets": target_tensor}, cache_path)
+    return image_tensor, target_tensor
+
+
+def load_correction_cache(
+    labels: list[str],
+    corrections_path: Path = CORRECTIONS_PATH,
+    upload_dir: Path = CORRECTION_UPLOAD_DIR,
+) -> tuple[torch.Tensor, torch.Tensor] | None:
+    """Load saved per-character user corrections as training tensors.
+
+    Only future character-level corrections with an `image_id` can train the
+    model. Older records and whole-sequence corrections are skipped because
+    they do not contain enough information to crop a specific glyph safely.
+    """
+
+    if not corrections_path.exists():
+        return None
+    label_to_index = {label: index for index, label in enumerate(labels)}
+    images = []
+    targets = []
+    for line in corrections_path.read_text(encoding="utf-8").splitlines():
+        if not line.strip():
+            continue
+        try:
+            record = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if record.get("correction_kind") != "character":
+            continue
+        corrected_label = str(record.get("corrected_label", ""))
+        if len(corrected_label) != 1 or corrected_label not in label_to_index:
+            continue
+        image_id = str(record.get("image_id", ""))
+        if not image_id:
+            continue
+        image_path = upload_dir / f"{image_id}.png"
+        if not image_path.exists():
+            continue
+        bbox = record.get("bbox", {})
+        if not isinstance(bbox, dict):
+            continue
+        try:
+            x0 = max(0, int(round(float(bbox.get("x", 0)))))
+            y0 = max(0, int(round(float(bbox.get("y", 0)))))
+            width = max(1, int(round(float(bbox.get("width", 0)))))
+            height = max(1, int(round(float(bbox.get("height", 0)))))
+        except (TypeError, ValueError):
+            continue
+        with Image.open(image_path) as image:
+            crop = ImageOps.exif_transpose(image).convert("RGB").crop((x0, y0, x0 + width, y0 + height))
+            images.append(_foreground_tensor_from_image(crop))
+        targets.append(label_to_index[corrected_label])
+
+    if not images:
+        return None
+    return torch.stack(images), torch.tensor(targets, dtype=torch.long)
 
 
 def _safe_extract_tgz(archive_path: Path, target_dir: Path) -> None:
@@ -435,6 +579,7 @@ def make_cached_loaders(
     include_emnist_byclass: bool = False,
     include_chars74k: bool = False,
     include_usps: bool = False,
+    include_corrections: bool = False,
 ) -> tuple[DataLoader, DataLoader, DataLoader, DataLoader]:
     """Build loaders from cached tensors for repeatable high-speed training."""
 
@@ -485,6 +630,12 @@ def make_cached_loaders(
         usps_train_images, usps_train_targets = build_or_load_usps_cache(train=True)
         train_parts.append(TensorDataset(usps_train_images, usps_train_targets))
         train_target_parts.append(usps_train_targets)
+    if include_corrections:
+        corrections = load_correction_cache(LABELS)
+        if corrections is not None:
+            correction_images, correction_targets = corrections
+            train_parts.append(TensorDataset(correction_images, correction_targets))
+            train_target_parts.append(correction_targets)
     if extra_train_dir is not None:
         extra_train_images, extra_train_targets = load_labeled_image_folder(extra_train_dir, LABELS, image_folder_transform)
         train_parts.append(TensorDataset(extra_train_images, extra_train_targets))
@@ -519,6 +670,7 @@ def make_augmented_loaders(
     include_emnist_byclass: bool = False,
     include_chars74k: bool = False,
     include_usps: bool = False,
+    include_corrections: bool = False,
 ) -> tuple[DataLoader, DataLoader, DataLoader, DataLoader]:
     """Build loaders with live MNIST augmentation and cached EMNIST letters."""
 
@@ -559,6 +711,12 @@ def make_augmented_loaders(
         usps_train_images, usps_train_targets = build_or_load_usps_cache(train=True)
         train_parts.append(TensorDataset(usps_train_images, usps_train_targets))
         train_target_parts.append(usps_train_targets)
+    if include_corrections:
+        corrections = load_correction_cache(LABELS)
+        if corrections is not None:
+            correction_images, correction_targets = corrections
+            train_parts.append(TensorDataset(correction_images, correction_targets))
+            train_target_parts.append(correction_targets)
     if extra_train_dir is not None:
         extra_train_images, extra_train_targets = load_labeled_image_folder(
             extra_train_dir,
@@ -633,6 +791,9 @@ def make_mixedcase_loaders(
     seed: int,
     include_chars74k: bool = False,
     include_usps: bool = False,
+    include_nist_sd19: bool = False,
+    nist_samples_per_class: int = 1200,
+    include_corrections: bool = False,
 ) -> tuple[DataLoader, DataLoader, DataLoader, DataLoader, DataLoader]:
     """Build loaders for the 62-class digit/upper/lower recognizer."""
 
@@ -667,6 +828,16 @@ def make_mixedcase_loaders(
         usps_train_images, usps_train_targets = build_or_load_usps_cache(train=True)
         train_parts.append(TensorDataset(usps_train_images, usps_train_targets))
         train_target_parts.append(usps_train_targets)
+    if include_nist_sd19:
+        nist_images, nist_targets = build_or_load_nist_sd19_mixedcase_cache(nist_samples_per_class, seed)
+        train_parts.append(TensorDataset(nist_images, nist_targets))
+        train_target_parts.append(nist_targets)
+    if include_corrections:
+        corrections = load_correction_cache(list(MIXEDCASE_LABELS))
+        if corrections is not None:
+            correction_images, correction_targets = corrections
+            train_parts.append(TensorDataset(correction_images, correction_targets))
+            train_target_parts.append(correction_targets)
 
     train_dataset = ConcatDataset(train_parts)
     test_dataset = ConcatDataset(
@@ -720,6 +891,7 @@ def save_checkpoint(
     include_emnist_byclass: bool = False,
     include_chars74k: bool = False,
     include_usps: bool = False,
+    include_corrections: bool = False,
     warm_start: bool = False,
 ) -> None:
     """Persist the best model weights and the full metrics history."""
@@ -741,6 +913,7 @@ def save_checkpoint(
                 "include_emnist_byclass": include_emnist_byclass,
                 "include_chars74k": include_chars74k,
                 "include_usps": include_usps,
+                "include_corrections": include_corrections,
                 "warm_start": warm_start,
             },
             WEIGHTS_PATH,
@@ -759,6 +932,7 @@ def save_checkpoint(
                 "include_emnist_byclass": include_emnist_byclass,
                 "include_chars74k": include_chars74k,
                 "include_usps": include_usps,
+                "include_corrections": include_corrections,
                 "warm_start": warm_start,
                 "history": [asdict(item) for item in history],
             },
@@ -817,6 +991,9 @@ def save_mixedcase_checkpoint(
     samples_per_class: int | None,
     include_chars74k: bool = False,
     include_usps: bool = False,
+    include_nist_sd19: bool = False,
+    nist_samples_per_class: int = 1200,
+    include_corrections: bool = False,
     warm_start: bool = False,
     per_class_accuracy: dict[str, float] | None = None,
 ) -> None:
@@ -835,6 +1012,9 @@ def save_mixedcase_checkpoint(
                 "samples_per_class": samples_per_class,
                 "include_chars74k": include_chars74k,
                 "include_usps": include_usps,
+                "include_nist_sd19": include_nist_sd19,
+                "nist_samples_per_class": nist_samples_per_class,
+                "include_corrections": include_corrections,
                 "warm_start": warm_start,
                 "normalization": {"mean": EMNIST_MEAN, "std": EMNIST_STD},
             },
@@ -851,6 +1031,9 @@ def save_mixedcase_checkpoint(
                 "samples_per_class": samples_per_class,
                 "include_chars74k": include_chars74k,
                 "include_usps": include_usps,
+                "include_nist_sd19": include_nist_sd19,
+                "nist_samples_per_class": nist_samples_per_class,
+                "include_corrections": include_corrections,
                 "warm_start": warm_start,
                 "per_class_accuracy": per_class_accuracy or {},
                 "history": history,
@@ -872,6 +1055,9 @@ def train_mixedcase(
     device_name: str,
     include_chars74k: bool = False,
     include_usps: bool = False,
+    include_nist_sd19: bool = False,
+    nist_samples_per_class: int = 1200,
+    include_corrections: bool = False,
     warm_start: bool = False,
 ) -> list[dict[str, float | int]]:
     """Train a 62-class recognizer that distinguishes uppercase and lowercase."""
@@ -893,6 +1079,9 @@ def train_mixedcase(
         seed,
         include_chars74k,
         include_usps,
+        include_nist_sd19,
+        nist_samples_per_class,
+        include_corrections,
     )
     model = MODEL_CLASSES[model_type](num_classes=len(MIXEDCASE_LABELS)).to(device)
     criterion = nn.CrossEntropyLoss(label_smoothing=0.03)
@@ -963,6 +1152,9 @@ def train_mixedcase(
             samples_per_class,
             include_chars74k,
             include_usps,
+            include_nist_sd19,
+            nist_samples_per_class,
+            include_corrections,
             warm_start,
             best_per_class_accuracy,
         )
@@ -999,6 +1191,7 @@ def train(
     include_emnist_byclass: bool = False,
     include_chars74k: bool = False,
     include_usps: bool = False,
+    include_corrections: bool = False,
     warm_start: bool = False,
 ) -> list[AlnumEpochMetrics]:
     """Train a 36-class recognizer until it clears the requested accuracy."""
@@ -1022,6 +1215,7 @@ def train(
             include_emnist_byclass,
             include_chars74k,
             include_usps,
+            include_corrections,
         )
         if augment
         else make_cached_loaders(
@@ -1033,6 +1227,7 @@ def train(
             include_emnist_byclass,
             include_chars74k,
             include_usps,
+            include_corrections,
         )
     )
     train_loader, test_loader, digit_test_loader, letter_test_loader = loaders
@@ -1111,6 +1306,7 @@ def train(
             include_emnist_byclass,
             include_chars74k,
             include_usps,
+            include_corrections,
             warm_start,
         )
         print(
@@ -1172,6 +1368,22 @@ def main() -> None:
         help="Append USPS digit samples to the training set.",
     )
     parser.add_argument(
+        "--include-corrections",
+        action="store_true",
+        help="Append saved per-character user corrections from data/corrections.",
+    )
+    parser.add_argument(
+        "--include-nist-sd19",
+        action="store_true",
+        help="Append a sampled raw NIST SD19 by_class subset to mixed-case training.",
+    )
+    parser.add_argument(
+        "--nist-samples-per-class",
+        type=int,
+        default=1200,
+        help="Number of raw NIST SD19 samples to cache per class when --include-nist-sd19 is used.",
+    )
+    parser.add_argument(
         "--warm-start",
         action="store_true",
         help="Initialize from the existing alphanumeric checkpoint before training.",
@@ -1189,6 +1401,9 @@ def main() -> None:
             device_name=args.device,
             include_chars74k=args.include_chars74k,
             include_usps=args.include_usps,
+            include_nist_sd19=args.include_nist_sd19,
+            nist_samples_per_class=args.nist_samples_per_class,
+            include_corrections=args.include_corrections,
             warm_start=args.warm_start,
         )
         return
@@ -1207,6 +1422,7 @@ def main() -> None:
         include_emnist_byclass=args.include_emnist_byclass,
         include_chars74k=args.include_chars74k,
         include_usps=args.include_usps,
+        include_corrections=args.include_corrections,
         warm_start=args.warm_start,
     )
 

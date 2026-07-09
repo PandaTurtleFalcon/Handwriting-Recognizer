@@ -41,6 +41,7 @@ MAX_UPLOAD_BYTES = 8 * 1024 * 1024
 MAX_IMAGE_PIXELS = 4_000_000
 MAX_FILES = 20
 CORRECTIONS_PATH = Path("data") / "corrections" / "corrections.jsonl"
+CORRECTION_UPLOAD_DIR = Path("data") / "corrections" / "uploads"
 # Predictions below this confidence are visually flagged as "uncertain" in
 # the results UI (see is_prediction_uncertain).
 LOW_CONFIDENCE_THRESHOLD = 0.80
@@ -762,6 +763,7 @@ def classify_files(files: list[tuple[str, bytes]], model, device) -> list[dict[s
 
     results: list[dict[str, object]] = []
     for filename, payload in files:
+        image_id = hashlib.sha256(payload).hexdigest()
         try:
             image = Image.open(io.BytesIO(payload))
             if image.width * image.height > MAX_IMAGE_PIXELS:
@@ -773,6 +775,7 @@ def classify_files(files: list[tuple[str, bytes]], model, device) -> list[dict[s
             continue
 
         image = ImageOps.exif_transpose(image).convert("RGB")
+        save_correction_source_image(image_id, image)
         if MnistWebHandler.recognizer_kind == "characters" and MnistWebHandler.labels is not None:
             predictions = predict_characters(
                 model,
@@ -812,11 +815,23 @@ def classify_files(files: list[tuple[str, bytes]], model, device) -> list[dict[s
                 "context_notes": context.notes,
                 "predictions": predictions,
                 "preview": image_to_data_url(image),
+                "image_id": image_id,
                 "image_width": image.width,
                 "image_height": image.height,
             }
         )
     return results
+
+
+def save_correction_source_image(image_id: str, image: Image.Image) -> None:
+    """Persist the uploaded image so future corrections can be used for training."""
+
+    if not image_id:
+        return
+    CORRECTION_UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+    target = CORRECTION_UPLOAD_DIR / f"{image_id}.png"
+    if not target.exists():
+        image.save(target)
 
 
 def should_use_digit_specialist_predictions(
@@ -967,6 +982,7 @@ def build_correction_record(form: dict[str, str]) -> dict[str, object]:
     return {
         "correction_kind": correction_kind,
         "filename": form.get("filename", "")[:255],
+        "image_id": form.get("image_id", "")[:128],
         "sequence": form.get("sequence", "")[:255],
         "prediction_index": prediction_index,
         "original_label": form.get("original_label", "")[:16],
@@ -1172,6 +1188,7 @@ def render_full_correction_form(result: dict[str, object]) -> str:
     hidden_fields = {
         "correction_kind": "sequence",
         "filename": result.get("filename", ""),
+        "image_id": result.get("image_id", ""),
         "sequence": sequence,
         "prediction_index": 0,
         "original_label": sequence,
@@ -1214,6 +1231,7 @@ def render_correction_form(result: dict[str, object], prediction: dict[str, obje
     hidden_fields = {
         "correction_kind": "character",
         "filename": result.get("filename", ""),
+        "image_id": result.get("image_id", ""),
         "sequence": result.get("sequence", ""),
         "prediction_index": index,
         "original_label": prediction_value(prediction),
