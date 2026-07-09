@@ -36,6 +36,7 @@ HASY_CHARACTER_ROOT = PROJECT_DIR / "data" / "extra_hasyv2" / "character_ascii"
 DEFAULT_MIN_CHARACTER_CORRECTIONS = 10
 DEFAULT_MIN_ALNUM_CORRECTIONS = 10
 DEFAULT_PRIORITY_LABELS = "OloI01iscZv-"
+DEFAULT_MIXEDCASE_PRIORITY_LABELS = "1Il0OoSs54YyJjTt7"
 
 
 def export_character_correction_folder(
@@ -124,7 +125,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--priority-labels",
         default=DEFAULT_PRIORITY_LABELS,
-        help="Labels to highlight in dry-run correction coverage.",
+        help="Character labels to highlight in dry-run correction coverage.",
+    )
+    parser.add_argument(
+        "--mixedcase-priority-labels",
+        default=DEFAULT_MIXEDCASE_PRIORITY_LABELS,
+        help="Mixed-case labels to highlight in dry-run correction coverage.",
     )
     return parser
 
@@ -164,6 +170,25 @@ def format_priority_coverage(counts: Counter[str], priority_labels: str) -> str:
     return ", ".join(parts)
 
 
+def correction_item_label_counts(
+    labels: list[str],
+    corrections: tuple[object, object] | None,
+) -> Counter[str]:
+    """Count loaded correction items by their decoded target label."""
+
+    counts: Counter[str] = Counter()
+    if corrections is None:
+        return counts
+    _, targets = corrections
+    for target in targets:
+        try:
+            label = labels[int(target)]
+        except (IndexError, TypeError, ValueError):
+            continue
+        counts[label] += 1
+    return counts
+
+
 def main(argv: list[str] | None = None) -> None:
     """Fine-tune alphanumeric models when usable correction crops exist."""
 
@@ -175,13 +200,23 @@ def main(argv: list[str] | None = None) -> None:
     if args.dry_run:
         character_counts = exported_character_crop_counts()
         character_count = sum(character_counts.values())
+        folded_counts = correction_item_label_counts(LABELS, folded_corrections)
+        mixed_counts = correction_item_label_counts(list(MIXEDCASE_LABELS), mixed_corrections)
         print(
             "Correction summary: "
             f"character_crops={character_count}, "
             f"folded_items={0 if folded_corrections is None else len(folded_corrections[1])}, "
             f"mixedcase_items={0 if mixed_corrections is None else len(mixed_corrections[1])}"
         )
-        print(f"Priority correction coverage: {format_priority_coverage(character_counts, args.priority_labels)}")
+        print(f"Character priority coverage: {format_priority_coverage(character_counts, args.priority_labels)}")
+        print(
+            "Folded alnum priority coverage: "
+            f"{format_priority_coverage(folded_counts, args.priority_labels.upper())}"
+        )
+        print(
+            "Mixed-case priority coverage: "
+            f"{format_priority_coverage(mixed_counts, args.mixedcase_priority_labels)}"
+        )
         return
 
     character_count = export_character_correction_folder(character_labels) if character_labels else 0
