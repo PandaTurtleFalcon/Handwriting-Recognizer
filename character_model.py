@@ -571,6 +571,18 @@ def evaluate_character_breakdown(
     }
 
 
+def character_loss_weights(labels: list[str], punctuation_weight: float = 1.0) -> torch.Tensor | None:
+    """Return class weights that optionally emphasize punctuation labels."""
+
+    if punctuation_weight <= 1.0:
+        return None
+    weights = torch.ones(len(labels), dtype=torch.float32)
+    for index, label in enumerate(labels):
+        if not label.isalnum():
+            weights[index] = float(punctuation_weight)
+    return weights
+
+
 def augment_character_batch(images: torch.Tensor) -> torch.Tensor:
     """Apply fast tensor jitter to a normalized character batch."""
 
@@ -603,6 +615,7 @@ def train_character_model(
     device_name: str = "auto",
     learning_rate: float = 0.001,
     label_smoothing: float = 0.03,
+    punctuation_loss_weight: float = 1.0,
     seed: int = 42,
     warm_start: bool = False,
     augment: bool = False,
@@ -633,7 +646,11 @@ def train_character_model(
         checkpoint = torch.load(WEIGHTS_PATH, map_location=device, weights_only=True)
         if checkpoint.get("model_type", "mlp") == model_type and list(checkpoint.get("labels", [])) == labels:
             model.load_state_dict(checkpoint["model_state_dict"])
-    criterion = nn.CrossEntropyLoss(label_smoothing=label_smoothing)
+    loss_weights = character_loss_weights(labels, punctuation_loss_weight)
+    criterion = nn.CrossEntropyLoss(
+        weight=loss_weights.to(device) if loss_weights is not None else None,
+        label_smoothing=label_smoothing,
+    )
     optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate, weight_decay=0.0005)
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=epochs)
 
@@ -705,6 +722,7 @@ def train_character_model(
             "model_type": model_type,
             "learning_rate": learning_rate,
             "label_smoothing": label_smoothing,
+            "punctuation_loss_weight": punctuation_loss_weight,
             "seed": seed,
             "warm_start": warm_start,
             "augment": augment,
@@ -722,6 +740,7 @@ def train_character_model(
                 "model_type": model_type,
                 "learning_rate": learning_rate,
                 "label_smoothing": label_smoothing,
+                "punctuation_loss_weight": punctuation_loss_weight,
                 "seed": seed,
                 "device": str(device),
                 "warm_start": warm_start,
@@ -1931,6 +1950,7 @@ def main() -> None:
     parser.add_argument("--device", choices=["auto", "cpu", "mps"], default="auto")
     parser.add_argument("--learning-rate", type=float, default=0.001)
     parser.add_argument("--label-smoothing", type=float, default=0.03)
+    parser.add_argument("--punctuation-loss-weight", type=float, default=1.0)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--warm-start", action="store_true")
     parser.add_argument("--augment", action="store_true")
@@ -1944,6 +1964,7 @@ def main() -> None:
         device_name=args.device,
         learning_rate=args.learning_rate,
         label_smoothing=args.label_smoothing,
+        punctuation_loss_weight=args.punctuation_loss_weight,
         seed=args.seed,
         warm_start=args.warm_start,
         augment=args.augment,

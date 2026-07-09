@@ -17,6 +17,7 @@ from character_model import (
     _punctuation_shape_label,
     _split_touching_character_regions,
     build_or_load_combined_cache,
+    character_loss_weights,
     labels_match_with_ambiguity,
 )
 from mnist_model import DigitRegion, segment_digit_regions
@@ -64,6 +65,14 @@ class CharacterPostprocessingTests(unittest.TestCase):
         self.assertTrue(labels_match_with_ambiguity("q", "9"))
         self.assertTrue(labels_match_with_ambiguity("T", "7"))
         self.assertFalse(labels_match_with_ambiguity("A", "B"))
+
+    def test_character_loss_weights_can_emphasize_punctuation(self) -> None:
+        weights = character_loss_weights(["A", "7", "!", "."], punctuation_weight=2.5)
+
+        self.assertIsNotNone(weights)
+        assert weights is not None
+        self.assertEqual(weights.tolist(), [1.0, 1.0, 2.5, 2.5])
+        self.assertIsNone(character_loss_weights(["A", "!"], punctuation_weight=1.0))
 
     def test_split_dot_above_stem_becomes_lowercase_i(self) -> None:
         """A detached dot above a skinny stem should read as lowercase i."""
