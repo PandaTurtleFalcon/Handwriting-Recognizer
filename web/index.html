@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Handwriting Recognizer</title>
+    <link rel="stylesheet" href="/styles.css">
+    <script src="/app.js" defer></script>
+  </head>
+  <body>
+    <main class="app-shell">
+      <section class="workspace" aria-label="Handwriting recognition workspace">
+        <header class="topbar">
+          <div>
+            <h1>Handwriting Recognizer</h1>
+            <p class="model-note" id="model-note">Upload handwriting images and correct any result for retraining.</p>
+          </div>
+          <div class="server-pill" id="server-pill">checking</div>
+        </header>
+
+        <form class="upload-panel" id="upload-form" enctype="multipart/form-data">
+          <label class="drop-zone" for="image-input">
+            <span class="drop-title">Choose handwriting images</span>
+            <span class="drop-copy">PNG, JPG, or similar image files. Multiple files are fine.</span>
+            <input id="image-input" name="images" type="file" accept="image/*" multiple>
+          </label>
+          <button class="primary-button" type="submit">Recognize</button>
+        </form>
+
+        <div class="status-line" id="status-line" role="status" aria-live="polite"></div>
+        <section class="results" id="results" aria-label="Recognition results"></section>
+      </section>
+    </main>
+  </body>
+</html>

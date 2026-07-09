@@ -643,6 +643,21 @@ class WebAppRenderingTests(unittest.TestCase):
         self.assertIn(".correction-form {\n  display: grid;\n  grid-template-columns: 1fr;", main.PAGE_CSS)
         self.assertIn(".correction-form button {\n  width: 100%;", main.PAGE_CSS)
 
+    def test_static_website_files_define_upload_and_api_flow(self) -> None:
+        """The browser UI should live in standalone HTML, CSS, and JS files."""
+
+        html = (main.WEB_ROOT / "index.html").read_text(encoding="utf-8")
+        css = (main.WEB_ROOT / "styles.css").read_text(encoding="utf-8")
+        js = (main.WEB_ROOT / "app.js").read_text(encoding="utf-8")
+
+        self.assertIn('<form class="upload-panel" id="upload-form"', html)
+        self.assertIn('href="/styles.css"', html)
+        self.assertIn('src="/app.js"', html)
+        self.assertIn(".correction-form", css)
+        self.assertIn("grid-template-columns: minmax(52px, 1fr) auto", css)
+        self.assertIn('fetch("/api/predict"', js)
+        self.assertIn('fetch("/api/correct"', js)
+
     def test_low_confidence_prediction_is_marked_uncertain(self) -> None:
         """Low-confidence predictions should be visually marked as uncertain."""
 

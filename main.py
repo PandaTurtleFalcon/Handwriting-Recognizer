@@ -42,6 +42,12 @@ MAX_IMAGE_PIXELS = 4_000_000
 MAX_FILES = 20
 CORRECTIONS_PATH = Path("data") / "corrections" / "corrections.jsonl"
 CORRECTION_UPLOAD_DIR = Path("data") / "corrections" / "uploads"
+WEB_ROOT = Path("web")
+STATIC_CONTENT_TYPES = {
+    ".html": "text/html; charset=utf-8",
+    ".css": "text/css; charset=utf-8",
+    ".js": "application/javascript; charset=utf-8",
+}
 # Predictions below this confidence are visually flagged as "uncertain" in
 # the results UI (see is_prediction_uncertain).
 LOW_CONFIDENCE_THRESHOLD = 0.80
@@ -730,7 +736,10 @@ class MnistWebHandler(BaseHTTPRequestHandler):
 
         parsed = urlparse(self.path)
         if parsed.path == "/":
-            self._send_html(render_page())
+            self._send_static(WEB_ROOT / "index.html")
+            return
+        if parsed.path in {"/styles.css", "/app.js"}:
+            self._send_static(WEB_ROOT / parsed.path.lstrip("/"))
             return
         if parsed.path == "/health":
             self._send_json({"ok": True, "model_loaded": self.model is not None, "recognizer": self.recognizer_kind})
@@ -741,6 +750,12 @@ class MnistWebHandler(BaseHTTPRequestHandler):
         """Accept prediction uploads or correction submissions."""
 
         parsed = urlparse(self.path)
+        if parsed.path == "/api/correct":
+            self._handle_correction_api_post()
+            return
+        if parsed.path == "/api/predict":
+            self._handle_prediction_api_post()
+            return
         if parsed.path == "/correct":
             self._handle_correction_post()
             return
@@ -773,6 +788,34 @@ class MnistWebHandler(BaseHTTPRequestHandler):
                 HTTPStatus.INTERNAL_SERVER_ERROR,
             )
 
+    def _handle_prediction_api_post(self) -> None:
+        """Accept image uploads and return JSON results for the static UI."""
+
+        try:
+            length = int(self.headers.get("Content-Length", "0"))
+        except ValueError:
+            self._send_json({"ok": False, "error": "Upload request is malformed."}, HTTPStatus.BAD_REQUEST)
+            return
+        if length <= 0 or length > MAX_UPLOAD_BYTES:
+            self._send_json({"ok": False, "error": "Upload one or more image files under 8 MB total."}, HTTPStatus.BAD_REQUEST)
+            return
+        content_type = self.headers.get("Content-Type", "")
+        body = self.rfile.read(length)
+        try:
+            files = parse_multipart_files(content_type, body)
+            results = classify_files(files, self.model, self.device)
+        except ValueError as exc:
+            self._send_json({"ok": False, "error": str(exc)}, HTTPStatus.BAD_REQUEST)
+            return
+        except Exception as exc:
+            print(f"Prediction failed: {exc!r}")
+            self._send_json(
+                {"ok": False, "error": "Prediction failed. Check that the upload is a valid handwriting image and try again."},
+                HTTPStatus.INTERNAL_SERVER_ERROR,
+            )
+            return
+        self._send_json({"ok": True, "results": results})
+
     def _handle_correction_post(self) -> None:
         """Persist one user correction from a result card."""
 
@@ -798,6 +841,54 @@ class MnistWebHandler(BaseHTTPRequestHandler):
             return
         self._send_html(render_page(notice="Correction saved. Thanks, this can be used for retraining."))
 
+    def _handle_correction_api_post(self) -> None:
+        """Persist one correction and return JSON for the static UI."""
+
+        try:
+            length = int(self.headers.get("Content-Length", "0"))
+        except ValueError:
+            self._send_json({"ok": False, "error": "Correction request is malformed."}, HTTPStatus.BAD_REQUEST)
+            return
+        if length <= 0 or length > 16_384:
+            self._send_json({"ok": False, "error": "Correction request is malformed."}, HTTPStatus.BAD_REQUEST)
+            return
+        body = self.rfile.read(length)
+        try:
+            form = parse_correction_form(body)
+            record = build_correction_record(form)
+            save_correction(record)
+        except ValueError as exc:
+            self._send_json({"ok": False, "error": str(exc)}, HTTPStatus.BAD_REQUEST)
+            return
+        except OSError as exc:
+            print(f"Correction save failed: {exc!r}")
+            self._send_json({"ok": False, "error": "Could not save that correction."}, HTTPStatus.INTERNAL_SERVER_ERROR)
+            return
+        self._send_json({"ok": True, "notice": "Correction saved. Thanks, this can be used for retraining."})
+
+    def _send_static(self, path: Path) -> None:
+        """Serve a known static UI file from the local web folder."""
+
+        try:
+            resolved = path.resolve(strict=True)
+            web_root = WEB_ROOT.resolve(strict=True)
+        except OSError:
+            self.send_error(HTTPStatus.NOT_FOUND)
+            return
+        if web_root not in resolved.parents and resolved != web_root:
+            self.send_error(HTTPStatus.NOT_FOUND)
+            return
+        content_type = STATIC_CONTENT_TYPES.get(resolved.suffix)
+        if content_type is None:
+            self.send_error(HTTPStatus.NOT_FOUND)
+            return
+        body = resolved.read_bytes()
+        self.send_response(HTTPStatus.OK)
+        self.send_header("Content-Type", content_type)
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
     def _send_html(self, body: str, status: HTTPStatus = HTTPStatus.OK) -> None:
         """Send a UTF-8 HTML response."""
 
@@ -808,11 +899,11 @@ class MnistWebHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(encoded)
 
-    def _send_json(self, payload: dict[str, object]) -> None:
+    def _send_json(self, payload: dict[str, object], status: HTTPStatus = HTTPStatus.OK) -> None:
         """Send a compact JSON response."""
 
         encoded = json.dumps(payload).encode("utf-8")
-        self.send_response(HTTPStatus.OK)
+        self.send_response(status)
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(encoded)))
         self.end_headers()
@@ -890,7 +981,18 @@ def classify_files(
                 alnum_labels=MnistWebHandler.alnum_labels,
             )
             predictions = resolve_visual_twin_predictions(predictions)
-            digit_predictions = predict_digits(load_model(device=device), image, device)
+            try:
+                digit_model = load_model(device=device)
+            except (OSError, RuntimeError, TypeError, ValueError) as exc:
+                print(f"Digit specialist unavailable: {exc!r}")
+                digit_model = model
+            try:
+                digit_predictions = predict_digits(digit_model, image, device)
+            except (OSError, RuntimeError, TypeError, ValueError) as exc:
+                print(f"Digit specialist prediction failed: {exc!r}")
+                digit_predictions = []
+            if not predictions and digit_predictions:
+                predictions = digit_predictions
             if should_use_digit_specialist_predictions(predictions, digit_predictions):
                 predictions = digit_predictions
         else:
@@ -1831,7 +1933,6 @@ def render_overlays(result: dict[str, object], predictions: object) -> str:
     preview = html.escape(str(result.get("preview", "")), quote=True)
     if not preview:
         return ""
-    prediction_kind = "character" if MnistWebHandler.recognizer_kind == "characters" else "digit"
     image_width = float(result.get("image_width", 1))
     image_height = float(result.get("image_height", 1))
     boxes = []
@@ -1853,6 +1954,7 @@ def render_overlays(result: dict[str, object], predictions: object) -> str:
         uncertain = is_prediction_uncertain(prediction)
         box_class = "digit-box uncertain" if uncertain else "digit-box"
         uncertainty_label = ", uncertain" if uncertain else ""
+        prediction_kind = "digit" if ("digit" in prediction and "label" not in prediction) or digit.isdigit() else "character"
         boxes.append(
             f'<div class="{box_class}" '
             f'tabindex="0" title="Prediction #{index}: {digit}, confidence {confidence:.1f}%" '
