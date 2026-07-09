@@ -150,11 +150,22 @@ class WebAppRenderingTests(unittest.TestCase):
         self.assertIn("You can edit it again.", html)
 
     def test_render_page_shows_digit_specialist_accuracy(self) -> None:
-        """The badge should expose the high-accuracy MNIST digit specialist."""
+        """The badge should expose separate specialist metrics."""
 
         html = main.render_page()
 
+        self.assertIn("alnum", html)
         self.assertIn("digit specialist", html)
+
+    def test_best_metric_entry_prefers_checkpoint_eval(self) -> None:
+        """Checkpoint eval should count even if the latest run history regressed."""
+
+        metrics = {
+            "history": [{"test_accuracy": 95.0}, {"test_accuracy": 96.0}],
+            "best_checkpoint": {"test_accuracy": 97.0},
+        }
+
+        self.assertEqual(main.best_metric_entry(metrics)["test_accuracy"], 97.0)
 
     def test_classify_files_applies_context_cleanup_to_display(self) -> None:
         """Obvious context cleanup should affect display text, not predictions."""

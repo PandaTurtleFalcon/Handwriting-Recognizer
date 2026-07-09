@@ -1001,20 +1001,21 @@ def render_page(
 
     metrics = read_metrics()
     metrics_text = "Model not trained yet"
-    if metrics:
-        best = max(metrics, key=lambda item: item.get("test_accuracy", 0))
+    best_digit_metric = best_metric_entry(metrics)
+    best_alnum_metric = None
+    if best_digit_metric:
+        best = best_digit_metric
         metrics_text = f"Best test accuracy: {best['test_accuracy']:.2f}%"
     if ALNUM_WEIGHTS_PATH.exists():
         alnum_metrics = read_metrics(ALNUM_METRICS_PATH)
-        if isinstance(alnum_metrics, dict):
-            history = alnum_metrics.get("history", [])
-            if history:
-                best = max(history, key=lambda item: item.get("test_accuracy", 0))
-                metrics_text = (
-                    f"Combined test accuracy: {best['test_accuracy']:.2f}% "
-                    f"(digits {best.get('digit_test_accuracy', 0):.2f}%, "
-                    f"letters {best.get('letter_test_accuracy', 0):.2f}%)"
-                )
+        best_alnum_metric = best_metric_entry(alnum_metrics)
+        if best_alnum_metric:
+            best = best_alnum_metric
+            metrics_text = (
+                f"Combined test accuracy: {best['test_accuracy']:.2f}% "
+                f"(digits {best.get('digit_test_accuracy', 0):.2f}%, "
+                f"letters {best.get('letter_test_accuracy', 0):.2f}%)"
+            )
     if MIXEDCASE_WEIGHTS_PATH.exists():
         mixedcase_metrics = read_metrics(MIXEDCASE_METRICS_PATH)
         if isinstance(mixedcase_metrics, dict):
@@ -1042,8 +1043,10 @@ def render_page(
             metrics_text = f"Character validation accuracy: {best['validation_accuracy']:.2f}%"
         elif character_metrics:
             metrics_text = f"{metrics_text} + punctuation"
-    if metrics:
-        digit_best = max(metrics, key=lambda item: item.get("test_accuracy", 0))
+    if best_alnum_metric and MIXEDCASE_WEIGHTS_PATH.exists():
+        metrics_text = f"{metrics_text} | alnum {best_alnum_metric['test_accuracy']:.2f}%"
+    if best_digit_metric:
+        digit_best = best_digit_metric
         metrics_text = f"{metrics_text} | digit specialist {digit_best['test_accuracy']:.2f}%"
 
     result_html = ""
@@ -1304,6 +1307,24 @@ def read_metrics(path=METRICS_PATH):
         return json.loads(path.read_text(encoding="utf-8"))
     except json.JSONDecodeError:
         return []
+
+
+def best_metric_entry(metrics: object, key: str = "test_accuracy") -> dict[str, object] | None:
+    """Return the best metric entry from history plus optional checkpoint eval."""
+
+    candidates: list[dict[str, object]] = []
+    if isinstance(metrics, dict):
+        history = metrics.get("history", [])
+        if isinstance(history, list):
+            candidates.extend(item for item in history if isinstance(item, dict))
+        checkpoint = metrics.get("best_checkpoint")
+        if isinstance(checkpoint, dict):
+            candidates.append(checkpoint)
+    elif isinstance(metrics, list):
+        candidates.extend(item for item in metrics if isinstance(item, dict))
+    if not candidates:
+        return None
+    return max(candidates, key=lambda item: float(item.get(key, 0)))
 
 
 def run(host: str = HOST, port: int = PORT) -> None:
