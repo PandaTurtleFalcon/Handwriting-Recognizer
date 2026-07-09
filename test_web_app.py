@@ -321,6 +321,15 @@ class WebAppRenderingTests(unittest.TestCase):
         self.assertEqual(results[0]["error"], "No handwriting-like marks were detected.")
         self.assertIn("preview", results[0])
 
+    def test_classify_files_can_skip_saving_source_images(self) -> None:
+        """Synthetic evaluators should not pollute the user-correction upload set."""
+
+        with patch.object(main, "predict_digits", return_value=[]):
+            with patch.object(main, "save_correction_source_image") as mock_save:
+                main.classify_files([("blank.png", png_bytes())], model=object(), device=object(), save_sources=False)
+
+        mock_save.assert_not_called()
+
     def test_character_mode_uses_character_predictor(self) -> None:
         """Character mode should dispatch to the expanded recognizer stack."""
 

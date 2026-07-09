@@ -829,7 +829,12 @@ def parse_multipart_files(content_type: str, body: bytes) -> list[tuple[str, byt
     return files
 
 
-def classify_files(files: list[tuple[str, bytes]], model, device) -> list[dict[str, object]]:
+def classify_files(
+    files: list[tuple[str, bytes]],
+    model,
+    device,
+    save_sources: bool = True,
+) -> list[dict[str, object]]:
     """Decode images, run the active recognizer, and package render data."""
 
     results: list[dict[str, object]] = []
@@ -846,7 +851,8 @@ def classify_files(files: list[tuple[str, bytes]], model, device) -> list[dict[s
             continue
 
         image = ImageOps.exif_transpose(image).convert("RGB")
-        save_correction_source_image(image_id, image)
+        if save_sources:
+            save_correction_source_image(image_id, image)
         if MnistWebHandler.recognizer_kind == "characters" and MnistWebHandler.labels is not None:
             predictions = predict_characters(
                 model,

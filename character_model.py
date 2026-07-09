@@ -1559,7 +1559,7 @@ def _is_standalone_dot_mark(prediction: dict[str, float | int | str]) -> bool:
     label = str(prediction["label"])
     width = int(prediction["width"])
     height = int(prediction["height"])
-    return label in {".", "'", "`"} and width <= 36 and height <= 36
+    return label in {".", "'", "`", ":"} and width <= 36 and height <= 36
 
 
 def _postprocess_dot_height(predictions: list[dict[str, float | int | str]]) -> list[dict[str, float | int | str]]:

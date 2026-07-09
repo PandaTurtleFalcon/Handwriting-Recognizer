@@ -25,6 +25,16 @@ class MnistPreprocessingTests(unittest.TestCase):
         self.assertGreater(pixels.sum(), 0)
         self.assertLessEqual(pixels.max(), 255)
 
+    def test_empty_crop_normalizes_to_blank_canvas(self) -> None:
+        """Degenerate segmentation crops should not crash digit fallback."""
+
+        image = Image.new("L", (0, 12), 255)
+
+        normalized = mnist_normalize_image(image)
+
+        self.assertEqual(normalized.size, (28, 28))
+        self.assertEqual(int(np.asarray(normalized).sum()), 0)
+
     def test_segment_digits_splits_separated_components_left_to_right(self) -> None:
         """Separated marks should become separate crops in left-to-right order."""
 

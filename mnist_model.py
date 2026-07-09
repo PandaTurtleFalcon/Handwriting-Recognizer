@@ -304,6 +304,8 @@ def _foreground_from_image(image: Image.Image) -> np.ndarray:
 
     grayscale = ImageOps.grayscale(image)
     array = np.asarray(grayscale, dtype=np.float32) / 255.0
+    if array.size == 0 or array.shape[0] == 0 or array.shape[1] == 0:
+        return np.zeros((1, 1), dtype=np.float32)
     border = np.concatenate((array[0, :], array[-1, :], array[:, 0], array[:, -1]))
     if float(np.median(border)) > 0.5:
         array = 1.0 - array
@@ -771,6 +773,8 @@ def mnist_normalize_image(image: Image.Image) -> Image.Image:
     canvas.paste(digit, (left, top))
 
     canvas_array = np.asarray(canvas, dtype=np.float32)
+    if canvas_array.sum() == 0:
+        return canvas
     center = ndimage.center_of_mass(canvas_array)
     if not any(np.isnan(center)):
         # center_of_mass returns NaN when the canvas is entirely blank

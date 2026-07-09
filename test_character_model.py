@@ -109,7 +109,7 @@ class CharacterPostprocessingTests(unittest.TestCase):
 
         predictions = [
             {"label": "H", "confidence": 0.97, "x": 10, "y": 20, "width": 50, "height": 90, "row": 1},
-            {"label": "'", "confidence": 0.72, "x": 70, "y": 98, "width": 10, "height": 10, "row": 1},
+            {"label": ":", "confidence": 0.72, "x": 70, "y": 98, "width": 10, "height": 10, "row": 1},
         ]
 
         cleaned = _postprocess_dot_height(predictions)
