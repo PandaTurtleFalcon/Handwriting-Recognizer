@@ -60,6 +60,8 @@ def _clean_one_row(text: str) -> tuple[str, list[str]]:
     notes.extend(test_notes)
     cleaned, numeric_notes = _clean_numeric_pair(cleaned)
     notes.extend(numeric_notes)
+    cleaned, numeric_group_notes = _clean_numeric_group_edges(cleaned)
+    notes.extend(numeric_group_notes)
     cleaned, parenthesis_notes = _balance_parentheses(cleaned)
     notes.extend(parenthesis_notes)
     return cleaned, notes
@@ -104,11 +106,28 @@ def _clean_test_word(text: str) -> tuple[str, list[str]]:
 
 
 def _clean_numeric_pair(text: str) -> tuple[str, list[str]]:
-    """Fix a whole-row 15 pair when the leading 1 was read as p/P."""
+    """Fix whole-row numeric pairs with known hard-case lookalikes."""
 
     if text in {"p5", "P5"}:
         return "15", ["Read a two-character p5-shaped row as the number 15."]
+    if text in {"2T"}:
+        return "27", ["Read a two-character 2T-shaped row as the number 27."]
     return text, []
+
+
+def _clean_numeric_group_edges(text: str) -> tuple[str, list[str]]:
+    """Fix parenthesized numeric groups whose edge parentheses became 1-like."""
+
+    if len(text) < 4:
+        return text, []
+    first = text[0]
+    last = text[-1]
+    middle = text[1:-1]
+    if first not in {"1", "I", "l", "L", "["} or last not in {"1", "I", "l", "L", "]"}:
+        return text, []
+    if not middle.isdigit() or len(middle) < 2:
+        return text, []
+    return f"({middle})", ["Read 1-like edge glyphs around digits as parentheses."]
 
 
 def _drop_stray_greeting_punctuation_row(rows: list[str]) -> tuple[list[str], list[str]]:

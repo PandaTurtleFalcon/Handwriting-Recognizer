@@ -53,12 +53,44 @@ class ContextRulesTests(unittest.TestCase):
         self.assertEqual(cleanup.display, "15")
         self.assertIn("15", cleanup.notes[0])
 
+    def test_conservative_numeric_pair_cleanup_handles_27_case(self) -> None:
+        """A whole-row 2T shape can be the common handwritten 27 confusion."""
+
+        cleanup = cleanup_context("2T")
+
+        self.assertEqual(cleanup.display, "27")
+        self.assertIn("27", cleanup.notes[0])
+
     def test_conservative_numeric_pair_cleanup_rejects_longer_strings(self) -> None:
         """The p5 cleanup should not rewrite word-like strings."""
 
         cleanup = cleanup_context("p50")
 
         self.assertEqual(cleanup.display, "p50")
+        self.assertEqual(cleanup.notes, [])
+
+    def test_numeric_group_edges_can_be_parentheses(self) -> None:
+        """A 1-like pair around multiple digits can be parenthesized numbers."""
+
+        cleanup = cleanup_context("1851")
+
+        self.assertEqual(cleanup.display, "(85)")
+        self.assertIn("parentheses", cleanup.notes[0])
+
+    def test_numeric_group_edges_reject_single_digit_groups(self) -> None:
+        """The numeric parenthesis cleanup should stay narrow."""
+
+        cleanup = cleanup_context("151")
+
+        self.assertEqual(cleanup.display, "151")
+        self.assertEqual(cleanup.notes, [])
+
+    def test_numeric_group_edges_reject_words(self) -> None:
+        """Letters between edge glyphs should not become parenthesized."""
+
+        cleanup = cleanup_context("1A51")
+
+        self.assertEqual(cleanup.display, "1A51")
         self.assertEqual(cleanup.notes, [])
 
     def test_conservative_hi_cleanup_allows_punctuation_tail(self) -> None:
