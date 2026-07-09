@@ -726,6 +726,7 @@ def train_character_model(
                 "warm_start": warm_start,
                 "augment": augment,
                 "extra_roots": [str(path) for path in selected_extra_roots],
+                "ambiguity_groups": ["".join(sorted(group)) for group in AMBIGUITY_GROUPS],
                 "best_checkpoint": best_breakdown or {"validation_accuracy": best_accuracy},
                 "history": [asdict(item) for item in history],
             },
