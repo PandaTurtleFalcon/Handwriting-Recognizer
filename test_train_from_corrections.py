@@ -1,10 +1,14 @@
+import contextlib
+import io
 import json
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from PIL import Image, ImageDraw
 
+from scripts import train_from_corrections
 from scripts.train_from_corrections import export_character_correction_folder
 
 
@@ -52,6 +56,38 @@ class TrainFromCorrectionsTests(unittest.TestCase):
             self.assertEqual(count, 2)
             self.assertEqual(len(list((output_root / str(ord("H"))).glob("*.png"))), 1)
             self.assertEqual(len(list((output_root / str(ord("i"))).glob("*.png"))), 1)
+
+    def test_parser_help_is_available_without_training(self) -> None:
+        """The daily training script should expose safe CLI help."""
+
+        help_text = train_from_corrections.build_parser().format_help()
+
+        self.assertIn("--dry-run", help_text)
+        self.assertIn("--min-character-corrections", help_text)
+        self.assertIn("--min-alnum-corrections", help_text)
+
+    def test_main_skips_tiny_correction_sets_without_force(self) -> None:
+        """A tiny user-labeled set should not trigger daily fine-tuning by default."""
+
+        fake_corrections = (object(), [0, 1])
+        output = io.StringIO()
+        with (
+            patch.object(train_from_corrections, "load_correction_cache", return_value=fake_corrections),
+            patch.object(train_from_corrections, "load_character_labels", return_value=["A"]),
+            patch.object(train_from_corrections, "export_character_correction_folder", return_value=2),
+            patch.object(train_from_corrections, "train_character_model") as train_character,
+            patch.object(train_from_corrections, "train") as train_folded,
+            patch.object(train_from_corrections, "train_mixedcase") as train_mixed,
+            contextlib.redirect_stdout(output),
+        ):
+            train_from_corrections.main([])
+
+        self.assertIn("Only 2 character correction samples", output.getvalue())
+        self.assertIn("Only 2 folded alnum correction samples", output.getvalue())
+        self.assertIn("Only 2 mixed-case correction samples", output.getvalue())
+        train_character.assert_not_called()
+        train_folded.assert_not_called()
+        train_mixed.assert_not_called()
 
 
 if __name__ == "__main__":

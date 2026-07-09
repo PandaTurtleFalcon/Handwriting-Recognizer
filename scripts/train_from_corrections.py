@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import argparse
 import sys
 import json
 import shutil
@@ -31,6 +32,8 @@ from character_model import train_character_model
 
 CHARACTER_CORRECTION_ROOT = PROJECT_DIR / "data" / "corrections" / "character_ascii"
 HASY_CHARACTER_ROOT = PROJECT_DIR / "data" / "extra_hasyv2" / "character_ascii"
+DEFAULT_MIN_CHARACTER_CORRECTIONS = 10
+DEFAULT_MIN_ALNUM_CORRECTIONS = 10
 
 
 def export_character_correction_folder(
@@ -90,67 +93,139 @@ def load_character_labels() -> list[str]:
     return [str(label) for label in json.loads(CHARACTER_LABELS_PATH.read_text(encoding="utf-8"))]
 
 
-def main() -> None:
+def build_parser() -> argparse.ArgumentParser:
+    """Create the correction-training CLI parser."""
+
+    parser = argparse.ArgumentParser(description="Fine-tune recognizers from saved user correction data.")
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Report usable correction counts without exporting crops or training.",
+    )
+    parser.add_argument(
+        "--force",
+        action="store_true",
+        help="Train even when the correction set is smaller than the default safety threshold.",
+    )
+    parser.add_argument(
+        "--min-character-corrections",
+        type=int,
+        default=DEFAULT_MIN_CHARACTER_CORRECTIONS,
+        help="Minimum exported character crops required before character fine-tuning starts.",
+    )
+    parser.add_argument(
+        "--min-alnum-corrections",
+        type=int,
+        default=DEFAULT_MIN_ALNUM_CORRECTIONS,
+        help="Minimum correction items required before folded or mixed-case fine-tuning starts.",
+    )
+    return parser
+
+
+def count_exported_character_crops(root: Path = CHARACTER_CORRECTION_ROOT) -> int:
+    """Count already-exported correction crop images."""
+
+    if not root.exists():
+        return 0
+    return sum(1 for path in root.rglob("*.png") if path.is_file())
+
+
+def main(argv: list[str] | None = None) -> None:
     """Fine-tune alphanumeric models when usable correction crops exist."""
+
+    args = build_parser().parse_args(argv)
 
     folded_corrections = load_correction_cache(LABELS)
     mixed_corrections = load_correction_cache(list(MIXEDCASE_LABELS))
     character_labels = load_character_labels() if CHARACTER_LABELS_PATH.exists() else []
+    if args.dry_run:
+        character_count = count_exported_character_crops()
+        print(
+            "Correction summary: "
+            f"character_crops={character_count}, "
+            f"folded_items={0 if folded_corrections is None else len(folded_corrections[1])}, "
+            f"mixedcase_items={0 if mixed_corrections is None else len(mixed_corrections[1])}"
+        )
+        return
+
     character_count = export_character_correction_folder(character_labels) if character_labels else 0
     if folded_corrections is None and mixed_corrections is None and character_count == 0:
         print("No character-level corrections with saved source images yet; skipping training.")
         return
 
     if character_count:
-        print(f"Fine-tuning primary character model with {character_count} correction samples.")
-        extra_roots = [CHARACTER_CORRECTION_ROOT]
-        if HASY_CHARACTER_ROOT.exists():
-            extra_roots.insert(0, HASY_CHARACTER_ROOT)
-        train_character_model(
-            epochs=2,
-            batch_size=128,
-            min_accuracy=0,
-            dataset_root=CHARACTER_DATASET_ROOT,
-            model_type="widecnn",
-            device_name="auto",
-            learning_rate=0.00008,
-            label_smoothing=0.02,
-            seed=101,
-            warm_start=True,
-            augment=True,
-            extra_roots=extra_roots,
-        )
+        if character_count < args.min_character_corrections and not args.force:
+            print(
+                f"Only {character_count} character correction samples are available; "
+                f"need at least {args.min_character_corrections} before daily character fine-tuning. "
+                "Use --force to override."
+            )
+        else:
+            print(f"Fine-tuning primary character model with {character_count} correction samples.")
+            extra_roots = [CHARACTER_CORRECTION_ROOT]
+            if HASY_CHARACTER_ROOT.exists():
+                extra_roots.insert(0, HASY_CHARACTER_ROOT)
+            train_character_model(
+                epochs=2,
+                batch_size=128,
+                min_accuracy=0,
+                dataset_root=CHARACTER_DATASET_ROOT,
+                model_type="widecnn",
+                device_name="auto",
+                learning_rate=0.00008,
+                label_smoothing=0.02,
+                seed=101,
+                warm_start=True,
+                augment=True,
+                extra_roots=extra_roots,
+            )
 
     if folded_corrections is not None:
-        print(f"Fine-tuning folded alnum model with {len(folded_corrections[1])} correction samples.")
-        train(
-            epochs=3,
-            batch_size=2048,
-            min_accuracy=0,
-            learning_rate=0.00008,
-            seed=101,
-            augment=False,
-            model_type="cnn",
-            samples_per_class=2500,
-            device_name="auto",
-            include_corrections=True,
-            warm_start=True,
-        )
+        folded_count = len(folded_corrections[1])
+        if folded_count < args.min_alnum_corrections and not args.force:
+            print(
+                f"Only {folded_count} folded alnum correction samples are available; "
+                f"need at least {args.min_alnum_corrections} before daily folded fine-tuning. "
+                "Use --force to override."
+            )
+        else:
+            print(f"Fine-tuning folded alnum model with {folded_count} correction samples.")
+            train(
+                epochs=3,
+                batch_size=2048,
+                min_accuracy=0,
+                learning_rate=0.00008,
+                seed=101,
+                augment=False,
+                model_type="cnn",
+                samples_per_class=2500,
+                device_name="auto",
+                include_corrections=True,
+                warm_start=True,
+            )
 
     if mixed_corrections is not None:
-        print(f"Fine-tuning mixed-case model with {len(mixed_corrections[1])} correction samples.")
-        train_mixedcase(
-            epochs=3,
-            batch_size=2048,
-            min_accuracy=0,
-            learning_rate=0.00008,
-            seed=101,
-            model_type="cnn",
-            samples_per_class=2500,
-            device_name="auto",
-            include_corrections=True,
-            warm_start=True,
-        )
+        mixed_count = len(mixed_corrections[1])
+        if mixed_count < args.min_alnum_corrections and not args.force:
+            print(
+                f"Only {mixed_count} mixed-case correction samples are available; "
+                f"need at least {args.min_alnum_corrections} before daily mixed-case fine-tuning. "
+                "Use --force to override."
+            )
+        else:
+            print(f"Fine-tuning mixed-case model with {mixed_count} correction samples.")
+            train_mixedcase(
+                epochs=3,
+                batch_size=2048,
+                min_accuracy=0,
+                learning_rate=0.00008,
+                seed=101,
+                model_type="cnn",
+                samples_per_class=2500,
+                device_name="auto",
+                include_corrections=True,
+                warm_start=True,
+            )
 
 
 if __name__ == "__main__":
