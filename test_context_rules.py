@@ -29,6 +29,22 @@ class ContextRulesTests(unittest.TestCase):
         self.assertEqual(cleanup.display, "T3L87")
         self.assertEqual(cleanup.notes, [])
 
+    def test_conservative_test_cleanup_uses_whole_word_shape(self) -> None:
+        """A four-character Test-shaped row can use common glyph lookalikes."""
+
+        cleanup = cleanup_context("7:5T")
+
+        self.assertEqual(cleanup.display, "Test")
+        self.assertIn("Test", cleanup.notes[0])
+
+    def test_conservative_test_cleanup_rejects_longer_strings(self) -> None:
+        """The Test cleanup should not rewrite arbitrary mixed strings."""
+
+        cleanup = cleanup_context("7:5T9")
+
+        self.assertEqual(cleanup.display, "7:5T9")
+        self.assertEqual(cleanup.notes, [])
+
     def test_conservative_hi_cleanup_allows_punctuation_tail(self) -> None:
         """HL! is a safe greeting correction because no word tail is guessed."""
 

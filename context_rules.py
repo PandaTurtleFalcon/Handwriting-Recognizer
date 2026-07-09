@@ -54,6 +54,8 @@ def _clean_one_row(text: str) -> tuple[str, list[str]]:
     notes: list[str] = []
     cleaned, greeting_notes = _clean_greeting(cleaned)
     notes.extend(greeting_notes)
+    cleaned, test_notes = _clean_test_word(cleaned)
+    notes.extend(test_notes)
     cleaned, parenthesis_notes = _balance_parentheses(cleaned)
     notes.extend(parenthesis_notes)
     return cleaned, notes
@@ -79,6 +81,22 @@ def _clean_greeting(text: str) -> tuple[str, list[str]]:
         return text, []
     replacement = ("H" if head[0] == "H" else "h") + "i" + tail
     return replacement, ["Read H followed by a skinny stroke as the greeting 'Hi'."]
+
+
+def _clean_test_word(text: str) -> tuple[str, list[str]]:
+    """Fix a whole-row Test word made only of known visual lookalikes."""
+
+    if len(text) != 4:
+        return text, []
+    first, second, third, fourth = text
+    if (
+        first in {"T", "7"}
+        and second in {"e", "E", "3", ":"}
+        and third in {"s", "S", "5"}
+        and fourth in {"t", "T", "7"}
+    ):
+        return "Test", ["Read a four-character Test-shaped row using common T/e/s/t lookalikes."]
+    return text, []
 
 
 def _balance_parentheses(text: str) -> tuple[str, list[str]]:
