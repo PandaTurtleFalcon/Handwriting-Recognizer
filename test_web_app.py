@@ -312,12 +312,16 @@ class WebAppRenderingTests(unittest.TestCase):
         """High-confidence digit predictions should win all-digit-like uploads."""
 
         character_predictions = [
-            {"label": "Y", "confidence": 0.98, "row": 1},
-            {"label": "J", "confidence": 0.97, "row": 1},
+            {"label": "4", "confidence": 0.98, "row": 1},
+            {"label": "5", "confidence": 0.97, "row": 1},
+            {"label": "J", "confidence": 0.70, "row": 1},
+            {"label": "7", "confidence": 0.96, "row": 1},
         ]
         digit_predictions = [
             {"digit": 4, "confidence": 0.99, "row": 1},
             {"digit": 5, "confidence": 0.98, "row": 1},
+            {"digit": 5, "confidence": 0.97, "row": 1},
+            {"digit": 7, "confidence": 0.99, "row": 1},
         ]
 
         self.assertTrue(main.should_use_digit_specialist_predictions(character_predictions, digit_predictions))
@@ -332,6 +336,20 @@ class WebAppRenderingTests(unittest.TestCase):
         digit_predictions = [
             {"digit": 4, "confidence": 0.99, "row": 1},
             {"digit": 1, "confidence": 0.98, "row": 1},
+        ]
+
+        self.assertFalse(main.should_use_digit_specialist_predictions(character_predictions, digit_predictions))
+
+    def test_digit_specialist_router_keeps_mixed_ambiguous_words(self) -> None:
+        """A short ambiguous mixed string should not be rewritten as digits."""
+
+        character_predictions = [
+            {"label": "S", "confidence": 0.70, "row": 1},
+            {"label": "0", "confidence": 0.95, "row": 1},
+        ]
+        digit_predictions = [
+            {"digit": 5, "confidence": 0.99, "row": 1},
+            {"digit": 0, "confidence": 0.98, "row": 1},
         ]
 
         self.assertFalse(main.should_use_digit_specialist_predictions(character_predictions, digit_predictions))
@@ -521,6 +539,19 @@ class WebAppRenderingTests(unittest.TestCase):
         self.assertEqual(record["prediction_index"], 0)
         self.assertEqual(record["original_label"], "HL:")
         self.assertEqual(record["corrected_label"], "Hi!")
+
+    def test_character_correction_rejects_multi_character_text(self) -> None:
+        """Per-character corrections should be trainable one-character labels."""
+
+        body = (
+            b"filename=sample.png&sequence=HL&prediction_index=2&original_label=L"
+            b"&corrected_label=Hi&confidence=0.8&bbox=%7B%22x%22%3A1%7D"
+        )
+
+        form = main.parse_correction_form(body)
+
+        with self.assertRaisesRegex(ValueError, "exactly one character"):
+            main.build_correction_record(form)
 
     def test_save_correction_appends_jsonl(self) -> None:
         """Saved corrections should append one JSON object per line."""

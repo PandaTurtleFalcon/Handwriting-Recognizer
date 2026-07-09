@@ -53,6 +53,7 @@ CLOSE_GUESS_MARGIN = 0.12
 TOP_GUESS_LIMIT = 3
 DIGIT_SPECIALIST_COMPATIBLE_LABELS = set("0123456789BIJLOSYZlo")
 DIGIT_SPECIALIST_LETTER_BLOCKERS = set("BOSo")
+DIGIT_SPECIALIST_MAX_LETTER_RATIO = 0.25
 # Set well above MAX_IMAGE_PIXELS so PIL's own decompression-bomb guard
 # never fires before this app's own size check in classify_files runs (and
 # reports a friendlier error); the 2x margin is just headroom, not a real limit.
@@ -849,6 +850,9 @@ def should_use_digit_specialist_predictions(
     labels = [prediction_value(item) for item in character_predictions]
     if any(label not in DIGIT_SPECIALIST_COMPATIBLE_LABELS for label in labels):
         return False
+    letter_count = sum(1 for label in labels if label.isalpha())
+    if letter_count and letter_count / len(labels) > DIGIT_SPECIALIST_MAX_LETTER_RATIO:
+        return False
     if any(
         label in DIGIT_SPECIALIST_LETTER_BLOCKERS and float(item.get("confidence", 0)) >= 0.82
         for label, item in zip(labels, character_predictions)
@@ -962,8 +966,10 @@ def build_correction_record(form: dict[str, str]) -> dict[str, object]:
     corrected_label = form.get("corrected_label", "").strip()
     if not corrected_label:
         raise ValueError("Type the correct character before saving.")
-    max_length = 255 if correction_kind == "sequence" else 16
+    max_length = 255 if correction_kind == "sequence" else 1
     if len(corrected_label) > max_length:
+        if correction_kind == "character":
+            raise ValueError("Character corrections must be exactly one character.")
         raise ValueError("Correction is too long.")
     try:
         prediction_index = int(form.get("prediction_index", "0"))
@@ -973,6 +979,8 @@ def build_correction_record(form: dict[str, str]) -> dict[str, object]:
         raise ValueError("Correction request is malformed.") from exc
     if correction_kind not in {"character", "sequence"} or not isinstance(bbox, dict):
         raise ValueError("Correction request is malformed.")
+    if correction_kind == "character" and len(corrected_label) != 1:
+        raise ValueError("Character corrections must be exactly one character.")
     if correction_kind == "character" and prediction_index < 1:
         # Sequence-level corrections use index 0 (see the hidden fields in
         # render_full_correction_form) since they aren't tied to one
@@ -1265,7 +1273,7 @@ def render_correction_form(result: dict[str, object], prediction: dict[str, obje
         '<form class="correction-form" action="/correct" method="post" data-correction-form>'
         f"{inputs}"
         f'<label class="sr-only" for="{label_id}">Correct prediction #{index}</label>'
-        f'<input id="{label_id}" name="corrected_label" type="text" maxlength="16" '
+        f'<input id="{label_id}" name="corrected_label" type="text" maxlength="1" '
         f'placeholder="fix #{index}" autocomplete="off">'
         '<button type="submit">Save</button>'
         '<span class="correction-status" data-correction-status></span>'

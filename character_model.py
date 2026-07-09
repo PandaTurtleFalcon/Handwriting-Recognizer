@@ -9,6 +9,7 @@ and shape-based punctuation post-processing.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import random
 import threading
@@ -322,11 +323,20 @@ def split_dataset(dataset: CharacterDataset, validation_size: float = 0.15) -> t
     return train_indices, validation_indices
 
 
+def _base_cache_path(root: Path) -> Path:
+    """Return the baseline cache path for a dataset root."""
+
+    if root.resolve() == DATASET_ROOT.resolve():
+        return CACHE_PATH
+    return root.parent / f"{root.name}_character_cache_segmented_{IMAGE_SIZE}.pt"
+
+
 def build_or_load_cache(root: Path) -> tuple[torch.Tensor, torch.Tensor, list[str]]:
     """Cache curated character tensors to avoid repeated PNG decoding."""
 
-    if CACHE_PATH.exists():
-        cache = torch.load(CACHE_PATH, weights_only=True)
+    cache_path = _base_cache_path(root)
+    if cache_path.exists():
+        cache = torch.load(cache_path, weights_only=True)
         return cache["images"], cache["targets"], list(cache["labels"])
 
     images = []
@@ -338,13 +348,76 @@ def build_or_load_cache(root: Path) -> tuple[torch.Tensor, torch.Tensor, list[st
         targets.append(target)
     image_tensor = torch.stack(images)
     target_tensor = torch.tensor(targets, dtype=torch.long)
-    CACHE_PATH.parent.mkdir(parents=True, exist_ok=True)
-    torch.save({"images": image_tensor, "targets": target_tensor, "labels": dataset.labels}, CACHE_PATH)
+    cache_path.parent.mkdir(parents=True, exist_ok=True)
+    torch.save({"images": image_tensor, "targets": target_tensor, "labels": dataset.labels}, cache_path)
     return image_tensor, target_tensor, dataset.labels
+
+
+def _combined_cache_path(root: Path, extra_roots: list[Path]) -> Path:
+    """Return a stable cache path for one base dataset plus optional extras."""
+
+    if not extra_roots:
+        return CACHE_PATH
+    fingerprint = hashlib.sha1(
+        json.dumps(
+            [str(root.resolve()), *[str(extra_root.resolve()) for extra_root in extra_roots]],
+            sort_keys=True,
+        ).encode("utf-8")
+    ).hexdigest()[:12]
+    return root.parent / f"character_cache_segmented_{IMAGE_SIZE}_extras_{fingerprint}.pt"
+
+
+def build_or_load_combined_cache(root: Path, extra_roots: list[Path] | None = None) -> tuple[torch.Tensor, torch.Tensor, list[str]]:
+    """Cache curated character tensors plus optional ASCII-folder datasets."""
+
+    selected_extra_roots = extra_roots or []
+    if not selected_extra_roots:
+        return build_or_load_cache(root)
+
+    cache_path = _combined_cache_path(root, selected_extra_roots)
+    if cache_path.exists():
+        cache = torch.load(cache_path, weights_only=True)
+        return cache["images"], cache["targets"], list(cache["labels"])
+
+    images, targets, labels = build_or_load_cache(root)
+    label_to_index = {label: index for index, label in enumerate(labels)}
+    extra_images = [images]
+    extra_targets = [targets]
+    unknown_folders: list[str] = []
+
+    for extra_root in selected_extra_roots:
+        if not extra_root.exists() or not extra_root.is_dir():
+            raise RuntimeError(f"Extra character dataset does not exist: {extra_root}")
+        for class_dir in sorted(path for path in extra_root.iterdir() if path.is_dir()):
+            if not class_dir.name.isdigit():
+                unknown_folders.append(str(class_dir))
+                continue
+            label = chr(int(class_dir.name))
+            if label not in label_to_index:
+                continue
+            target = label_to_index[label]
+            loaded_images = []
+            for image_path in sorted(class_dir.glob("*.png")):
+                with Image.open(image_path) as image:
+                    loaded_images.append(character_tensor_from_image(image.convert("L")))
+            if loaded_images:
+                extra_images.append(torch.stack(loaded_images))
+                extra_targets.append(torch.full((len(loaded_images),), target, dtype=torch.long))
+
+    if unknown_folders:
+        formatted = ", ".join(unknown_folders[:8])
+        raise RuntimeError(f"Extra character dataset has non-ASCII-code folders: {formatted}")
+
+    image_tensor = torch.cat(extra_images)
+    target_tensor = torch.cat(extra_targets)
+    cache_path.parent.mkdir(parents=True, exist_ok=True)
+    torch.save({"images": image_tensor, "targets": target_tensor, "labels": labels}, cache_path)
+    return image_tensor, target_tensor, labels
 
 
 def build_character_exemplars(
     root: Path = DATASET_ROOT,
+    extra_roots: list[Path] | None = None,
     exemplars_per_class: int = 80,
     output_path: Path = EXEMPLARS_PATH,
 ) -> None:
@@ -357,7 +430,7 @@ def build_character_exemplars(
     training precision.
     """
 
-    images, targets, labels = build_or_load_cache(root)
+    images, targets, labels = build_or_load_combined_cache(root, extra_roots)
     selected_indices: list[int] = []
     for label_index in range(len(labels)):
         indices = torch.where(targets == label_index)[0][:exemplars_per_class]
@@ -376,10 +449,10 @@ def build_character_exemplars(
     )
 
 
-def make_loaders(root: Path, batch_size: int) -> tuple[DataLoader, DataLoader, list[str]]:
+def make_loaders(root: Path, batch_size: int, extra_roots: list[Path] | None = None) -> tuple[DataLoader, DataLoader, list[str]]:
     """Build weighted train and validation loaders for curated characters."""
 
-    images, targets, labels = build_or_load_cache(root)
+    images, targets, labels = build_or_load_combined_cache(root, extra_roots)
     indices = list(range(len(targets)))
     train_indices, validation_indices = train_test_split(
         indices,
@@ -532,6 +605,7 @@ def train_character_model(
     seed: int = 42,
     warm_start: bool = False,
     augment: bool = False,
+    extra_roots: list[Path] | None = None,
 ) -> list[CharacterEpochMetrics]:
     """Train the curated character model and save weights/labels/exemplars."""
 
@@ -550,7 +624,8 @@ def train_character_model(
         device = torch.device("mps")
     else:
         device = get_device()
-    train_loader, validation_loader, labels = make_loaders(dataset_root, batch_size)
+    selected_extra_roots = extra_roots or []
+    train_loader, validation_loader, labels = make_loaders(dataset_root, batch_size, selected_extra_roots)
     model_class = CHARACTER_MODEL_TYPES[model_type]
     model = model_class(num_classes=len(labels)).to(device)
     if warm_start and WEIGHTS_PATH.exists():
@@ -638,7 +713,7 @@ def train_character_model(
         WEIGHTS_PATH,
     )
     LABELS_PATH.write_text(json.dumps(labels, ensure_ascii=False, indent=2), encoding="utf-8")
-    build_character_exemplars(dataset_root)
+    build_character_exemplars(dataset_root, selected_extra_roots)
     METRICS_PATH.write_text(
         json.dumps(
             {
@@ -650,6 +725,7 @@ def train_character_model(
                 "device": str(device),
                 "warm_start": warm_start,
                 "augment": augment,
+                "extra_roots": [str(path) for path in selected_extra_roots],
                 "best_checkpoint": best_breakdown or {"validation_accuracy": best_accuracy},
                 "history": [asdict(item) for item in history],
             },
@@ -1793,6 +1869,7 @@ def main() -> None:
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--warm-start", action="store_true")
     parser.add_argument("--augment", action="store_true")
+    parser.add_argument("--extra-root", action="append", type=Path, default=[])
     args = parser.parse_args()
     train_character_model(
         epochs=args.epochs,
@@ -1805,6 +1882,7 @@ def main() -> None:
         seed=args.seed,
         warm_start=args.warm_start,
         augment=args.augment,
+        extra_roots=args.extra_root,
     )
 
 

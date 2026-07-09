@@ -1,7 +1,10 @@
+import tempfile
 import unittest
+from pathlib import Path
 
 from character_model import (
     _alnum_should_override,
+    _combined_cache_path,
     _digit_beats_ambiguous_letter,
     _letter_should_override,
     _looks_like_four,
@@ -12,6 +15,7 @@ from character_model import (
     _postprocess_lowercase_i,
     _punctuation_shape_label,
     _split_touching_character_regions,
+    build_or_load_combined_cache,
     labels_match_with_ambiguity,
 )
 from mnist_model import DigitRegion, segment_digit_regions
@@ -20,6 +24,30 @@ from PIL import Image, ImageDraw
 
 class CharacterPostprocessingTests(unittest.TestCase):
     """Regression tests for model-independent character cleanup rules."""
+
+    def test_extra_ascii_folder_data_is_added_to_character_cache(self) -> None:
+        """Extra ASCII-code folders should merge into the character labels."""
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / "base"
+            extra = Path(directory) / "extra"
+            (root / "65").mkdir(parents=True)
+            (root / "66").mkdir(parents=True)
+            (extra / "65").mkdir(parents=True)
+            for image_path in [root / "65" / "a.png", root / "66" / "b.png", extra / "65" / "extra-a.png"]:
+                image = Image.new("L", (24, 24), 255)
+                draw = ImageDraw.Draw(image)
+                draw.line((6, 18, 12, 5, 18, 18), fill=0, width=2)
+                image.save(image_path)
+
+            cache_path = _combined_cache_path(root, [extra])
+            images, targets, labels = build_or_load_combined_cache(root, [extra])
+
+            self.assertTrue(cache_path.exists())
+            self.assertEqual(labels, ["A", "B"])
+            self.assertEqual(len(images), 3)
+            self.assertEqual(targets.tolist().count(0), 2)
+            self.assertEqual(targets.tolist().count(1), 1)
 
     def test_labels_match_with_visual_ambiguity_groups(self) -> None:
         """Ambiguity-aware scoring should accept known handwriting lookalikes."""
