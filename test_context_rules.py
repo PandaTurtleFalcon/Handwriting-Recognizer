@@ -175,6 +175,8 @@ class ContextRulesTests(unittest.TestCase):
         self.assertEqual(cleanup_context("U5A").display, "USA")
         self.assertEqual(cleanup_context("T357").display, "T3s7")
         self.assertEqual(cleanup_context("T3ST").display, "T3s7")
+        self.assertEqual(cleanup_context("T3S7").display, "T3s7")
+        self.assertEqual(cleanup_context("z7").display, "27")
         self.assertEqual(cleanup_context("A1bz").display, "A1b2")
 
     def test_row_strings_stay_separated_in_display(self) -> None:

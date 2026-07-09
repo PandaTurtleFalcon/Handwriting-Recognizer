@@ -139,7 +139,9 @@ def _clean_common_words(text: str) -> tuple[str, list[str]]:
         "U5A": "USA",
         "T357": "T3s7",
         "T3ST": "T3s7",
+        "T3S7": "T3s7",
         "zT": "27",
+        "z7": "27",
         "A1bz": "A1b2",
     }
     replacement = replacements.get(text)

@@ -1048,6 +1048,66 @@ class WebAppRenderingTests(unittest.TestCase):
 
         self.assertEqual("".join(main.prediction_value(item) for item in resolved), "Yy")
 
+    def test_visual_twin_resolver_handles_y_pair_when_both_read_as_four(self) -> None:
+        """Yy can be read as 44 only when both glyphs expose strong Y/y evidence."""
+
+        predictions = [
+            {"label": "4", "confidence": 0.99, "x": 1, "y": 1, "width": 58, "height": 71, "row": 1, "alternatives": [{"label": "Y", "confidence": 0.78}, {"label": "y", "confidence": 0.20}]},
+            {"label": "4", "confidence": 0.99, "x": 70, "y": 1, "width": 52, "height": 73, "row": 1, "alternatives": [{"label": "Y", "confidence": 0.72}, {"label": "y", "confidence": 0.28}]},
+        ]
+
+        resolved = main.resolve_visual_twin_predictions(predictions)
+
+        self.assertEqual("".join(main.prediction_value(item) for item in resolved), "Yy")
+
+    def test_visual_twin_resolver_keeps_plain_numeric_forty_four(self) -> None:
+        """Plain 44 should not become Yy without Y/y alternatives."""
+
+        predictions = [
+            {"label": "4", "confidence": 0.99, "x": 1, "y": 1, "width": 57, "height": 72, "row": 1, "alternatives": [{"label": "4", "confidence": 0.97}]},
+            {"label": "4", "confidence": 0.99, "x": 70, "y": 1, "width": 57, "height": 72, "row": 1, "alternatives": [{"label": "4", "confidence": 0.97}]},
+        ]
+
+        resolved = main.resolve_visual_twin_predictions(predictions)
+
+        self.assertEqual("".join(main.prediction_value(item) for item in resolved), "44")
+
+    def test_visual_twin_resolver_handles_b8_with_strong_b_alternative(self) -> None:
+        """A B8 row can start as 88 when only the first glyph exposes B."""
+
+        predictions = [
+            {"label": "8", "confidence": 0.99, "x": 1, "y": 1, "width": 65, "height": 55, "row": 1, "alternatives": [{"label": "B", "confidence": 0.96}]},
+            {"label": "8", "confidence": 0.99, "x": 80, "y": 1, "width": 48, "height": 53, "row": 1, "alternatives": [{"label": "8", "confidence": 0.91}]},
+        ]
+
+        resolved = main.resolve_visual_twin_predictions(predictions)
+
+        self.assertEqual("".join(main.prediction_value(item) for item in resolved), "B8")
+
+    def test_visual_twin_resolver_handles_kk_with_strong_leading_k_alternative(self) -> None:
+        """Kk can be read as kk when the first glyph still exposes strong K."""
+
+        predictions = [
+            {"label": "k", "confidence": 0.82, "x": 1, "y": 1, "width": 65, "height": 56, "row": 1, "alternatives": [{"label": "K", "confidence": 0.85}]},
+            {"label": "k", "confidence": 0.98, "x": 80, "y": 1, "width": 56, "height": 63, "row": 1, "alternatives": [{"label": "K", "confidence": 0.08}]},
+        ]
+
+        resolved = main.resolve_visual_twin_predictions(predictions)
+
+        self.assertEqual("".join(main.prediction_value(item) for item in resolved), "Kk")
+
+    def test_visual_twin_resolver_handles_mm_by_height(self) -> None:
+        """Mm can be read as MM when the second glyph is shorter and has m evidence."""
+
+        predictions = [
+            {"label": "M", "confidence": 0.98, "x": 1, "y": 1, "width": 64, "height": 66, "row": 1, "alternatives": [{"label": "M", "confidence": 0.98}]},
+            {"label": "M", "confidence": 0.51, "x": 80, "y": 1, "width": 66, "height": 53, "row": 1, "alternatives": [{"label": "m", "confidence": 0.45}]},
+        ]
+
+        resolved = main.resolve_visual_twin_predictions(predictions)
+
+        self.assertEqual("".join(main.prediction_value(item) for item in resolved), "Mm")
+
     def test_visual_twin_resolver_handles_g6b_with_weak_six_alternative(self) -> None:
         """Arial-like G6b can expose the 6 only as a weak alternative."""
 

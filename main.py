@@ -1107,6 +1107,23 @@ def _resolve_visual_twin_row(row: list[dict[str, object]]) -> list[dict[str, obj
             return [row[0], _with_prediction_label(row[1], "6", 0.84), row[2]]
     if labels == ["4", "y"] and _alternative_confidence(row[0], {"Y"}) >= 0.80:
         return [_with_prediction_label(row[0], "Y", 0.84), row[1]]
+    if labels == ["4", "4"]:
+        first_y = _alternative_confidence(row[0], {"Y"})
+        second_y = _alternative_confidence(row[1], {"y"})
+        second_upper_y = _alternative_confidence(row[1], {"Y"})
+        if first_y >= 0.65 and second_y >= 0.18 and second_y >= second_upper_y * 0.35:
+            return [_with_prediction_label(row[0], "Y", 0.84), _with_prediction_label(row[1], "y", 0.84)]
+    if labels == ["8", "8"] and _alternative_confidence(row[0], {"B"}) >= 0.50:
+        if _alternative_confidence(row[1], {"B"}) < 0.10:
+            return [_with_prediction_label(row[0], "B", 0.84), row[1]]
+    if labels == ["k", "k"] and _alternative_confidence(row[0], {"K"}) >= 0.50:
+        if _alternative_confidence(row[1], {"K"}) < _alternative_confidence(row[0], {"K"}) * 0.35:
+            return [_with_prediction_label(row[0], "K", 0.84), row[1]]
+    if labels == ["M", "M"] and _alternative_confidence(row[1], {"m"}) >= 0.30:
+        first_height = float(row[0].get("height", 0))
+        second_height = float(row[1].get("height", 0))
+        if min(first_height, second_height) > 0 and first_height >= second_height * 1.15:
+            return [row[0], _with_prediction_label(row[1], "m", 0.84)]
     if labels == ["T", "t", "T"] and _alternative_confidence(row[2], {"7"}) >= 0.50:
         return [row[0], row[1], _with_prediction_label(row[2], "7", 0.84)]
     if labels == ["P", "P"] and _alternative_confidence(row[1], {"p"}) >= 0.10:

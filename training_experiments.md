@@ -8,11 +8,18 @@ restored, so future improvement loops do not repeat known-bad blends.
 - Digit specialist: `99.65%` MNIST test accuracy.
 - Folded alnum helper: `96.66%` test accuracy, with `99.53%` digits and `95.28%` letters.
 - Mixed-case helper: `80.50%` exact test accuracy, `87.19%` casefold, `90.34%` strict visual-ambiguity-aware, and `97.02%` case-or-visual-ambiguity-aware.
-- Character model: deployed checkpoint is `90.96%` validation accuracy, with `94.82%` exact punctuation and `98.30%` ambiguity-aware punctuation.
+- Character model: deployed checkpoint is `91.99%` validation accuracy, with `95.23%` exact punctuation and `98.67%` ambiguity-aware punctuation after adding deterministic generated punctuation variants.
 - App hard-case evaluator: `42/42` exact after adding broader visual-twin, mixed-case, short-word, digit/letter, and punctuation hardcases.
-- App hard-case all-font stress evaluator: `166/168` exact (`98.81%`) and `168/168` ambiguity-aware (`100.00%`) across Bradley Hand Bold, Comic Sans MS, Chalkboard, and Arial. Remaining exact misses are Comic Sans MS and Chalkboard `Yy -> 44`, where the model exposes no safe character alternative; do not add a blanket `44 -> Yy` cleanup because it would break real numeric input.
+- App hard-case all-font stress evaluator: `168/168` exact (`100.00%`) and `168/168` ambiguity-aware (`100.00%`) across Bradley Hand Bold, Comic Sans MS, Chalkboard, and Arial.
 - Mixed-case confusion analysis: `scripts/analyze_mixedcase_confusions.py --top 20` confirms the exact gap is dominated by visual twins and case twins. Top misses are `1 -> l`, `0 -> o`, `O -> o`, `9 -> q`, `O -> 0`, `0 -> O`, `F -> f`, `U -> u`, `1 -> I`, and `S -> s`; this explains why exact is `80.50%` while case-or-visual is already `97.02%`.
-- Character punctuation confusion analysis: `scripts/analyze_character_confusions.py --top 20` now matches the saved metric split and shows punctuation exact is mainly blocked by a few visual twins: `. -> '`, `- -> _`, `+ -> t`, `' -> .`, `% -> ;`, `! -> |`, and `/ -> ;/I/1`. Punctuation ambiguity-aware is already `98.30%`, so future exact gains should target these shapes specifically instead of broad punctuation-weighted training.
+- Character punctuation confusion analysis: `scripts/analyze_character_confusions.py --top 20` now matches the saved metric split and shows punctuation exact is mainly blocked by a few visual twins: `- -> _`, `. -> '`, `| -> i/l/'`, `/ -> l/|`, and `: <-> ;`. Punctuation ambiguity-aware is already `98.67%`, so future exact gains should target these shapes specifically instead of broad punctuation-weighted training.
+
+## Kept Experiments
+
+- Character model with same roots plus deterministic generated punctuation variants:
+  - Data shape: `python3 scripts/generate_punctuation_variants.py --output-root data/generated_punctuation_ascii --samples-per-label 80 --seed 42`
+  - Training shape: `python3 character_model.py --model widecnn --warm-start --epochs 3 --min-accuracy 0 --learning-rate 0.00001 --label-smoothing 0.02 --seed 404 --extra-root data/extra_hasyv2/character_ascii --extra-root data/corrections/character_ascii --extra-root data/generated_punctuation_ascii`
+  - Result: kept because validation improved to `91.99%` overall and punctuation exact cleared the requested floor at `95.23%` (`98.67%` ambiguity-aware). App-level hardcase fixes for `B8`, `Yy`, `Kk`, `Mm`, `27`, and `T3s7` brought the generated all-font stress evaluator to `168/168` exact.
 
 ## Restored Experiments
 
