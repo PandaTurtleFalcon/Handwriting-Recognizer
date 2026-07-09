@@ -400,6 +400,8 @@ class WebAppRenderingTests(unittest.TestCase):
         self.assertIn("top guesses:", html)
         self.assertIn("<b>s</b> 58.0%", html)
         self.assertIn("<b>S</b> 32.0%", html)
+        self.assertIn('data-fill-correction="s"', html)
+        self.assertIn('title="Use s for this character"', html)
         self.assertIn("ambiguous with s 58.0%", html)
         self.assertIn('class="digit uncertain"', html)
         self.assertIn('class="digit-box uncertain"', html)

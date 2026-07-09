@@ -442,6 +442,30 @@ input[type="text"]:focus-visible {
 .alternatives b {
   color: var(--ink);
 }
+.guess-button {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 4px;
+  width: auto;
+  min-height: 0;
+  margin: 0 3px 3px 0;
+  padding: 3px 7px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--panel);
+  color: var(--muted);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 700;
+  box-shadow: none;
+  cursor: pointer;
+}
+.guess-button:hover,
+.guess-button:focus-visible {
+  border-color: var(--accent);
+  color: var(--accent-dark);
+  outline: 2px solid rgb(36 64 183 / 0.14);
+}
 .ambiguity-note {
   margin-top: 7px;
   font-size: 12.5px;
@@ -627,6 +651,24 @@ PAGE_SCRIPT = """
         status.textContent = "Could not save. Try again.";
       } finally {
         button.disabled = false;
+      }
+    });
+  });
+
+  document.querySelectorAll("[data-fill-correction]").forEach((guessButton) => {
+    guessButton.addEventListener("click", () => {
+      const card = guessButton.closest(".digit");
+      const form = card ? card.querySelector("[data-correction-form]") : null;
+      const input = form ? form.querySelector('input[name="corrected_label"]') : null;
+      const status = form ? form.querySelector("[data-correction-status]") : null;
+      if (!input) {
+        return;
+      }
+      input.value = guessButton.dataset.fillCorrection || "";
+      input.focus();
+      input.select();
+      if (status) {
+        status.textContent = "Ready to save.";
       }
     });
   });
@@ -1245,11 +1287,17 @@ def render_result(result: dict[str, object]) -> str:
         if guesses:
             items = []
             for alternative in guesses:
-                label = html.escape(str(alternative.get("label", "")))
+                raw_label = str(alternative.get("label", ""))
+                label = html.escape(raw_label)
+                label_attr = html.escape(raw_label, quote=True)
                 alt_confidence = 100.0 * float(alternative.get("confidence", 0))
-                items.append(f"<b>{label}</b> {alt_confidence:.1f}%")
+                items.append(
+                    '<button class="guess-button" type="button" '
+                    f'data-fill-correction="{label_attr}" title="Use {label_attr} for this character">'
+                    f"<b>{label}</b> {alt_confidence:.1f}%</button>"
+                )
             if items:
-                alternatives_html = f'<div class="alternatives">top guesses: {" / ".join(items)}</div>'
+                alternatives_html = f'<div class="alternatives">top guesses: {" ".join(items)}</div>'
         ambiguity = ambiguity_note(prediction)
         ambiguity_html = f'<div class="ambiguity-note">{html.escape(ambiguity)}</div>' if ambiguity else ""
         uncertain_html = '<span class="uncertain-note">uncertain</span>' if uncertain else ""
