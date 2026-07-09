@@ -56,6 +56,10 @@ def _clean_one_row(text: str) -> tuple[str, list[str]]:
     notes: list[str] = []
     cleaned, greeting_notes = _clean_greeting(cleaned)
     notes.extend(greeting_notes)
+    cleaned, greeting_period_notes = _clean_greeting_period(cleaned)
+    notes.extend(greeting_period_notes)
+    cleaned, contraction_notes = _clean_common_contractions(cleaned)
+    notes.extend(contraction_notes)
     cleaned, test_notes = _clean_test_word(cleaned)
     notes.extend(test_notes)
     cleaned, numeric_notes = _clean_numeric_pair(cleaned)
@@ -87,6 +91,31 @@ def _clean_greeting(text: str) -> tuple[str, list[str]]:
         return text, []
     replacement = ("H" if head[0] == "H" else "h") + "i" + tail
     return replacement, ["Read H followed by a skinny stroke as the greeting 'Hi'."]
+
+
+def _clean_greeting_period(text: str) -> tuple[str, list[str]]:
+    """Fix the common Hi. row when a low period was read as apostrophe-like."""
+
+    if text in {"Hi'", "Hi`", "hi'", "hi`"}:
+        return f"{text[:2]}.", ["Read an apostrophe-like mark after Hi as a period."]
+    return text, []
+
+
+def _clean_common_contractions(text: str) -> tuple[str, list[str]]:
+    """Fix whole-row common contractions made from known glyph lookalikes."""
+
+    if len(text) != 5:
+        return text, []
+    first, second, third, fourth, fifth = text
+    if (
+        first in {"c", "C"}
+        and second in {"a", "A"}
+        and third in {"n", "N"}
+        and fourth in {"'", "`", "D", "d"}
+        and fifth in {"t", "T", "7"}
+    ):
+        return "can't", ["Read a whole-row can't-shaped contraction using common glyph lookalikes."]
+    return text, []
 
 
 def _clean_test_word(text: str) -> tuple[str, list[str]]:

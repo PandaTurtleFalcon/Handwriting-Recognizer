@@ -109,6 +109,38 @@ class ContextRulesTests(unittest.TestCase):
         self.assertEqual(cleanup.display, "HL5")
         self.assertEqual(cleanup.notes, [])
 
+    def test_conservative_hi_period_cleanup_handles_apostrophe_mark(self) -> None:
+        """A whole-row Hi' shape is usually the greeting with a low period."""
+
+        cleanup = cleanup_context("Hi'")
+
+        self.assertEqual(cleanup.display, "Hi.")
+        self.assertIn("period", cleanup.notes[0])
+
+    def test_conservative_hi_period_cleanup_rejects_word_tail(self) -> None:
+        """The greeting period cleanup should not rewrite longer strings."""
+
+        cleanup = cleanup_context("Hi'5")
+
+        self.assertEqual(cleanup.display, "Hi'5")
+        self.assertEqual(cleanup.notes, [])
+
+    def test_common_contraction_cleanup_handles_cant_shape(self) -> None:
+        """The hard-case CAnDt row can be the common contraction can't."""
+
+        cleanup = cleanup_context("CAnDt")
+
+        self.assertEqual(cleanup.display, "can't")
+        self.assertIn("can't", cleanup.notes[0])
+
+    def test_common_contraction_cleanup_rejects_longer_words(self) -> None:
+        """Contraction cleanup should stay whole-row specific."""
+
+        cleanup = cleanup_context("CAnDts")
+
+        self.assertEqual(cleanup.display, "CAnDts")
+        self.assertEqual(cleanup.notes, [])
+
     def test_row_strings_stay_separated_in_display(self) -> None:
         """Multi-row uploads should not collapse into one ambiguous string."""
 
