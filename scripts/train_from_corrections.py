@@ -7,6 +7,7 @@ import sys
 import json
 import shutil
 from pathlib import Path
+from collections import Counter
 
 from PIL import Image, ImageOps
 
@@ -34,6 +35,7 @@ CHARACTER_CORRECTION_ROOT = PROJECT_DIR / "data" / "corrections" / "character_as
 HASY_CHARACTER_ROOT = PROJECT_DIR / "data" / "extra_hasyv2" / "character_ascii"
 DEFAULT_MIN_CHARACTER_CORRECTIONS = 10
 DEFAULT_MIN_ALNUM_CORRECTIONS = 10
+DEFAULT_PRIORITY_LABELS = "OloI01iscZv-"
 
 
 def export_character_correction_folder(
@@ -119,6 +121,11 @@ def build_parser() -> argparse.ArgumentParser:
         default=DEFAULT_MIN_ALNUM_CORRECTIONS,
         help="Minimum correction items required before folded or mixed-case fine-tuning starts.",
     )
+    parser.add_argument(
+        "--priority-labels",
+        default=DEFAULT_PRIORITY_LABELS,
+        help="Labels to highlight in dry-run correction coverage.",
+    )
     return parser
 
 
@@ -130,6 +137,33 @@ def count_exported_character_crops(root: Path = CHARACTER_CORRECTION_ROOT) -> in
     return sum(1 for path in root.rglob("*.png") if path.is_file())
 
 
+def exported_character_crop_counts(root: Path = CHARACTER_CORRECTION_ROOT) -> Counter[str]:
+    """Count exported correction crops by character label."""
+
+    counts: Counter[str] = Counter()
+    if not root.exists():
+        return counts
+    for class_dir in root.iterdir():
+        if not class_dir.is_dir() or not class_dir.name.isdigit():
+            continue
+        label = chr(int(class_dir.name))
+        counts[label] += sum(1 for path in class_dir.rglob("*.png") if path.is_file())
+    return counts
+
+
+def format_priority_coverage(counts: Counter[str], priority_labels: str) -> str:
+    """Return a compact label=count coverage string for weak labels."""
+
+    seen: set[str] = set()
+    parts = []
+    for label in priority_labels:
+        if label in seen:
+            continue
+        seen.add(label)
+        parts.append(f"{label}:{counts.get(label, 0)}")
+    return ", ".join(parts)
+
+
 def main(argv: list[str] | None = None) -> None:
     """Fine-tune alphanumeric models when usable correction crops exist."""
 
@@ -139,13 +173,15 @@ def main(argv: list[str] | None = None) -> None:
     mixed_corrections = load_correction_cache(list(MIXEDCASE_LABELS))
     character_labels = load_character_labels() if CHARACTER_LABELS_PATH.exists() else []
     if args.dry_run:
-        character_count = count_exported_character_crops()
+        character_counts = exported_character_crop_counts()
+        character_count = sum(character_counts.values())
         print(
             "Correction summary: "
             f"character_crops={character_count}, "
             f"folded_items={0 if folded_corrections is None else len(folded_corrections[1])}, "
             f"mixedcase_items={0 if mixed_corrections is None else len(mixed_corrections[1])}"
         )
+        print(f"Priority correction coverage: {format_priority_coverage(character_counts, args.priority_labels)}")
         return
 
     character_count = export_character_correction_folder(character_labels) if character_labels else 0

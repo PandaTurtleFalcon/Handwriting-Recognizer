@@ -10,6 +10,7 @@ from PIL import Image, ImageDraw
 
 from scripts import train_from_corrections
 from scripts.train_from_corrections import export_character_correction_folder
+from scripts.train_from_corrections import exported_character_crop_counts, format_priority_coverage
 
 
 class TrainFromCorrectionsTests(unittest.TestCase):
@@ -65,6 +66,24 @@ class TrainFromCorrectionsTests(unittest.TestCase):
         self.assertIn("--dry-run", help_text)
         self.assertIn("--min-character-corrections", help_text)
         self.assertIn("--min-alnum-corrections", help_text)
+        self.assertIn("--priority-labels", help_text)
+
+    def test_counts_exported_character_crops_by_priority_label(self) -> None:
+        """Dry-run coverage should show which weak labels have examples."""
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            for label, count in {"O": 2, "l": 1}.items():
+                class_dir = root / str(ord(label))
+                class_dir.mkdir(parents=True)
+                for index in range(count):
+                    Image.new("L", (8, 8), 255).save(class_dir / f"{index}.png")
+
+            counts = exported_character_crop_counts(root)
+
+        self.assertEqual(counts["O"], 2)
+        self.assertEqual(counts["l"], 1)
+        self.assertEqual(format_priority_coverage(counts, "Olo"), "O:2, l:1, o:0")
 
     def test_main_skips_tiny_correction_sets_without_force(self) -> None:
         """A tiny user-labeled set should not trigger daily fine-tuning by default."""
