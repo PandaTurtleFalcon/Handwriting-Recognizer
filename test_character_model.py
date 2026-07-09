@@ -12,6 +12,7 @@ from character_model import (
     _postprocess_lowercase_i,
     _punctuation_shape_label,
     _split_touching_character_regions,
+    labels_match_with_ambiguity,
 )
 from mnist_model import DigitRegion, segment_digit_regions
 from PIL import Image, ImageDraw
@@ -19,6 +20,17 @@ from PIL import Image, ImageDraw
 
 class CharacterPostprocessingTests(unittest.TestCase):
     """Regression tests for model-independent character cleanup rules."""
+
+    def test_labels_match_with_visual_ambiguity_groups(self) -> None:
+        """Ambiguity-aware scoring should accept known handwriting lookalikes."""
+
+        self.assertTrue(labels_match_with_ambiguity("S", "s"))
+        self.assertTrue(labels_match_with_ambiguity("0", "O"))
+        self.assertTrue(labels_match_with_ambiguity("1", "|"))
+        self.assertTrue(labels_match_with_ambiguity("_", "-"))
+        self.assertTrue(labels_match_with_ambiguity(".", "'"))
+        self.assertTrue(labels_match_with_ambiguity("q", "9"))
+        self.assertFalse(labels_match_with_ambiguity("A", "B"))
 
     def test_split_dot_above_stem_becomes_lowercase_i(self) -> None:
         """A detached dot above a skinny stem should read as lowercase i."""

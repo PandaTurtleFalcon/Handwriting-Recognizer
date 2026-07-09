@@ -1064,7 +1064,15 @@ def render_page(
         if best and not LETTER_WEIGHTS_PATH.exists():
             metrics_text = f"Character validation accuracy: {best['validation_accuracy']:.2f}%"
         elif best:
-            metrics_text = f"{metrics_text} + punctuation {best['validation_accuracy']:.2f}%"
+            ambiguity = best.get("ambiguity_aware_validation_accuracy")
+            punctuation = best.get("punctuation_validation_accuracy", best["validation_accuracy"])
+            if ambiguity is not None:
+                metrics_text = (
+                    f"{metrics_text} + punctuation {punctuation:.2f}% "
+                    f"(ambiguity-aware {ambiguity:.2f}%)"
+                )
+            else:
+                metrics_text = f"{metrics_text} + punctuation {best['validation_accuracy']:.2f}%"
     if best_alnum_metric and MIXEDCASE_WEIGHTS_PATH.exists():
         metrics_text = f"{metrics_text} | alnum {best_alnum_metric['test_accuracy']:.2f}%"
     if best_digit_metric:

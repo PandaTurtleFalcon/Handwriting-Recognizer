@@ -58,6 +58,29 @@ LETTER_MODEL_TYPES = {
 _DIGIT_MODEL: nn.Module | None = None
 _DIGIT_MODEL_LOCK = threading.Lock()
 _DIGIT_AMBIGUOUS_LABELS = {"B", "I", "J", "L", "O", "S", "Y", "Z", "l", "o"}
+AMBIGUITY_GROUPS = [
+    frozenset("0Oo"),
+    frozenset("1Il|!/"),
+    frozenset("5Ss"),
+    frozenset("2Zz"),
+    frozenset("8B"),
+    frozenset("Cc"),
+    frozenset("Xx"),
+    frozenset("Vv"),
+    frozenset("Kk"),
+    frozenset("Pp"),
+    frozenset("-_"),
+    frozenset(".'`"),
+    frozenset(":;"),
+    frozenset("+t"),
+    frozenset("&def"),
+    frozenset("@e"),
+    frozenset("9qg"),
+    frozenset("Yy4"),
+    frozenset("Uuv"),
+    frozenset("NnMm"),
+    frozenset("Jj"),
+]
 
 
 @dataclass(frozen=True)
@@ -362,6 +385,69 @@ def evaluate(model: nn.Module, loader: DataLoader, criterion: nn.Module, device:
     return loss_total / max(len(loader), 1), 100.0 * correct / max(total, 1)
 
 
+def labels_match_with_ambiguity(expected: str, predicted: str) -> bool:
+    """Return true when labels are exact or visually ambiguous equivalents."""
+
+    if expected == predicted:
+        return True
+    if (
+        len(expected) == 1
+        and len(predicted) == 1
+        and expected.isalpha()
+        and predicted.isalpha()
+        and expected.lower() == predicted.lower()
+    ):
+        return True
+    return any(expected in group and predicted in group for group in AMBIGUITY_GROUPS)
+
+
+def evaluate_character_breakdown(
+    model: nn.Module,
+    loader: DataLoader,
+    criterion: nn.Module,
+    labels: list[str],
+    device: torch.device,
+) -> dict[str, float]:
+    """Evaluate exact and ambiguity-aware character validation metrics."""
+
+    model.eval()
+    loss_total = 0.0
+    exact_correct = 0
+    ambiguity_correct = 0
+    total = 0
+    group_correct = {"digits": 0, "letters": 0, "punctuation": 0}
+    group_total = {"digits": 0, "letters": 0, "punctuation": 0}
+    with torch.no_grad():
+        for images, targets in loader:
+            images = images.to(device)
+            outputs = model(images)
+            loss_total += criterion(outputs, targets.to(device)).item()
+            predictions = outputs.argmax(dim=1).cpu()
+            for expected_index, predicted_index in zip(targets.tolist(), predictions.tolist()):
+                expected = labels[int(expected_index)]
+                predicted = labels[int(predicted_index)]
+                exact = expected == predicted
+                exact_correct += int(exact)
+                ambiguity_correct += int(labels_match_with_ambiguity(expected, predicted))
+                total += 1
+                if expected.isdigit():
+                    group = "digits"
+                elif expected.isalpha():
+                    group = "letters"
+                else:
+                    group = "punctuation"
+                group_correct[group] += int(exact)
+                group_total[group] += 1
+    return {
+        "validation_loss": loss_total / max(len(loader), 1),
+        "validation_accuracy": 100.0 * exact_correct / max(total, 1),
+        "ambiguity_aware_validation_accuracy": 100.0 * ambiguity_correct / max(total, 1),
+        "digit_validation_accuracy": 100.0 * group_correct["digits"] / max(group_total["digits"], 1),
+        "letter_validation_accuracy": 100.0 * group_correct["letters"] / max(group_total["letters"], 1),
+        "punctuation_validation_accuracy": 100.0 * group_correct["punctuation"] / max(group_total["punctuation"], 1),
+    }
+
+
 def augment_character_batch(images: torch.Tensor) -> torch.Tensor:
     """Apply fast tensor jitter to a normalized character batch."""
 
@@ -429,8 +515,10 @@ def train_character_model(
     history: list[CharacterEpochMetrics] = []
     best_accuracy = 0.0
     best_state = None
+    best_breakdown: dict[str, float] = {}
     if warm_start:
-        _, best_accuracy = evaluate(model, validation_loader, criterion, device)
+        best_breakdown = evaluate_character_breakdown(model, validation_loader, criterion, labels, device)
+        best_accuracy = best_breakdown["validation_accuracy"]
         best_state = {key: value.detach().cpu() for key, value in model.state_dict().items()}
 
     for epoch in range(1, epochs + 1):
@@ -459,7 +547,9 @@ def train_character_model(
         scheduler.step()
         train_loss = train_loss_total / max(len(train_loader), 1)
         train_accuracy = 100.0 * train_correct / max(train_total, 1)
-        validation_loss, validation_accuracy = evaluate(model, validation_loader, criterion, device)
+        breakdown = evaluate_character_breakdown(model, validation_loader, criterion, labels, device)
+        validation_loss = breakdown["validation_loss"]
+        validation_accuracy = breakdown["validation_accuracy"]
         metrics = CharacterEpochMetrics(
             epoch=epoch,
             train_loss=train_loss,
@@ -471,6 +561,7 @@ def train_character_model(
         history.append(metrics)
         if validation_accuracy > best_accuracy:
             best_accuracy = validation_accuracy
+            best_breakdown = breakdown
             best_state = {key: value.detach().cpu() for key, value in model.state_dict().items()}
 
         print(
@@ -510,7 +601,7 @@ def train_character_model(
                 "device": str(device),
                 "warm_start": warm_start,
                 "augment": augment,
-                "best_checkpoint": {"validation_accuracy": best_accuracy},
+                "best_checkpoint": best_breakdown or {"validation_accuracy": best_accuracy},
                 "history": [asdict(item) for item in history],
             },
             indent=2,

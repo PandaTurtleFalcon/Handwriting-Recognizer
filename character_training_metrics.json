@@ -95,10 +95,37 @@
     "~"
   ],
   "model_type": "cnn",
+  "ambiguity_groups": [
+    "0Oo",
+    "!/1Il|",
+    "5Ss",
+    "2Zz",
+    "8B",
+    "Cc",
+    "Xx",
+    "Vv",
+    "Kk",
+    "Pp",
+    "-_",
+    "'.`",
+    ":;",
+    "+t",
+    "&def",
+    "@e",
+    "9gq",
+    "4Yy",
+    "Uuv",
+    "MNmn",
+    "Jj"
+  ],
   "best_checkpoint": {
     "validation_loss": 0.4616974800825119,
     "validation_accuracy": 85.57384056422312,
-    "source": "direct_eval_after_augmentation_guard"
+    "ambiguity_aware_validation_accuracy": 95.68283821329344,
+    "digit_validation_accuracy": 89.71539456662354,
+    "letter_validation_accuracy": 84.28054953000724,
+    "punctuation_validation_accuracy": 88.40579710144928,
+    "source": "direct_eval_with_ambiguity_groups"
   },
   "history": [
     {
