@@ -5,6 +5,8 @@ from pathlib import Path
 
 import numpy as np
 import torch
+from torch import nn
+from torch.utils.data import DataLoader, TensorDataset
 from PIL import Image, ImageDraw
 
 from alnum_model import (
@@ -12,6 +14,7 @@ from alnum_model import (
     _chars74k_sample_label,
     _nist_sd19_label_from_hex,
     build_or_load_mixedcase_ascii_folder_cache,
+    evaluate_mixedcase_breakdown,
     load_correction_cache,
     mixedcase_labels_match_with_ambiguity,
 )
@@ -88,6 +91,43 @@ class ExtraAlnumDatasetTests(unittest.TestCase):
         self.assertTrue(mixedcase_labels_match_with_ambiguity("q", "9"))
         self.assertTrue(mixedcase_labels_match_with_ambiguity("T", "7"))
         self.assertFalse(mixedcase_labels_match_with_ambiguity("A", "B"))
+
+    def test_mixedcase_breakdown_reports_casefold_and_ambiguity_metrics(self) -> None:
+        class FixedPredictionModel(nn.Module):
+            def __init__(self, predictions: list[int]) -> None:
+                super().__init__()
+                self.predictions = predictions
+                self.offset = 0
+
+            def forward(self, images: torch.Tensor) -> torch.Tensor:
+                batch_predictions = self.predictions[self.offset : self.offset + images.size(0)]
+                self.offset += images.size(0)
+                logits = torch.zeros((images.size(0), len(MIXEDCASE_LABELS)), dtype=torch.float32)
+                for row, label_index in enumerate(batch_predictions):
+                    logits[row, label_index] = 10.0
+                return logits
+
+        expected_labels = ["S", "s", "0", "T"]
+        predicted_labels = ["S", "S", "O", "7"]
+        targets = torch.tensor([MIXEDCASE_LABELS.index(label) for label in expected_labels])
+        predictions = [MIXEDCASE_LABELS.index(label) for label in predicted_labels]
+        images = torch.zeros((len(expected_labels), 1, 28, 28), dtype=torch.float32)
+        loader = DataLoader(TensorDataset(images, targets), batch_size=2)
+
+        metrics = evaluate_mixedcase_breakdown(
+            FixedPredictionModel(predictions),
+            loader,
+            nn.CrossEntropyLoss(),
+            list(MIXEDCASE_LABELS),
+            torch.device("cpu"),
+        )
+
+        self.assertAlmostEqual(metrics["test_accuracy"], 25.0)
+        self.assertAlmostEqual(metrics["casefold_test_accuracy"], 50.0)
+        self.assertAlmostEqual(metrics["ambiguity_aware_test_accuracy"], 100.0)
+        self.assertAlmostEqual(metrics["digit_ambiguity_aware_test_accuracy"], 100.0)
+        self.assertAlmostEqual(metrics["upper_ambiguity_aware_test_accuracy"], 100.0)
+        self.assertAlmostEqual(metrics["lower_ambiguity_aware_test_accuracy"], 100.0)
 
     def test_nist_sd19_hex_labels_map_to_mixedcase_targets(self) -> None:
         self.assertEqual(_nist_sd19_label_from_hex("30"), 0)
