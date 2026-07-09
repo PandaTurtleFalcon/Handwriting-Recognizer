@@ -975,9 +975,10 @@ def build_correction_record(form: dict[str, str]) -> dict[str, object]:
         prediction_index = int(form.get("prediction_index", "0"))
         confidence = float(form.get("confidence", "0"))
         bbox = json.loads(form.get("bbox", "{}"))
+        prediction_boxes = json.loads(form.get("prediction_boxes", "[]"))
     except (TypeError, ValueError, json.JSONDecodeError, RecursionError) as exc:
         raise ValueError("Correction request is malformed.") from exc
-    if correction_kind not in {"character", "sequence"} or not isinstance(bbox, dict):
+    if correction_kind not in {"character", "sequence"} or not isinstance(bbox, dict) or not isinstance(prediction_boxes, list):
         raise ValueError("Correction request is malformed.")
     if correction_kind == "character" and len(corrected_label) != 1:
         raise ValueError("Character corrections must be exactly one character.")
@@ -987,13 +988,36 @@ def build_correction_record(form: dict[str, str]) -> dict[str, object]:
         # specific prediction; only individual-character corrections need a
         # real 1-based prediction index.
         raise ValueError("Correction request is malformed.")
+    cleaned_prediction_boxes = []
+    if correction_kind == "sequence":
+        for item in prediction_boxes[:255]:
+            if not isinstance(item, dict):
+                continue
+            item_bbox = item.get("bbox", {})
+            if not isinstance(item_bbox, dict):
+                continue
+            try:
+                cleaned_prediction_boxes.append(
+                    {
+                        "original_label": str(item.get("original_label", ""))[:16],
+                        "bbox": {
+                            "x": float(item_bbox.get("x", 0)),
+                            "y": float(item_bbox.get("y", 0)),
+                            "width": float(item_bbox.get("width", 0)),
+                            "height": float(item_bbox.get("height", 0)),
+                            "row": int(item_bbox.get("row", 1)),
+                        },
+                    }
+                )
+            except (TypeError, ValueError):
+                continue
     return {
         "correction_kind": correction_kind,
         "filename": form.get("filename", "")[:255],
         "image_id": form.get("image_id", "")[:128],
         "sequence": form.get("sequence", "")[:255],
         "prediction_index": prediction_index,
-        "original_label": form.get("original_label", "")[:16],
+        "original_label": form.get("original_label", "")[: 255 if correction_kind == "sequence" else 16],
         "corrected_label": corrected_label,
         "confidence": confidence,
         "bbox": {
@@ -1003,6 +1027,7 @@ def build_correction_record(form: dict[str, str]) -> dict[str, object]:
             "height": float(bbox.get("height", 0)),
             "row": int(bbox.get("row", 1)),
         },
+        "prediction_boxes": cleaned_prediction_boxes,
         "timestamp": dt.datetime.now(dt.UTC).isoformat(),
     }
 
@@ -1208,6 +1233,24 @@ def render_full_correction_form(result: dict[str, object]) -> str:
     """Render one whole-result correction field for fixing every character."""
 
     sequence = str(result.get("sequence", ""))
+    prediction_boxes = []
+    predictions = result.get("predictions", [])
+    if isinstance(predictions, list):
+        for prediction in predictions:
+            if not isinstance(prediction, dict):
+                continue
+            prediction_boxes.append(
+                {
+                    "original_label": prediction_value(prediction),
+                    "bbox": {
+                        "x": prediction.get("x", 0),
+                        "y": prediction.get("y", 0),
+                        "width": prediction.get("width", 0),
+                        "height": prediction.get("height", 0),
+                        "row": prediction.get("row", 1),
+                    },
+                }
+            )
     hidden_fields = {
         "correction_kind": "sequence",
         "filename": result.get("filename", ""),
@@ -1217,6 +1260,7 @@ def render_full_correction_form(result: dict[str, object]) -> str:
         "original_label": sequence,
         "confidence": 0,
         "bbox": "{}",
+        "prediction_boxes": json.dumps(prediction_boxes, separators=(",", ":")),
     }
     inputs = "".join(
         f'<input type="hidden" name="{html.escape(str(name), quote=True)}" '

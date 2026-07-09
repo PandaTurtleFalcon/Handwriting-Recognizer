@@ -128,6 +128,43 @@ class ExtraAlnumDatasetTests(unittest.TestCase):
         self.assertEqual(tuple(images.shape), (1, 1, 28, 28))
         self.assertEqual(targets.tolist(), [1])
 
+    def test_loads_sequence_corrections_when_boxes_match_text(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            upload_dir = root / "uploads"
+            upload_dir.mkdir()
+            image_id = "seq123"
+            image = Image.new("RGB", (100, 80), "white")
+            draw = ImageDraw.Draw(image)
+            draw.line((10, 15, 10, 65), fill="black", width=5)
+            draw.line((10, 40, 35, 40), fill="black", width=5)
+            draw.line((35, 15, 35, 65), fill="black", width=5)
+            draw.line((62, 20, 62, 62), fill="black", width=5)
+            image.save(upload_dir / f"{image_id}.png")
+            corrections_path = root / "corrections.jsonl"
+            corrections_path.write_text(
+                json.dumps(
+                    {
+                        "correction_kind": "sequence",
+                        "image_id": image_id,
+                        "corrected_label": "Hi",
+                        "prediction_boxes": [
+                            {"original_label": "H", "bbox": {"x": 5, "y": 10, "width": 38, "height": 60, "row": 1}},
+                            {"original_label": "L", "bbox": {"x": 54, "y": 10, "width": 20, "height": 60, "row": 1}},
+                        ],
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            loaded = load_correction_cache(["H", "i"], corrections_path, upload_dir)
+
+        self.assertIsNotNone(loaded)
+        images, targets = loaded
+        self.assertEqual(tuple(images.shape), (2, 1, 28, 28))
+        self.assertEqual(targets.tolist(), [0, 1])
+
 
 if __name__ == "__main__":
     unittest.main()

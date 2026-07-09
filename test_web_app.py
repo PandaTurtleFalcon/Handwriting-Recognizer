@@ -530,6 +530,7 @@ class WebAppRenderingTests(unittest.TestCase):
         body = (
             b"correction_kind=sequence&filename=sample.png&sequence=HL%3A&prediction_index=0"
             b"&original_label=HL%3A&corrected_label=Hi%21&confidence=0&bbox=%7B%7D"
+            b"&prediction_boxes=%5B%7B%22original_label%22%3A%22H%22%2C%22bbox%22%3A%7B%22x%22%3A1%2C%22y%22%3A2%2C%22width%22%3A3%2C%22height%22%3A4%2C%22row%22%3A1%7D%7D%5D"
         )
 
         form = main.parse_correction_form(body)
@@ -539,6 +540,29 @@ class WebAppRenderingTests(unittest.TestCase):
         self.assertEqual(record["prediction_index"], 0)
         self.assertEqual(record["original_label"], "HL:")
         self.assertEqual(record["corrected_label"], "Hi!")
+        self.assertEqual(
+            record["prediction_boxes"],
+            [{"original_label": "H", "bbox": {"x": 1.0, "y": 2.0, "width": 3.0, "height": 4.0, "row": 1}}],
+        )
+
+    def test_full_result_correction_includes_prediction_boxes(self) -> None:
+        """Whole-result corrections should include per-glyph boxes for training."""
+
+        html = main.render_full_correction_form(
+            {
+                "filename": "sample.png",
+                "image_id": "img123",
+                "sequence": "HL",
+                "predictions": [
+                    {"label": "H", "x": 1, "y": 2, "width": 30, "height": 40, "row": 1},
+                    {"label": "L", "x": 45, "y": 2, "width": 10, "height": 40, "row": 1},
+                ],
+            }
+        )
+
+        self.assertIn('name="prediction_boxes"', html)
+        self.assertIn("&quot;original_label&quot;:&quot;H&quot;", html)
+        self.assertIn("&quot;width&quot;:30", html)
 
     def test_character_correction_rejects_multi_character_text(self) -> None:
         """Per-character corrections should be trainable one-character labels."""

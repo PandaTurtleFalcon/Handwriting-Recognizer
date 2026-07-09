@@ -315,11 +315,11 @@ def load_correction_cache(
     corrections_path: Path = CORRECTIONS_PATH,
     upload_dir: Path = CORRECTION_UPLOAD_DIR,
 ) -> tuple[torch.Tensor, torch.Tensor] | None:
-    """Load saved per-character user corrections as training tensors.
+    """Load saved user corrections as training tensors.
 
-    Only future character-level corrections with an `image_id` can train the
-    model. Older records and whole-sequence corrections are skipped because
-    they do not contain enough information to crop a specific glyph safely.
+    Character-level corrections train one crop directly. Sequence-level
+    corrections can also train when the web form saved one bounding box per
+    detected glyph and the corrected text has the same length.
     """
 
     if not corrections_path.exists():
@@ -334,35 +334,61 @@ def load_correction_cache(
             record = json.loads(line)
         except json.JSONDecodeError:
             continue
-        if record.get("correction_kind") != "character":
-            continue
-        corrected_label = str(record.get("corrected_label", ""))
-        if len(corrected_label) != 1 or corrected_label not in label_to_index:
-            continue
         image_id = str(record.get("image_id", ""))
         if not image_id:
             continue
         image_path = upload_dir / f"{image_id}.png"
         if not image_path.exists():
             continue
-        bbox = record.get("bbox", {})
-        if not isinstance(bbox, dict):
-            continue
-        try:
-            x0 = max(0, int(round(float(bbox.get("x", 0)))))
-            y0 = max(0, int(round(float(bbox.get("y", 0)))))
-            width = max(1, int(round(float(bbox.get("width", 0)))))
-            height = max(1, int(round(float(bbox.get("height", 0)))))
-        except (TypeError, ValueError):
-            continue
         with Image.open(image_path) as image:
-            crop = ImageOps.exif_transpose(image).convert("RGB").crop((x0, y0, x0 + width, y0 + height))
-            images.append(_foreground_tensor_from_image(crop))
-        targets.append(label_to_index[corrected_label])
+            source_image = ImageOps.exif_transpose(image).convert("RGB")
+            for corrected_label, bbox in _correction_training_items(record, label_to_index):
+                try:
+                    x0 = max(0, int(round(float(bbox.get("x", 0)))))
+                    y0 = max(0, int(round(float(bbox.get("y", 0)))))
+                    width = max(1, int(round(float(bbox.get("width", 0)))))
+                    height = max(1, int(round(float(bbox.get("height", 0)))))
+                except (TypeError, ValueError):
+                    continue
+                crop = source_image.crop((x0, y0, x0 + width, y0 + height))
+                images.append(_foreground_tensor_from_image(crop))
+                targets.append(label_to_index[corrected_label])
 
     if not images:
         return None
     return torch.stack(images), torch.tensor(targets, dtype=torch.long)
+
+
+def _correction_training_items(
+    record: dict[str, object],
+    label_to_index: dict[str, int],
+) -> list[tuple[str, dict[str, object]]]:
+    """Return corrected labels and boxes that can safely train one glyph."""
+
+    correction_kind = record.get("correction_kind", "character")
+    if correction_kind == "character":
+        corrected_label = str(record.get("corrected_label", ""))
+        bbox = record.get("bbox", {})
+        if len(corrected_label) == 1 and corrected_label in label_to_index and isinstance(bbox, dict):
+            return [(corrected_label, bbox)]
+        return []
+
+    if correction_kind != "sequence":
+        return []
+    corrected_text = str(record.get("corrected_label", ""))
+    prediction_boxes = record.get("prediction_boxes", [])
+    if not isinstance(prediction_boxes, list) or len(corrected_text) != len(prediction_boxes):
+        return []
+
+    items: list[tuple[str, dict[str, object]]] = []
+    for corrected_label, prediction in zip(corrected_text, prediction_boxes):
+        if corrected_label not in label_to_index or not isinstance(prediction, dict):
+            return []
+        bbox = prediction.get("bbox", {})
+        if not isinstance(bbox, dict):
+            return []
+        items.append((corrected_label, bbox))
+    return items
 
 
 def _safe_extract_tgz(archive_path: Path, target_dir: Path) -> None:
