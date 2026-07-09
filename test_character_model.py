@@ -11,6 +11,7 @@ from character_model import (
     _looks_like_one,
     _looks_like_seven,
     _postprocess_colons,
+    _postprocess_dot_height,
     _postprocess_exclamations,
     _postprocess_lowercase_i,
     _punctuation_shape_label,
@@ -102,6 +103,38 @@ class CharacterPostprocessingTests(unittest.TestCase):
 
         self.assertEqual("".join(str(item["label"]) for item in cleaned), "!")
         self.assertEqual(len(cleaned), 1)
+
+    def test_low_dot_in_text_row_becomes_period(self) -> None:
+        """Row position should fix period/apostrophe crop ambiguity."""
+
+        predictions = [
+            {"label": "H", "confidence": 0.97, "x": 10, "y": 20, "width": 50, "height": 90, "row": 1},
+            {"label": "'", "confidence": 0.72, "x": 70, "y": 98, "width": 10, "height": 10, "row": 1},
+        ]
+
+        cleaned = _postprocess_dot_height(predictions)
+
+        self.assertEqual([item["label"] for item in cleaned], ["H", "."])
+        self.assertGreaterEqual(float(cleaned[1]["confidence"]), 0.9)
+
+    def test_high_dot_in_text_row_becomes_apostrophe(self) -> None:
+        """High standalone dots in a text row should stay apostrophe-like."""
+
+        predictions = [
+            {"label": "H", "confidence": 0.97, "x": 10, "y": 30, "width": 50, "height": 90, "row": 1},
+            {"label": ".", "confidence": 0.72, "x": 70, "y": 24, "width": 10, "height": 10, "row": 1},
+        ]
+
+        cleaned = _postprocess_dot_height(predictions)
+
+        self.assertEqual([item["label"] for item in cleaned], ["H", "'"])
+
+    def test_isolated_dot_keeps_model_label(self) -> None:
+        """A dot-only row has no baseline, so the model label should remain."""
+
+        predictions = [{"label": "'", "confidence": 0.72, "x": 70, "y": 98, "width": 10, "height": 10, "row": 1}]
+
+        self.assertEqual(_postprocess_dot_height(predictions)[0]["label"], "'")
 
     def test_dot_postprocessing_does_not_merge_across_rows(self) -> None:
         """Detached dots should only merge with stems or dots on the same row."""

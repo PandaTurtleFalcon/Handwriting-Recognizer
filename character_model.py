@@ -1553,6 +1553,63 @@ def _postprocess_exclamations(predictions: list[dict[str, float | int | str]]) -
     return sorted(merged, key=lambda item: (int(item["row"]), int(item["x"])))
 
 
+def _is_standalone_dot_mark(prediction: dict[str, float | int | str]) -> bool:
+    """Return true for tiny dot-like punctuation that can use row position."""
+
+    label = str(prediction["label"])
+    width = int(prediction["width"])
+    height = int(prediction["height"])
+    return label in {".", "'", "`"} and width <= 36 and height <= 36
+
+
+def _postprocess_dot_height(predictions: list[dict[str, float | int | str]]) -> list[dict[str, float | int | str]]:
+    """Use row-relative height to separate periods from apostrophes.
+
+    The classifier normalizes every crop to the center of a square, which
+    makes a period, apostrophe, and backtick look almost identical. The
+    original row coordinates still carry that missing signal: low standalone
+    dots are periods, while high standalone dots are apostrophes. Isolated
+    dot-only rows are left unchanged because they do not have a baseline.
+    """
+
+    row_bounds: dict[int, tuple[float, float]] = {}
+    for prediction in predictions:
+        if _is_standalone_dot_mark(prediction):
+            continue
+        row = int(prediction["row"])
+        top = float(prediction["y"])
+        bottom = top + float(prediction["height"])
+        if row not in row_bounds:
+            row_bounds[row] = (top, bottom)
+        else:
+            current_top, current_bottom = row_bounds[row]
+            row_bounds[row] = (min(current_top, top), max(current_bottom, bottom))
+
+    adjusted: list[dict[str, float | int | str]] = []
+    for prediction in predictions:
+        if not _is_standalone_dot_mark(prediction):
+            adjusted.append(prediction)
+            continue
+        bounds = row_bounds.get(int(prediction["row"]))
+        if bounds is None:
+            adjusted.append(prediction)
+            continue
+        row_top, row_bottom = bounds
+        row_height = row_bottom - row_top
+        if row_height < 24:
+            adjusted.append(prediction)
+            continue
+        center_y = float(prediction["y"]) + float(prediction["height"]) / 2.0
+        relative_y = (center_y - row_top) / max(row_height, 1.0)
+        if relative_y >= 0.72:
+            adjusted.append({**prediction, "label": ".", "confidence": max(float(prediction["confidence"]), 0.9)})
+        elif relative_y <= 0.35:
+            adjusted.append({**prediction, "label": "'", "confidence": max(float(prediction["confidence"]), 0.9)})
+        else:
+            adjusted.append(prediction)
+    return sorted(adjusted, key=lambda item: (int(item["row"]), int(item["x"])))
+
+
 def _split_box(mask: np.ndarray, left: int, right: int) -> tuple[int, int, int, int] | None:
     """Return the foreground bounds inside a horizontal slice."""
 
@@ -1858,7 +1915,8 @@ def predict_characters(
             predictions.append(prediction)
     predictions = _postprocess_exclamations(predictions)
     predictions = _postprocess_lowercase_i(predictions)
-    return _postprocess_colons(predictions)
+    predictions = _postprocess_colons(predictions)
+    return _postprocess_dot_height(predictions)
 
 
 def main() -> None:
