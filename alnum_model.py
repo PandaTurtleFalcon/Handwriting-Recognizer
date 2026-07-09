@@ -977,13 +977,22 @@ def mixedcase_loss_weights(
     lower_weight: float = 1.0,
     weak_labels: str = "",
     weak_weight: float = 1.0,
+    class_counts: np.ndarray | None = None,
+    class_balance_strength: float = 0.0,
 ) -> torch.Tensor | None:
     """Return optional class weights for targeted mixed-case training."""
 
-    if upper_weight <= 1.0 and lower_weight <= 1.0 and (not weak_labels or weak_weight <= 1.0):
+    use_case_weights = upper_weight > 1.0 or lower_weight > 1.0 or (weak_labels and weak_weight > 1.0)
+    use_balance_weights = class_counts is not None and class_balance_strength > 0.0
+    if not use_case_weights and not use_balance_weights:
         return None
     weak_label_set = set(weak_labels)
     weights = torch.ones(len(labels), dtype=torch.float32)
+    if use_balance_weights:
+        counts = np.maximum(np.asarray(class_counts, dtype=np.float32), 1.0)
+        inverse = counts.mean() / counts
+        balanced = np.power(inverse, min(max(float(class_balance_strength), 0.0), 1.0))
+        weights *= torch.tensor(balanced, dtype=torch.float32)
     for index, label in enumerate(labels):
         if label.isalpha() and label.isupper():
             weights[index] *= float(max(upper_weight, 1.0))
@@ -1148,7 +1157,7 @@ def make_mixedcase_loaders(
     include_corrections: bool = False,
     mixedcase_extra_roots: list[Path] | None = None,
     augment: bool = False,
-) -> tuple[DataLoader, DataLoader, DataLoader, DataLoader, DataLoader]:
+) -> tuple[DataLoader, DataLoader, DataLoader, DataLoader, DataLoader, np.ndarray]:
     """Build loaders for the 62-class digit/upper/lower recognizer."""
 
     mnist_train_images, mnist_train_targets = build_or_load_mnist_cache(train=True)
@@ -1214,7 +1223,7 @@ def make_mixedcase_loaders(
     digit_test_loader = DataLoader(TensorDataset(mnist_test_images, mnist_test_targets), batch_size=batch_size)
     upper_test_loader = _target_range_loader(byclass_test_images, byclass_test_targets, 10, 36, batch_size)
     lower_test_loader = _target_range_loader(byclass_test_images, byclass_test_targets, 36, 62, batch_size)
-    return train_loader, test_loader, digit_test_loader, upper_test_loader, lower_test_loader
+    return train_loader, test_loader, digit_test_loader, upper_test_loader, lower_test_loader, class_counts
 
 
 def evaluate(model: nn.Module, loader: DataLoader, criterion: nn.Module, device: torch.device) -> tuple[float, float]:
@@ -1426,6 +1435,7 @@ def save_mixedcase_checkpoint(
     type_loss_weight: float = 0.0,
     label_smoothing: float = 0.03,
     transfer_from_folded: bool = False,
+    class_balance_strength: float = 0.0,
 ) -> None:
     """Persist the best mixed-case weights and metrics."""
 
@@ -1455,6 +1465,7 @@ def save_mixedcase_checkpoint(
                 "type_loss_weight": type_loss_weight,
                 "label_smoothing": label_smoothing,
                 "transfer_from_folded": transfer_from_folded,
+                "class_balance_strength": class_balance_strength,
                 "mixedcase_extra_roots": [str(path) for path in (mixedcase_extra_roots or [])],
                 "normalization": {"mean": EMNIST_MEAN, "std": EMNIST_STD},
             },
@@ -1484,6 +1495,7 @@ def save_mixedcase_checkpoint(
                 "type_loss_weight": type_loss_weight,
                 "label_smoothing": label_smoothing,
                 "transfer_from_folded": transfer_from_folded,
+                "class_balance_strength": class_balance_strength,
                 "mixedcase_extra_roots": [str(path) for path in (mixedcase_extra_roots or [])],
                 "per_class_accuracy": per_class_accuracy or {},
                 "best_checkpoint": best_metrics or {"test_accuracy": best_accuracy},
@@ -1520,6 +1532,7 @@ def train_mixedcase(
     type_loss_weight: float = 0.0,
     label_smoothing: float = 0.03,
     transfer_from_folded: bool = False,
+    class_balance_strength: float = 0.0,
 ) -> list[dict[str, float | int]]:
     """Train a 62-class recognizer that distinguishes uppercase and lowercase."""
 
@@ -1534,7 +1547,7 @@ def train_mixedcase(
     else:
         device = get_device()
 
-    train_loader, test_loader, digit_test_loader, upper_test_loader, lower_test_loader = make_mixedcase_loaders(
+    train_loader, test_loader, digit_test_loader, upper_test_loader, lower_test_loader, class_counts = make_mixedcase_loaders(
         batch_size,
         samples_per_class,
         seed,
@@ -1553,6 +1566,8 @@ def train_mixedcase(
         lower_loss_weight,
         weak_loss_labels,
         weak_loss_weight,
+        class_counts,
+        class_balance_strength,
     )
     criterion = nn.CrossEntropyLoss(
         weight=loss_weights.to(device) if loss_weights is not None else None,
@@ -1666,6 +1681,7 @@ def train_mixedcase(
             type_loss_weight,
             label_smoothing,
             transferred_from_folded,
+            class_balance_strength,
         )
         print(
             f"Epoch {epoch}/{epochs} train_acc={train_accuracy:.2f}% "
@@ -1950,6 +1966,12 @@ def main() -> None:
         action="store_true",
         help="Initialize a fresh mixed-case CNN from the folded alnum checkpoint before training.",
     )
+    parser.add_argument(
+        "--mixedcase-class-balance-strength",
+        type=float,
+        default=0.0,
+        help="Blend inverse-frequency class weights into mixed-case loss from 0.0 to 1.0.",
+    )
     args = parser.parse_args()
     if args.mixed_case:
         train_mixedcase(
@@ -1977,6 +1999,7 @@ def main() -> None:
             type_loss_weight=args.mixedcase_type_loss_weight,
             label_smoothing=args.mixedcase_label_smoothing,
             transfer_from_folded=args.mixedcase_transfer_from_folded,
+            class_balance_strength=args.mixedcase_class_balance_strength,
         )
         return
     train(

@@ -147,6 +147,19 @@ class ExtraAlnumDatasetTests(unittest.TestCase):
             self.assertAlmostEqual(actual, expected, places=5)
         self.assertIsNone(mixedcase_loss_weights(["A", "a"]))
 
+    def test_mixedcase_loss_weights_can_blend_class_balance(self) -> None:
+        weights = mixedcase_loss_weights(
+            ["common", "rare"],
+            class_counts=np.array([100, 25]),
+            class_balance_strength=0.5,
+        )
+
+        self.assertIsNotNone(weights)
+        assert weights is not None
+        self.assertLess(weights[0].item(), weights[1].item())
+        self.assertAlmostEqual(weights[0].item(), 0.7905694, places=5)
+        self.assertAlmostEqual(weights[1].item(), 1.5811388, places=5)
+
     def test_mixedcase_ambiguity_groups_match_known_lookalikes(self) -> None:
         self.assertTrue(mixedcase_labels_match_with_ambiguity("S", "s"))
         self.assertTrue(mixedcase_labels_match_with_ambiguity("0", "O"))
