@@ -108,7 +108,7 @@
     "Pp",
     "-_",
     "'.`",
-    ":;",
+    "!:;i",
     "+t",
     "&def",
     "@e",
@@ -121,11 +121,12 @@
   "best_checkpoint": {
     "validation_loss": 0.4616974800825119,
     "validation_accuracy": 85.57384056422312,
-    "ambiguity_aware_validation_accuracy": 95.68283821329344,
+    "ambiguity_aware_validation_accuracy": 95.93930326992947,
     "digit_validation_accuracy": 89.71539456662354,
     "letter_validation_accuracy": 84.28054953000724,
     "punctuation_validation_accuracy": 88.40579710144928,
-    "source": "direct_eval_with_ambiguity_groups"
+    "punctuation_ambiguity_aware_validation_accuracy": 95.9866220735786,
+    "source": "direct_eval_with_punctuation_ambiguity_groups"
   },
   "history": [
     {

@@ -1066,10 +1066,11 @@ def render_page(
         elif best:
             ambiguity = best.get("ambiguity_aware_validation_accuracy")
             punctuation = best.get("punctuation_validation_accuracy", best["validation_accuracy"])
-            if ambiguity is not None:
+            punctuation_ambiguity = best.get("punctuation_ambiguity_aware_validation_accuracy", ambiguity)
+            if punctuation_ambiguity is not None:
                 metrics_text = (
                     f"{metrics_text} + punctuation {punctuation:.2f}% "
-                    f"(ambiguity-aware {ambiguity:.2f}%)"
+                    f"(ambiguity-aware {punctuation_ambiguity:.2f}%)"
                 )
             else:
                 metrics_text = f"{metrics_text} + punctuation {best['validation_accuracy']:.2f}%"

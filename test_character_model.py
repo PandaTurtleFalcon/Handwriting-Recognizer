@@ -29,6 +29,8 @@ class CharacterPostprocessingTests(unittest.TestCase):
         self.assertTrue(labels_match_with_ambiguity("1", "|"))
         self.assertTrue(labels_match_with_ambiguity("_", "-"))
         self.assertTrue(labels_match_with_ambiguity(".", "'"))
+        self.assertTrue(labels_match_with_ambiguity(":", "i"))
+        self.assertTrue(labels_match_with_ambiguity(";", "!"))
         self.assertTrue(labels_match_with_ambiguity("q", "9"))
         self.assertFalse(labels_match_with_ambiguity("A", "B"))
 

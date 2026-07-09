@@ -178,6 +178,7 @@ class WebAppRenderingTests(unittest.TestCase):
                         "validation_accuracy": 85.57,
                         "punctuation_validation_accuracy": 88.41,
                         "ambiguity_aware_validation_accuracy": 95.68,
+                        "punctuation_ambiguity_aware_validation_accuracy": 95.99,
                     }
                 }
             return {}
@@ -188,7 +189,7 @@ class WebAppRenderingTests(unittest.TestCase):
         self.assertIn("alnum", html)
         self.assertIn("digit specialist", html)
         self.assertIn("punctuation 88.41%", html)
-        self.assertIn("ambiguity-aware 95.68%", html)
+        self.assertIn("ambiguity-aware 95.99%", html)
 
     def test_best_metric_entry_prefers_checkpoint_eval(self) -> None:
         """Checkpoint eval should count even if the latest run history regressed."""

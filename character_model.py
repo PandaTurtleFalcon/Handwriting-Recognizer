@@ -71,7 +71,7 @@ AMBIGUITY_GROUPS = [
     frozenset("Pp"),
     frozenset("-_"),
     frozenset(".'`"),
-    frozenset(":;"),
+    frozenset(":;i!"),
     frozenset("+t"),
     frozenset("&def"),
     frozenset("@e"),
@@ -416,6 +416,7 @@ def evaluate_character_breakdown(
     ambiguity_correct = 0
     total = 0
     group_correct = {"digits": 0, "letters": 0, "punctuation": 0}
+    group_ambiguity_correct = {"digits": 0, "letters": 0, "punctuation": 0}
     group_total = {"digits": 0, "letters": 0, "punctuation": 0}
     with torch.no_grad():
         for images, targets in loader:
@@ -428,7 +429,8 @@ def evaluate_character_breakdown(
                 predicted = labels[int(predicted_index)]
                 exact = expected == predicted
                 exact_correct += int(exact)
-                ambiguity_correct += int(labels_match_with_ambiguity(expected, predicted))
+                ambiguity_match = labels_match_with_ambiguity(expected, predicted)
+                ambiguity_correct += int(ambiguity_match)
                 total += 1
                 if expected.isdigit():
                     group = "digits"
@@ -437,6 +439,7 @@ def evaluate_character_breakdown(
                 else:
                     group = "punctuation"
                 group_correct[group] += int(exact)
+                group_ambiguity_correct[group] += int(ambiguity_match)
                 group_total[group] += 1
     return {
         "validation_loss": loss_total / max(len(loader), 1),
@@ -445,6 +448,9 @@ def evaluate_character_breakdown(
         "digit_validation_accuracy": 100.0 * group_correct["digits"] / max(group_total["digits"], 1),
         "letter_validation_accuracy": 100.0 * group_correct["letters"] / max(group_total["letters"], 1),
         "punctuation_validation_accuracy": 100.0 * group_correct["punctuation"] / max(group_total["punctuation"], 1),
+        "punctuation_ambiguity_aware_validation_accuracy": 100.0
+        * group_ambiguity_correct["punctuation"]
+        / max(group_total["punctuation"], 1),
     }
 
 
