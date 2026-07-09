@@ -18,6 +18,7 @@ from alnum_model import (
     build_or_load_mixedcase_ascii_folder_cache,
     evaluate_mixedcase_breakdown,
     load_correction_cache,
+    mixedcase_loss_weights,
     mixedcase_labels_match_with_ambiguity,
     mixedcase_labels_match_with_visual_ambiguity,
 )
@@ -99,6 +100,21 @@ class ExtraAlnumDatasetTests(unittest.TestCase):
         image, target = augmented[0]
         self.assertEqual(tuple(image.shape), (1, 28, 28))
         self.assertEqual(int(target), 0)
+
+    def test_mixedcase_loss_weights_can_target_case_and_weak_labels(self) -> None:
+        weights = mixedcase_loss_weights(
+            ["0", "A", "a", "s"],
+            upper_weight=1.2,
+            lower_weight=1.1,
+            weak_labels="0s",
+            weak_weight=1.5,
+        )
+
+        self.assertIsNotNone(weights)
+        assert weights is not None
+        for actual, expected in zip(weights.tolist(), [1.5, 1.2, 1.1, 1.65]):
+            self.assertAlmostEqual(actual, expected, places=5)
+        self.assertIsNone(mixedcase_loss_weights(["A", "a"]))
 
     def test_mixedcase_ambiguity_groups_match_known_lookalikes(self) -> None:
         self.assertTrue(mixedcase_labels_match_with_ambiguity("S", "s"))

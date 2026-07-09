@@ -971,6 +971,29 @@ def mixedcase_labels_match_with_visual_ambiguity(expected: str, predicted: str) 
     return any(expected in group and predicted in group for group in MIXEDCASE_AMBIGUITY_GROUPS)
 
 
+def mixedcase_loss_weights(
+    labels: list[str],
+    upper_weight: float = 1.0,
+    lower_weight: float = 1.0,
+    weak_labels: str = "",
+    weak_weight: float = 1.0,
+) -> torch.Tensor | None:
+    """Return optional class weights for targeted mixed-case training."""
+
+    if upper_weight <= 1.0 and lower_weight <= 1.0 and (not weak_labels or weak_weight <= 1.0):
+        return None
+    weak_label_set = set(weak_labels)
+    weights = torch.ones(len(labels), dtype=torch.float32)
+    for index, label in enumerate(labels):
+        if label.isalpha() and label.isupper():
+            weights[index] *= float(max(upper_weight, 1.0))
+        elif label.isalpha() and label.islower():
+            weights[index] *= float(max(lower_weight, 1.0))
+        if label in weak_label_set:
+            weights[index] *= float(max(weak_weight, 1.0))
+    return weights
+
+
 def evaluate_mixedcase_breakdown(
     model: nn.Module,
     loader: DataLoader,
@@ -1271,6 +1294,10 @@ def save_mixedcase_checkpoint(
     per_class_accuracy: dict[str, float] | None = None,
     mixedcase_extra_roots: list[Path] | None = None,
     augment: bool = False,
+    upper_loss_weight: float = 1.0,
+    lower_loss_weight: float = 1.0,
+    weak_loss_labels: str = "",
+    weak_loss_weight: float = 1.0,
 ) -> None:
     """Persist the best mixed-case weights and metrics."""
 
@@ -1292,6 +1319,10 @@ def save_mixedcase_checkpoint(
                 "include_corrections": include_corrections,
                 "warm_start": warm_start,
                 "augment": augment,
+                "upper_loss_weight": upper_loss_weight,
+                "lower_loss_weight": lower_loss_weight,
+                "weak_loss_labels": weak_loss_labels,
+                "weak_loss_weight": weak_loss_weight,
                 "mixedcase_extra_roots": [str(path) for path in (mixedcase_extra_roots or [])],
                 "normalization": {"mean": EMNIST_MEAN, "std": EMNIST_STD},
             },
@@ -1313,6 +1344,10 @@ def save_mixedcase_checkpoint(
                 "include_corrections": include_corrections,
                 "warm_start": warm_start,
                 "augment": augment,
+                "upper_loss_weight": upper_loss_weight,
+                "lower_loss_weight": lower_loss_weight,
+                "weak_loss_labels": weak_loss_labels,
+                "weak_loss_weight": weak_loss_weight,
                 "mixedcase_extra_roots": [str(path) for path in (mixedcase_extra_roots or [])],
                 "per_class_accuracy": per_class_accuracy or {},
                 "best_checkpoint": best_metrics or {"test_accuracy": best_accuracy},
@@ -1341,6 +1376,10 @@ def train_mixedcase(
     warm_start: bool = False,
     mixedcase_extra_roots: list[Path] | None = None,
     augment: bool = False,
+    upper_loss_weight: float = 1.0,
+    lower_loss_weight: float = 1.0,
+    weak_loss_labels: str = "",
+    weak_loss_weight: float = 1.0,
 ) -> list[dict[str, float | int]]:
     """Train a 62-class recognizer that distinguishes uppercase and lowercase."""
 
@@ -1368,7 +1407,17 @@ def train_mixedcase(
         augment,
     )
     model = MODEL_CLASSES[model_type](num_classes=len(MIXEDCASE_LABELS)).to(device)
-    criterion = nn.CrossEntropyLoss(label_smoothing=0.03)
+    loss_weights = mixedcase_loss_weights(
+        list(MIXEDCASE_LABELS),
+        upper_loss_weight,
+        lower_loss_weight,
+        weak_loss_labels,
+        weak_loss_weight,
+    )
+    criterion = nn.CrossEntropyLoss(
+        weight=loss_weights.to(device) if loss_weights is not None else None,
+        label_smoothing=0.03,
+    )
     if warm_start and MIXEDCASE_WEIGHTS_PATH.exists():
         checkpoint = torch.load(MIXEDCASE_WEIGHTS_PATH, map_location=device, weights_only=True)
         if list(checkpoint.get("labels", [])) == list(MIXEDCASE_LABELS) and checkpoint.get("model_type", "cnn") == model_type:
@@ -1461,6 +1510,10 @@ def train_mixedcase(
             best_per_class_accuracy,
             mixedcase_extra_roots,
             augment,
+            upper_loss_weight,
+            lower_loss_weight,
+            weak_loss_labels,
+            weak_loss_weight,
         )
         print(
             f"Epoch {epoch}/{epochs} train_acc={train_accuracy:.2f}% "
@@ -1699,6 +1752,29 @@ def main() -> None:
         default=[],
         help="ASCII-code image-folder dataset to append to mixed-case training data.",
     )
+    parser.add_argument(
+        "--mixedcase-upper-loss-weight",
+        type=float,
+        default=1.0,
+        help="Optional loss multiplier for uppercase labels during mixed-case training.",
+    )
+    parser.add_argument(
+        "--mixedcase-lower-loss-weight",
+        type=float,
+        default=1.0,
+        help="Optional loss multiplier for lowercase labels during mixed-case training.",
+    )
+    parser.add_argument(
+        "--mixedcase-weak-labels",
+        default="",
+        help="Exact labels to emphasize during mixed-case training, e.g. 'sOV1c'.",
+    )
+    parser.add_argument(
+        "--mixedcase-weak-loss-weight",
+        type=float,
+        default=1.0,
+        help="Optional loss multiplier for labels listed in --mixedcase-weak-labels.",
+    )
     args = parser.parse_args()
     if args.mixed_case:
         train_mixedcase(
@@ -1718,6 +1794,10 @@ def main() -> None:
             warm_start=args.warm_start,
             mixedcase_extra_roots=args.mixedcase_extra_root,
             augment=args.augment,
+            upper_loss_weight=args.mixedcase_upper_loss_weight,
+            lower_loss_weight=args.mixedcase_lower_loss_weight,
+            weak_loss_labels=args.mixedcase_weak_labels,
+            weak_loss_weight=args.mixedcase_weak_loss_weight,
         )
         return
     train(
