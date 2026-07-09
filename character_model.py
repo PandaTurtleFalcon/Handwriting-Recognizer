@@ -182,9 +182,52 @@ class CharacterConvCNN(nn.Module):
         return self.network(x)
 
 
+class WideCharacterConvCNN(nn.Module):
+    """Wider CNN with adaptive pooling for exact 93-class experiments."""
+
+    def __init__(self, num_classes: int) -> None:
+        super().__init__()
+        self.features = nn.Sequential(
+            nn.Conv2d(1, 48, kernel_size=3, padding=1, bias=False),
+            nn.BatchNorm2d(48),
+            nn.SiLU(inplace=True),
+            nn.Conv2d(48, 48, kernel_size=3, padding=1, bias=False),
+            nn.BatchNorm2d(48),
+            nn.SiLU(inplace=True),
+            nn.MaxPool2d(2),
+            nn.Dropout2d(0.08),
+            nn.Conv2d(48, 96, kernel_size=3, padding=1, bias=False),
+            nn.BatchNorm2d(96),
+            nn.SiLU(inplace=True),
+            nn.Conv2d(96, 96, kernel_size=3, padding=1, bias=False),
+            nn.BatchNorm2d(96),
+            nn.SiLU(inplace=True),
+            nn.MaxPool2d(2),
+            nn.Dropout2d(0.12),
+            nn.Conv2d(96, 144, kernel_size=3, padding=1, bias=False),
+            nn.BatchNorm2d(144),
+            nn.SiLU(inplace=True),
+            nn.Conv2d(144, 144, kernel_size=3, padding=1, bias=False),
+            nn.BatchNorm2d(144),
+            nn.SiLU(inplace=True),
+            nn.AdaptiveAvgPool2d((4, 4)),
+        )
+        self.classifier = nn.Sequential(
+            nn.Flatten(),
+            nn.Linear(144 * 4 * 4, 512),
+            nn.SiLU(inplace=True),
+            nn.Dropout(0.35),
+            nn.Linear(512, num_classes),
+        )
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return self.classifier(self.features(x))
+
+
 CHARACTER_MODEL_TYPES = {
     "mlp": CharacterCNN,
     "cnn": CharacterConvCNN,
+    "widecnn": WideCharacterConvCNN,
 }
 
 
