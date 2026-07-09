@@ -370,6 +370,7 @@ def train_character_model(
     model_type: str = "cnn",
     device_name: str = "auto",
     learning_rate: float = 0.001,
+    label_smoothing: float = 0.03,
     seed: int = 42,
     warm_start: bool = False,
 ) -> list[CharacterEpochMetrics]:
@@ -397,7 +398,7 @@ def train_character_model(
         checkpoint = torch.load(WEIGHTS_PATH, map_location=device, weights_only=True)
         if checkpoint.get("model_type", "mlp") == model_type and list(checkpoint.get("labels", [])) == labels:
             model.load_state_dict(checkpoint["model_state_dict"])
-    criterion = nn.CrossEntropyLoss()
+    criterion = nn.CrossEntropyLoss(label_smoothing=label_smoothing)
     optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate, weight_decay=0.0005)
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=epochs)
 
@@ -461,6 +462,7 @@ def train_character_model(
             "validation_accuracy": best_accuracy,
             "model_type": model_type,
             "learning_rate": learning_rate,
+            "label_smoothing": label_smoothing,
             "seed": seed,
             "warm_start": warm_start,
             "image_size": IMAGE_SIZE,
@@ -476,6 +478,7 @@ def train_character_model(
                 "labels": labels,
                 "model_type": model_type,
                 "learning_rate": learning_rate,
+                "label_smoothing": label_smoothing,
                 "seed": seed,
                 "device": str(device),
                 "warm_start": warm_start,
@@ -1618,6 +1621,7 @@ def main() -> None:
     parser.add_argument("--model", choices=sorted(CHARACTER_MODEL_TYPES), default="cnn")
     parser.add_argument("--device", choices=["auto", "cpu", "mps"], default="auto")
     parser.add_argument("--learning-rate", type=float, default=0.001)
+    parser.add_argument("--label-smoothing", type=float, default=0.03)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--warm-start", action="store_true")
     args = parser.parse_args()
@@ -1628,6 +1632,7 @@ def main() -> None:
         model_type=args.model,
         device_name=args.device,
         learning_rate=args.learning_rate,
+        label_smoothing=args.label_smoothing,
         seed=args.seed,
         warm_start=args.warm_start,
     )
