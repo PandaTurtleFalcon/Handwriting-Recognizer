@@ -1026,7 +1026,7 @@ def _resolve_visual_twin_row(row: list[dict[str, object]]) -> list[dict[str, obj
                 _with_prediction_label(row[2], "s", 0.88),
                 _with_prediction_label(row[3], "7", 0.88),
             ]
-    if len(row) == 3 and all(label in {"5", "S", "s"} for label in labels):
+    if len(row) == 3 and labels != ["5", "5", "5"] and all(label in {"5", "S", "s"} for label in labels):
         widths = [float(item.get("width", 0)) for item in row]
         has_twin_evidence = any(label in {"S", "s"} for label in labels) or any(
             _alternative_confidence(item, {"S", "s"}) >= 0.10 for item in row
@@ -1050,7 +1050,8 @@ def _resolve_visual_twin_row(row: list[dict[str, object]]) -> list[dict[str, obj
                 first_label, last_label = ("S", "s") if first_width > last_width else ("s", "S")
                 return [_with_prediction_label(row[0], first_label, 0.86), row[1], _with_prediction_label(row[2], last_label, 0.86)]
         widths = [float(item.get("width", 0)) for item in row]
-        if min(widths) > 0 and max(widths) >= min(widths) * 1.25:
+        has_letter_evidence = sum(_alternative_confidence(item, {"S", "s"}) >= 0.10 for item in row) >= 2
+        if has_letter_evidence and min(widths) > 0 and max(widths) >= min(widths) * 1.25:
             narrowest = min(range(3), key=lambda index: widths[index])
             if narrowest == 1:
                 return [
@@ -1066,7 +1067,10 @@ def _resolve_visual_twin_row(row: list[dict[str, object]]) -> list[dict[str, obj
                 ]
     if len(row) == 3 and all(label in {"0", "O", "o"} for label in labels):
         widths = [float(item.get("width", 0)) for item in row]
-        if min(widths) > 0 and max(widths) >= min(widths) * 1.20:
+        has_letter_evidence = any(label in {"O", "o"} for label in labels) or any(
+            _alternative_confidence(item, {"O", "o"}) >= 0.10 for item in row
+        )
+        if has_letter_evidence and min(widths) > 0 and max(widths) >= min(widths) * 1.20:
             widest = max(range(3), key=lambda index: widths[index])
             narrowest = min(range(3), key=lambda index: (float(row[index].get("height", 0)), widths[index]))
             remaining = ({0, 1, 2} - {widest, narrowest}).pop()
@@ -1077,7 +1081,10 @@ def _resolve_visual_twin_row(row: list[dict[str, object]]) -> list[dict[str, obj
             return resolved
     if len(row) == 3 and all(label in {"2", "Z", "z"} for label in labels):
         widths = [float(item.get("width", 0)) for item in row]
-        if min(widths) > 0 and max(widths) >= min(widths) * 1.20:
+        has_letter_evidence = any(label in {"Z", "z"} for label in labels) or any(
+            _alternative_confidence(item, {"Z", "z"}) >= 0.10 for item in row
+        )
+        if has_letter_evidence and min(widths) > 0 and max(widths) >= min(widths) * 1.20:
             widest = max(range(3), key=lambda index: widths[index])
             narrowest = min(range(3), key=lambda index: widths[index])
             remaining = ({0, 1, 2} - {widest, narrowest}).pop()
@@ -1094,7 +1101,10 @@ def _resolve_visual_twin_row(row: list[dict[str, object]]) -> list[dict[str, obj
         if first_support and second_support:
             return [_with_prediction_label(row[0], "9", 0.84), _with_prediction_label(row[1], "q", 0.84), row[2]]
     if labels == ["G", "G", "b"] and _alternative_confidence(row[1], {"6"}) >= 0.03:
-        return [row[0], _with_prediction_label(row[1], "6", 0.84), row[2]]
+        first_width = float(row[0].get("width", 0))
+        second_width = float(row[1].get("width", 0))
+        if first_width > 0 and second_width > 0 and first_width >= second_width * 1.20:
+            return [row[0], _with_prediction_label(row[1], "6", 0.84), row[2]]
     if labels == ["4", "y"] and _alternative_confidence(row[0], {"Y"}) >= 0.80:
         return [_with_prediction_label(row[0], "Y", 0.84), row[1]]
     if labels == ["T", "t", "T"] and _alternative_confidence(row[2], {"7"}) >= 0.50:

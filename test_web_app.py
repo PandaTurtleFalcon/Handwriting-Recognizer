@@ -856,9 +856,9 @@ class WebAppRenderingTests(unittest.TestCase):
         """A narrow middle 5 between wide 5s is likely lowercase s."""
 
         predictions = [
-            {"label": "5", "confidence": 0.99, "x": 1, "y": 1, "width": 66, "height": 52, "row": 1, "alternatives": []},
+            {"label": "5", "confidence": 0.99, "x": 1, "y": 1, "width": 66, "height": 52, "row": 1, "alternatives": [{"label": "S", "confidence": 0.30}]},
             {"label": "5", "confidence": 0.99, "x": 80, "y": 1, "width": 38, "height": 41, "row": 1, "alternatives": []},
-            {"label": "5", "confidence": 0.99, "x": 150, "y": 1, "width": 65, "height": 53, "row": 1, "alternatives": []},
+            {"label": "5", "confidence": 0.99, "x": 150, "y": 1, "width": 65, "height": 53, "row": 1, "alternatives": [{"label": "s", "confidence": 0.30}]},
         ]
 
         resolved = main.resolve_visual_twin_predictions(predictions)
@@ -869,14 +869,27 @@ class WebAppRenderingTests(unittest.TestCase):
         """Font stress cases have smaller but still useful S/s/5 width spread."""
 
         predictions = [
-            {"label": "5", "confidence": 0.99, "x": 1, "y": 1, "width": 58, "height": 70, "row": 1, "alternatives": []},
+            {"label": "5", "confidence": 0.99, "x": 1, "y": 1, "width": 58, "height": 70, "row": 1, "alternatives": [{"label": "S", "confidence": 0.40}]},
+            {"label": "5", "confidence": 0.99, "x": 70, "y": 1, "width": 44, "height": 52, "row": 1, "alternatives": []},
+            {"label": "5", "confidence": 0.99, "x": 125, "y": 1, "width": 48, "height": 66, "row": 1, "alternatives": [{"label": "s", "confidence": 0.25}]},
+        ]
+
+        resolved = main.resolve_visual_twin_predictions(predictions)
+
+        self.assertEqual("".join(main.prediction_value(item) for item in resolved), "Ss5")
+
+    def test_visual_twin_resolver_keeps_numeric_555_with_weak_single_alt(self) -> None:
+        """A real numeric 555 row should not become letters from one weak side guess."""
+
+        predictions = [
+            {"label": "5", "confidence": 0.99, "x": 1, "y": 1, "width": 58, "height": 70, "row": 1, "alternatives": [{"label": "S", "confidence": 0.11}]},
             {"label": "5", "confidence": 0.99, "x": 70, "y": 1, "width": 44, "height": 52, "row": 1, "alternatives": []},
             {"label": "5", "confidence": 0.99, "x": 125, "y": 1, "width": 48, "height": 66, "row": 1, "alternatives": []},
         ]
 
         resolved = main.resolve_visual_twin_predictions(predictions)
 
-        self.assertEqual("".join(main.prediction_value(item) for item in resolved), "Ss5")
+        self.assertEqual("".join(main.prediction_value(item) for item in resolved), "555")
 
     def test_visual_twin_resolver_handles_mixed_s5s_labels(self) -> None:
         """S/s/5 can arrive as mixed labels before geometry cleanup."""
@@ -917,6 +930,19 @@ class WebAppRenderingTests(unittest.TestCase):
 
         self.assertEqual("".join(main.prediction_value(item) for item in resolved), "0Oo")
 
+    def test_visual_twin_resolver_keeps_numeric_000_without_letter_evidence(self) -> None:
+        """Pure numeric 000 should not be rewritten using geometry alone."""
+
+        predictions = [
+            {"label": "0", "confidence": 0.99, "x": 1, "y": 1, "width": 48, "height": 67, "row": 1, "alternatives": []},
+            {"label": "0", "confidence": 0.99, "x": 60, "y": 1, "width": 66, "height": 70, "row": 1, "alternatives": []},
+            {"label": "0", "confidence": 0.99, "x": 135, "y": 1, "width": 48, "height": 52, "row": 1, "alternatives": []},
+        ]
+
+        resolved = main.resolve_visual_twin_predictions(predictions)
+
+        self.assertEqual("".join(main.prediction_value(item) for item in resolved), "000")
+
     def test_visual_twin_resolver_handles_2zz_shape(self) -> None:
         """Relative width can resolve 2/Z/z triples."""
 
@@ -942,6 +968,19 @@ class WebAppRenderingTests(unittest.TestCase):
         resolved = main.resolve_visual_twin_predictions(predictions)
 
         self.assertEqual("".join(main.prediction_value(item) for item in resolved), "2Zz")
+
+    def test_visual_twin_resolver_keeps_numeric_222_without_letter_evidence(self) -> None:
+        """Pure numeric 222 should not be rewritten using geometry alone."""
+
+        predictions = [
+            {"label": "2", "confidence": 0.99, "x": 1, "y": 1, "width": 49, "height": 66, "row": 1, "alternatives": []},
+            {"label": "2", "confidence": 0.99, "x": 60, "y": 1, "width": 56, "height": 66, "row": 1, "alternatives": []},
+            {"label": "2", "confidence": 0.99, "x": 125, "y": 1, "width": 44, "height": 48, "row": 1, "alternatives": []},
+        ]
+
+        resolved = main.resolve_visual_twin_predictions(predictions)
+
+        self.assertEqual("".join(main.prediction_value(item) for item in resolved), "222")
 
     def test_visual_twin_resolver_handles_il1_shape(self) -> None:
         """Increasing-width skinny strokes before ! can map to I/l/1."""
@@ -1021,6 +1060,19 @@ class WebAppRenderingTests(unittest.TestCase):
         resolved = main.resolve_visual_twin_predictions(predictions)
 
         self.assertEqual("".join(main.prediction_value(item) for item in resolved), "G6b")
+
+    def test_visual_twin_resolver_keeps_ggb_with_noise_level_six_alt(self) -> None:
+        """A noise-level 6 alternative should not silently corrupt GGb."""
+
+        predictions = [
+            {"label": "G", "confidence": 0.99, "x": 1, "y": 1, "width": 64, "height": 70, "row": 1, "alternatives": []},
+            {"label": "G", "confidence": 0.97, "x": 75, "y": 1, "width": 63, "height": 70, "row": 1, "alternatives": [{"label": "6", "confidence": 0.03}]},
+            {"label": "b", "confidence": 0.91, "x": 135, "y": 1, "width": 47, "height": 67, "row": 1, "alternatives": []},
+        ]
+
+        resolved = main.resolve_visual_twin_predictions(predictions)
+
+        self.assertEqual("".join(main.prediction_value(item) for item in resolved), "GGb")
 
     def test_visual_twin_resolver_handles_three_skinny_strokes(self) -> None:
         """Width order can separate 1/I/l when the third stroke has l alternatives."""
