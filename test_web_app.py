@@ -299,18 +299,22 @@ class WebAppRenderingTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "fewer files"):
             main.parse_multipart_files(content_type, body)
 
-    def test_large_image_is_rejected_before_prediction(self) -> None:
-        """Oversized images should be rejected before model inference."""
+    def test_large_phone_image_is_resized_before_prediction(self) -> None:
+        """Normal phone photos should be accepted and downscaled for inference."""
 
         image = Image.new("RGB", (2100, 2100), "white")
         buffer = io.BytesIO()
         image.save(buffer, format="PNG")
+        fake_predictions = [
+            {"digit": 8, "confidence": 0.9, "x": 1, "y": 1, "width": 20, "height": 20, "row": 1}
+        ]
 
-        with patch.object(main, "predict_digits") as mock_predict:
+        with patch.object(main, "predict_digits", return_value=fake_predictions) as mock_predict:
             results = main.classify_files([("huge.png", buffer.getvalue())], model=object(), device=object())
 
-        self.assertEqual(results[0]["error"], "Image is too large. Use an image under 4 megapixels.")
-        mock_predict.assert_not_called()
+        predicted_image = mock_predict.call_args.args[1]
+        self.assertEqual(results[0]["sequence"], "8")
+        self.assertLessEqual(predicted_image.width * predicted_image.height, main.MAX_IMAGE_PIXELS)
 
     def test_no_predictions_returns_useful_error_with_preview(self) -> None:
         """Blank uploads should show a useful error and still render preview."""
@@ -651,6 +655,8 @@ class WebAppRenderingTests(unittest.TestCase):
         js = (main.WEB_ROOT / "app.js").read_text(encoding="utf-8")
 
         self.assertIn('<form class="upload-panel" id="upload-form"', html)
+        self.assertIn("HEIC", html)
+        self.assertIn(".heif", html)
         self.assertIn('href="/styles.css"', html)
         self.assertIn('src="/app.js"', html)
         self.assertIn(".correction-form", css)

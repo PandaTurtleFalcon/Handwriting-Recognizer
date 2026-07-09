@@ -13,6 +13,9 @@ import hashlib
 import html
 import io
 import json
+import shutil
+import subprocess
+import tempfile
 from email import policy
 from email.parser import BytesParser
 from http import HTTPStatus
@@ -21,6 +24,13 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
 from PIL import Image, ImageOps, UnidentifiedImageError
+
+try:
+    from pillow_heif import register_heif_opener
+except ImportError:
+    register_heif_opener = None
+else:
+    register_heif_opener()
 
 from alnum_model import METRICS_PATH as ALNUM_METRICS_PATH
 from alnum_model import MIXEDCASE_METRICS_PATH, MIXEDCASE_WEIGHTS_PATH
@@ -39,6 +49,7 @@ HOST = "127.0.0.1"
 PORT = 8000
 MAX_UPLOAD_BYTES = 8 * 1024 * 1024
 MAX_IMAGE_PIXELS = 4_000_000
+MAX_DECODE_IMAGE_PIXELS = 60_000_000
 MAX_FILES = 20
 CORRECTIONS_PATH = Path("data") / "corrections" / "corrections.jsonl"
 CORRECTION_UPLOAD_DIR = Path("data") / "corrections" / "uploads"
@@ -106,10 +117,10 @@ CASE_GEOMETRY_TALL_RATIO = 0.92
 CASE_GEOMETRY_MIN_ALT_CONFIDENCE = 0.12
 CASE_PAIR_MIN_SIZE_SPREAD = 1.10
 CASE_PAIR_MIN_ALT_CONFIDENCE = 0.02
-# Set well above MAX_IMAGE_PIXELS so PIL's own decompression-bomb guard
-# never fires before this app's own size check in classify_files runs (and
-# reports a friendlier error); the 2x margin is just headroom, not a real limit.
-Image.MAX_IMAGE_PIXELS = MAX_IMAGE_PIXELS * 2
+# Set well above the processing size so normal phone-camera uploads can be
+# decoded and then resized before recognition. PIL still raises on images
+# above 2x this value, which keeps decompression-bomb protection in place.
+Image.MAX_IMAGE_PIXELS = MAX_DECODE_IMAGE_PIXELS
 
 
 PAGE_CSS = """
@@ -939,10 +950,63 @@ def parse_multipart_files(content_type: str, body: bytes) -> list[tuple[str, byt
         if payload:
             files.append((Path(filename).name, payload))
     if not files:
-        raise ValueError("Choose at least one PNG, JPG, or WEBP image.")
+        raise ValueError("Choose at least one PNG, JPG, WEBP, HEIC, or HEIF image.")
     if len(files) > MAX_FILES:
         raise ValueError(f"Upload {MAX_FILES} or fewer files at a time.")
     return files
+
+
+def decode_upload_image(filename: str, payload: bytes) -> Image.Image:
+    """Decode common browser image uploads, including HEIC on macOS."""
+
+    try:
+        image = Image.open(io.BytesIO(payload))
+        image.load()
+        return image
+    except (UnidentifiedImageError, OSError, ValueError) as exc:
+        if Path(filename).suffix.lower() not in {".heic", ".heif"}:
+            raise exc
+        converted = decode_heic_with_sips(payload)
+        if converted is None:
+            raise exc
+        return converted
+
+
+def decode_heic_with_sips(payload: bytes) -> Image.Image | None:
+    """Use macOS' built-in image converter when Pillow lacks HEIC support."""
+
+    if shutil.which("sips") is None:
+        return None
+    with tempfile.TemporaryDirectory() as directory:
+        source = Path(directory) / "upload.heic"
+        target = Path(directory) / "upload.png"
+        source.write_bytes(payload)
+        try:
+            completed = subprocess.run(
+                ["sips", "-s", "format", "png", str(source), "--out", str(target)],
+                capture_output=True,
+                check=False,
+                timeout=15,
+            )
+        except (OSError, subprocess.TimeoutExpired):
+            return None
+        if completed.returncode != 0 or not target.exists():
+            return None
+        image = Image.open(target)
+        image.load()
+        return image
+
+
+def resize_for_recognition(image: Image.Image) -> Image.Image:
+    """Downscale large phone photos before segmentation/model inference."""
+
+    pixel_count = image.width * image.height
+    if pixel_count <= MAX_IMAGE_PIXELS:
+        return image
+    scale = (MAX_IMAGE_PIXELS / pixel_count) ** 0.5
+    width = max(1, int(image.width * scale))
+    height = max(1, int(image.height * scale))
+    return image.resize((width, height), Image.Resampling.LANCZOS)
 
 
 def classify_files(
@@ -957,16 +1021,15 @@ def classify_files(
     for filename, payload in files:
         image_id = hashlib.sha256(payload).hexdigest()
         try:
-            image = Image.open(io.BytesIO(payload))
-            if image.width * image.height > MAX_IMAGE_PIXELS:
-                results.append({"filename": filename, "error": "Image is too large. Use an image under 4 megapixels."})
+            image = decode_upload_image(filename, payload)
+            if image.width * image.height > MAX_DECODE_IMAGE_PIXELS:
+                results.append({"filename": filename, "error": "Image is too large. Use an image under 60 megapixels."})
                 continue
-            image.load()
         except (UnidentifiedImageError, OSError, ValueError):
             results.append({"filename": filename, "error": "Could not read this as an image."})
             continue
 
-        image = ImageOps.exif_transpose(image).convert("RGB")
+        image = resize_for_recognition(ImageOps.exif_transpose(image).convert("RGB"))
         if save_sources:
             save_correction_source_image(image_id, image)
         if MnistWebHandler.recognizer_kind == "characters" and MnistWebHandler.labels is not None:
@@ -1570,7 +1633,7 @@ def build_correction_record(form: dict[str, str]) -> dict[str, object]:
             "row": int(bbox.get("row", 1)),
         },
         "prediction_boxes": cleaned_prediction_boxes,
-        "timestamp": dt.datetime.now(dt.UTC).isoformat(),
+        "timestamp": dt.datetime.now(dt.timezone.utc).isoformat(),
     }
 
 
@@ -1727,8 +1790,8 @@ def render_page(
           <div class="upload-zone">
             <div>
               <label for="images"><strong>Choose handwriting images</strong></label>
-              <p id="upload-help" class="hint">PNG, JPG, or WEBP. Multiple files are okay.</p>
-              <input id="images" name="images" type="file" accept="image/png,image/jpeg,image/webp" aria-describedby="upload-help" multiple required>
+              <p id="upload-help" class="hint">PNG, JPG, WEBP, HEIC, or HEIF. Multiple files are okay.</p>
+              <input id="images" name="images" type="file" accept="image/png,image/jpeg,image/webp,image/heic,image/heif,.heic,.heif" aria-describedby="upload-help" multiple required>
             </div>
           </div>
           <button type="submit">Recognize handwriting</button>
