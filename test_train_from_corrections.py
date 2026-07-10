@@ -12,6 +12,7 @@ from scripts import train_from_corrections
 from scripts.train_from_corrections import export_character_correction_folder
 from scripts.train_from_corrections import (
     correction_item_label_counts,
+    exportable_character_correction_counts,
     exported_character_crop_counts,
     format_priority_coverage,
 )
@@ -98,6 +99,37 @@ class TrainFromCorrectionsTests(unittest.TestCase):
         self.assertEqual(counts["1"], 2)
         self.assertEqual(counts["a"], 1)
         self.assertNotIn("A", counts)
+
+    def test_counts_exportable_character_corrections_before_export(self) -> None:
+        """Practice samples should appear in dry-run coverage before training export."""
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            upload_dir = root / "uploads"
+            upload_dir.mkdir()
+            image_id = "practice-1"
+            Image.new("RGB", (32, 32), "white").save(upload_dir / f"{image_id}.png")
+            corrections_path = root / "corrections.jsonl"
+            corrections_path.write_text(
+                json.dumps(
+                    {
+                        "correction_kind": "character",
+                        "image_id": image_id,
+                        "corrected_label": "O",
+                        "bbox": {"x": 0, "y": 0, "width": 32, "height": 32, "row": 1},
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            counts = exportable_character_correction_counts(
+                ["0", "O"],
+                corrections_path=corrections_path,
+                upload_dir=upload_dir,
+            )
+
+        self.assertEqual(counts["O"], 1)
 
     def test_main_skips_tiny_correction_sets_without_force(self) -> None:
         """A tiny user-labeled set should not trigger daily fine-tuning by default."""

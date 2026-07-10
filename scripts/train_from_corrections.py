@@ -90,6 +90,41 @@ def export_character_correction_folder(
     return exported
 
 
+def exportable_character_correction_counts(
+    labels: list[str],
+    corrections_path: Path = CORRECTIONS_PATH,
+    upload_dir: Path = CORRECTION_UPLOAD_DIR,
+) -> Counter[str]:
+    """Count trainable character corrections by label without exporting crops."""
+
+    counts: Counter[str] = Counter()
+    if not corrections_path.exists():
+        return counts
+    label_to_index = {label: index for index, label in enumerate(labels)}
+    for line in corrections_path.read_text(encoding="utf-8").splitlines():
+        if not line.strip():
+            continue
+        try:
+            record = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        image_id = str(record.get("image_id", ""))
+        if not image_id:
+            continue
+        image_path = upload_dir / f"{image_id}.png"
+        if not image_path.exists():
+            continue
+        try:
+            with Image.open(image_path) as image:
+                source_image = ImageOps.exif_transpose(image).convert("RGB")
+                training_record = _record_with_legacy_sequence_boxes(record, source_image)
+                for corrected_label, _ in _correction_training_items(training_record, label_to_index):
+                    counts[corrected_label] += 1
+        except OSError:
+            continue
+    return counts
+
+
 def load_character_labels() -> list[str]:
     """Load the deployed 93-class label list for correction export."""
 
@@ -198,7 +233,7 @@ def main(argv: list[str] | None = None) -> None:
     mixed_corrections = load_correction_cache(list(MIXEDCASE_LABELS))
     character_labels = load_character_labels() if CHARACTER_LABELS_PATH.exists() else []
     if args.dry_run:
-        character_counts = exported_character_crop_counts()
+        character_counts = exportable_character_correction_counts(character_labels) if character_labels else Counter()
         character_count = sum(character_counts.values())
         folded_counts = correction_item_label_counts(LABELS, folded_corrections)
         mixed_counts = correction_item_label_counts(list(MIXEDCASE_LABELS), mixed_corrections)
