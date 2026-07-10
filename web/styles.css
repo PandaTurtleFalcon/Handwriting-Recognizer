@@ -179,6 +179,13 @@ h2 {
   letter-spacing: 0;
 }
 
+.practice-target-card {
+  display: grid;
+  gap: 6px;
+  justify-items: center;
+  min-width: 112px;
+}
+
 .practice-target {
   display: grid;
   place-items: center;
@@ -192,6 +199,19 @@ h2 {
   font-size: 3rem;
   line-height: 1;
   font-weight: 950;
+}
+
+.practice-target-progress {
+  min-height: 20px;
+  color: var(--muted);
+  font-size: 0.86rem;
+  font-weight: 900;
+  text-align: center;
+  white-space: nowrap;
+}
+
+.practice-target-progress.ready {
+  color: var(--ok);
 }
 
 .practice-labels {

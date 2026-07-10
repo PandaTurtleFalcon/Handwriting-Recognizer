@@ -11,6 +11,7 @@ const practiceCoverageEl = document.querySelector("#practice-coverage");
 const practiceReadinessEl = document.querySelector("#practice-readiness");
 const practiceLabelInput = document.querySelector("#practice-label-input");
 const practiceTargetEl = document.querySelector("#practice-target");
+const practiceTargetProgressEl = document.querySelector("#practice-target-progress");
 const practiceClearButton = document.querySelector("#practice-clear");
 const practiceNextButton = document.querySelector("#practice-next-needed");
 const practiceStatus = document.querySelector("#practice-status");
@@ -145,6 +146,7 @@ function setPracticeLabel(label) {
   practiceLabelsEl.querySelectorAll("button").forEach((button) => {
     button.classList.toggle("selected", button.dataset.label === label);
   });
+  renderSelectedPracticeProgress();
 }
 
 function practiceLabelValuesFromCoverage(payload) {
@@ -167,6 +169,26 @@ function renderPracticeLabelButtons(labels) {
     practiceLabelsEl.append(button);
   });
   setPracticeLabel(practiceLabels.includes(selectedLabel) ? selectedLabel : practiceLabels[0]);
+}
+
+function selectedPracticeCoverage(label) {
+  if (!latestPracticeCoverage || !Array.isArray(latestPracticeCoverage.labels)) {
+    return null;
+  }
+  return latestPracticeCoverage.labels.find((item) => text(item.label) === label) || null;
+}
+
+function renderSelectedPracticeProgress() {
+  if (!practiceTargetProgressEl) {
+    return;
+  }
+  const label = text(practiceLabelInput.value);
+  const coverage = selectedPracticeCoverage(label);
+  const target = Number(latestPracticeCoverage?.target_per_label || 20);
+  const count = Number(coverage?.count || 0);
+  const needed = Number(coverage?.needed ?? Math.max(0, target - count));
+  practiceTargetProgressEl.textContent = needed > 0 ? `${count}/${target} saved, ${needed} needed` : `${count}/${target} saved, ready`;
+  practiceTargetProgressEl.classList.toggle("ready", needed <= 0);
 }
 
 function nextNeededPracticeLabel() {
