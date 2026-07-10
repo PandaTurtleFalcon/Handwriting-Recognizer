@@ -166,6 +166,14 @@ restored, so future improvement loops do not repeat known-bad blends.
   - Code path: added a `Next needed` practice control plus automatic next-label selection after saving a sample. The UI now uses `/api/correction-coverage` to steer data collection toward labels with the largest remaining correction-sample gap.
   - Verification: `python3 -m pytest -q test_web_app.py test_train_from_corrections.py` passed (`78` tests), `curl -fsS http://127.0.0.1:8000/health` returned live, and `python3 scripts/summarize_benchmarks.py --include-app-hardcases` confirmed model metrics are unchanged. This is a data-collection improvement, not a claimed model-accuracy gain.
 
+- Expanded practice sample target labels:
+  - Code path: expanded `PRACTICE_PRIORITY_LABELS` and the static practice UI from the original 18 labels to the audited mixed-case and punctuation blockers, including `2/Z/z`, `9/q/g`, `F/f`, `U/u`, `M/m`, `V/v`, `P/p`, `W/w`, `Y/y/4`, `T/t/7`, `J/j`, `K/k`, `X/x`, and punctuation twins `:;!+`.
+  - Verification: `python3 -m pytest -q test_web_app.py test_train_from_corrections.py` passed (`79` tests), and `python3 scripts/summarize_benchmarks.py --include-app-hardcases` confirmed model metrics are unchanged. This widens real correction-data coverage for the two failing exact gates.
+
+- Mixed-case helper with very-light inverse-frequency class-balanced loss:
+  - Command shape: `python3 alnum_model.py --mixed-case --warm-start --samples-per-class 3500 --include-nist-sd19 --nist-samples-per-class 800 --include-corrections --epochs 3 --learning-rate 0.000015 --seed 2020 --min-accuracy 0 --mixedcase-class-balance-strength 0.05 --mixedcase-label-smoothing 0.025`
+  - Result: stopped after epoch 1 because exact reached only `77.78%` (`98.09%` digits, `67.30%` upper, `86.18%` lower), well below the current `80.50%` checkpoint and showing the same uppercase regression pattern as stronger class balancing. The backed-up `mixedcase_cnn.pt` and `mixedcase_training_metrics.json` were restored.
+
 - Character model with UJI-Pen character root:
   - Command shape: `python3 character_model.py --model widecnn --warm-start --epochs 3 --min-accuracy 0 --learning-rate 0.000001 --label-smoothing 0.015 --punctuation-loss-weight 1.02 --weak-labels 'Oo0Il1isScCzZvV-_.|/' --weak-loss-weight 1.08 --seed 1414 --extra-root data/extra_hasyv2/character_ascii --extra-root data/uji_pen_v2/character_ascii --extra-root data/corrections/character_ascii --extra-root data/generated_punctuation_ascii`
   - Result: UJI domain mixing regressed validation to `90.78%`, `90.72%`, and `90.81%`, below the current `92.18%` checkpoint. The backed-up `character_cnn.pt`, `character_training_metrics.json`, and `character_exemplars.pt` were restored.

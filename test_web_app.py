@@ -673,6 +673,8 @@ class WebAppRenderingTests(unittest.TestCase):
         self.assertIn('fetch("/api/correct"', js)
         self.assertIn('fetch("/api/correction-coverage"', js)
         self.assertIn("practiceLabels", js)
+        self.assertIn('"q"', js)
+        self.assertIn('"+"', js)
         self.assertIn("nextNeededPracticeLabel", js)
         self.assertIn("refreshPracticeCoverage(true)", js)
         self.assertIn("source_image", js)
@@ -1265,6 +1267,12 @@ class WebAppRenderingTests(unittest.TestCase):
         self.assertEqual(report["labels"][0]["needed"], 17)
         self.assertFalse(report["labels"][0]["ready"])
         self.assertTrue(report["labels"][1]["ready"])
+
+    def test_practice_priority_labels_cover_mixedcase_and_punctuation_twins(self) -> None:
+        """Practice samples should target the audited exact-recognition blockers."""
+
+        for label in ["q", "g", "F", "f", "U", "u", "T", "t", "7", ":", ";", "!", "+"]:
+            self.assertIn(label, main.PRACTICE_PRIORITY_LABELS)
 
 
 if __name__ == "__main__":
