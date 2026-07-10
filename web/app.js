@@ -12,6 +12,7 @@ const practiceReadinessEl = document.querySelector("#practice-readiness");
 const practiceLabelInput = document.querySelector("#practice-label-input");
 const practiceTargetEl = document.querySelector("#practice-target");
 const practiceTargetProgressEl = document.querySelector("#practice-target-progress");
+const practiceAutoNextInput = document.querySelector("#practice-auto-next");
 const practiceClearButton = document.querySelector("#practice-clear");
 const practiceNextButton = document.querySelector("#practice-next-needed");
 const practiceStatus = document.querySelector("#practice-status");
@@ -426,7 +427,7 @@ async function submitPracticeSample() {
     }
     practiceStatus.textContent = `Saved ${label}.`;
     clearPracticeCanvas(false);
-    await refreshPracticeCoverage(true);
+    await refreshPracticeCoverage(Boolean(practiceAutoNextInput?.checked));
     await refreshCorrectionReadiness();
   } catch (error) {
     practiceStatus.textContent = error.message;

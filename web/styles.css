@@ -367,16 +367,36 @@ h2 {
 
 .practice-actions {
   display: grid;
-  grid-template-columns: minmax(64px, 96px) auto auto auto;
+  grid-template-columns: minmax(64px, 96px) auto auto auto auto;
   gap: 10px;
   align-items: center;
-  max-width: 720px;
+  max-width: 860px;
 }
 
 .practice-actions .text-input {
   text-align: center;
   font-size: 1.45rem;
   font-weight: 900;
+}
+
+.practice-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 48px;
+  padding: 0 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+  color: var(--muted);
+  font-weight: 900;
+  white-space: nowrap;
+}
+
+.practice-toggle input {
+  width: 18px;
+  height: 18px;
+  accent-color: var(--accent);
 }
 
 .status-line {
