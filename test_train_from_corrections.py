@@ -15,6 +15,7 @@ from scripts.train_from_corrections import (
     DEFAULT_PRIORITY_LABELS,
     correction_item_label_counts,
     correction_readiness_summary,
+    dry_run_report,
     exportable_character_correction_counts,
     exported_character_crop_counts,
     filter_priority_labels,
@@ -79,6 +80,7 @@ class TrainFromCorrectionsTests(unittest.TestCase):
         self.assertIn("--min-alnum-corrections", help_text)
         self.assertIn("--priority-labels", help_text)
         self.assertIn("--mixedcase-priority-labels", help_text)
+        self.assertIn("--json", help_text)
 
     def test_default_priority_labels_match_practice_targets(self) -> None:
         """Dry-run reporting should use the same weak labels as practice mode."""
@@ -108,6 +110,26 @@ class TrainFromCorrectionsTests(unittest.TestCase):
             format_readiness_summary("Character", summary),
             "Character correction readiness: not_ready labels=1/3 samples=23/60 needed=37",
         )
+
+    def test_dry_run_report_exposes_machine_readable_readiness(self) -> None:
+        """Automation should be able to read correction readiness without parsing text."""
+
+        report = dry_run_report(
+            {"A": 20, "B": 2},
+            {"A": 1},
+            {"A": 1, "a": 1},
+            folded_item_count=1,
+            mixed_item_count=2,
+            character_priority_labels="A-+",
+            mixedcase_priority_labels="Aa-",
+        )
+
+        self.assertEqual(report["summary"]["character_crops"], 22)
+        self.assertEqual(report["summary"]["folded_items"], 1)
+        self.assertEqual(report["summary"]["mixedcase_items"], 2)
+        self.assertEqual(report["character"]["readiness"]["needed_samples"], 40)
+        self.assertEqual(report["folded_alnum"]["priority_labels"], ["A"])
+        self.assertEqual(report["mixedcase"]["priority_labels"], ["A", "a"])
 
     def test_counts_exported_character_crops_by_priority_label(self) -> None:
         """Dry-run coverage should show which weak labels have examples."""

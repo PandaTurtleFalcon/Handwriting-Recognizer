@@ -142,6 +142,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="Report usable correction counts without exporting crops or training.",
     )
     parser.add_argument(
+        "--json",
+        action="store_true",
+        help="With --dry-run, emit a machine-readable correction readiness report.",
+    )
+    parser.add_argument(
         "--force",
         action="store_true",
         help="Train even when the correction set is smaller than the default safety threshold.",
@@ -253,6 +258,73 @@ def format_readiness_summary(name: str, summary: dict[str, int | bool]) -> str:
     )
 
 
+def dry_run_report(
+    character_counts: Counter[str],
+    folded_counts: Counter[str],
+    mixed_counts: Counter[str],
+    folded_item_count: int,
+    mixed_item_count: int,
+    character_priority_labels: str,
+    mixedcase_priority_labels: str,
+) -> dict[str, object]:
+    """Build the correction dry-run report shared by text and JSON output."""
+
+    folded_priority_labels = filter_priority_labels(character_priority_labels.upper(), LABELS)
+    mixed_priority_labels = filter_priority_labels(mixedcase_priority_labels, list(MIXEDCASE_LABELS))
+    return {
+        "summary": {
+            "character_crops": sum(character_counts.values()),
+            "folded_items": folded_item_count,
+            "mixedcase_items": mixed_item_count,
+        },
+        "character": {
+            "coverage": dict(character_counts),
+            "priority_labels": list(dict.fromkeys(character_priority_labels)),
+            "readiness": correction_readiness_summary(character_counts, character_priority_labels),
+        },
+        "folded_alnum": {
+            "coverage": dict(folded_counts),
+            "priority_labels": list(dict.fromkeys(folded_priority_labels)),
+            "readiness": correction_readiness_summary(folded_counts, folded_priority_labels),
+        },
+        "mixedcase": {
+            "coverage": dict(mixed_counts),
+            "priority_labels": list(dict.fromkeys(mixed_priority_labels)),
+            "readiness": correction_readiness_summary(mixed_counts, mixed_priority_labels),
+        },
+    }
+
+
+def print_text_dry_run_report(report: dict[str, object]) -> None:
+    """Print the human-readable dry-run report."""
+
+    summary = report["summary"]
+    character = report["character"]
+    folded = report["folded_alnum"]
+    mixed = report["mixedcase"]
+    print(
+        "Correction summary: "
+        f"character_crops={summary['character_crops']}, "
+        f"folded_items={summary['folded_items']}, "
+        f"mixedcase_items={summary['mixedcase_items']}"
+    )
+    print(
+        "Character priority coverage: "
+        f"{format_priority_coverage(Counter(character['coverage']), ''.join(character['priority_labels']))}"
+    )
+    print(format_readiness_summary("Character", character["readiness"]))
+    print(
+        "Folded alnum priority coverage: "
+        f"{format_priority_coverage(Counter(folded['coverage']), ''.join(folded['priority_labels']))}"
+    )
+    print(format_readiness_summary("Folded alnum", folded["readiness"]))
+    print(
+        "Mixed-case priority coverage: "
+        f"{format_priority_coverage(Counter(mixed['coverage']), ''.join(mixed['priority_labels']))}"
+    )
+    print(format_readiness_summary("Mixed-case", mixed["readiness"]))
+
+
 def correction_item_label_counts(
     labels: list[str],
     corrections: tuple[object, object] | None,
@@ -282,29 +354,21 @@ def main(argv: list[str] | None = None) -> None:
     character_labels = load_character_labels() if CHARACTER_LABELS_PATH.exists() else []
     if args.dry_run:
         character_counts = exportable_character_correction_counts(character_labels) if character_labels else Counter()
-        character_count = sum(character_counts.values())
         folded_counts = correction_item_label_counts(LABELS, folded_corrections)
         mixed_counts = correction_item_label_counts(list(MIXEDCASE_LABELS), mixed_corrections)
-        print(
-            "Correction summary: "
-            f"character_crops={character_count}, "
-            f"folded_items={0 if folded_corrections is None else len(folded_corrections[1])}, "
-            f"mixedcase_items={0 if mixed_corrections is None else len(mixed_corrections[1])}"
+        report = dry_run_report(
+            character_counts,
+            folded_counts,
+            mixed_counts,
+            0 if folded_corrections is None else len(folded_corrections[1]),
+            0 if mixed_corrections is None else len(mixed_corrections[1]),
+            args.priority_labels,
+            args.mixedcase_priority_labels,
         )
-        print(f"Character priority coverage: {format_priority_coverage(character_counts, args.priority_labels)}")
-        print(format_readiness_summary("Character", correction_readiness_summary(character_counts, args.priority_labels)))
-        folded_priority_labels = filter_priority_labels(args.priority_labels.upper(), LABELS)
-        print(
-            "Folded alnum priority coverage: "
-            f"{format_priority_coverage(folded_counts, folded_priority_labels)}"
-        )
-        print(format_readiness_summary("Folded alnum", correction_readiness_summary(folded_counts, folded_priority_labels)))
-        mixed_priority_labels = filter_priority_labels(args.mixedcase_priority_labels, list(MIXEDCASE_LABELS))
-        print(
-            "Mixed-case priority coverage: "
-            f"{format_priority_coverage(mixed_counts, mixed_priority_labels)}"
-        )
-        print(format_readiness_summary("Mixed-case", correction_readiness_summary(mixed_counts, mixed_priority_labels)))
+        if args.json:
+            print(json.dumps(report, indent=2, sort_keys=True))
+        else:
+            print_text_dry_run_report(report)
         return
 
     character_count = export_character_correction_folder(character_labels) if character_labels else 0

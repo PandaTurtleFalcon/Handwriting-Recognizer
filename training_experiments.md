@@ -182,6 +182,10 @@ restored, so future improvement loops do not repeat known-bad blends.
   - Code path: `scripts/train_from_corrections.py --dry-run` now prints per-recognizer readiness lines with ready-label count, total weak-label samples, target samples, and remaining samples needed.
   - Verification: `python3 -m pytest -q test_train_from_corrections.py test_web_app.py` passed (`82` tests). Current dry-run readiness is character `0/52` labels ready with `2/1040` samples, folded alnum `0/26` with `2/520`, and mixed-case `0/42` with `2/840`; benchmark metrics are unchanged.
 
+- Machine-readable correction readiness:
+  - Code path: added `scripts/train_from_corrections.py --dry-run --json`, sharing the same report object as the text dry-run output.
+  - Verification: `python3 -m pytest -q test_train_from_corrections.py test_web_app.py` passed (`83` tests), `python3 scripts/train_from_corrections.py --dry-run --json` parses as JSON with the same readiness totals, and benchmark metrics are unchanged.
+
 - Mixed-case helper with very-light inverse-frequency class-balanced loss:
   - Command shape: `python3 alnum_model.py --mixed-case --warm-start --samples-per-class 3500 --include-nist-sd19 --nist-samples-per-class 800 --include-corrections --epochs 3 --learning-rate 0.000015 --seed 2020 --min-accuracy 0 --mixedcase-class-balance-strength 0.05 --mixedcase-label-smoothing 0.025`
   - Result: stopped after epoch 1 because exact reached only `77.78%` (`98.09%` digits, `67.30%` upper, `86.18%` lower), well below the current `80.50%` checkpoint and showing the same uppercase regression pattern as stronger class balancing. The backed-up `mixedcase_cnn.pt` and `mixedcase_training_metrics.json` were restored.
