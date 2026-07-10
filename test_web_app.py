@@ -659,6 +659,7 @@ class WebAppRenderingTests(unittest.TestCase):
         self.assertIn('id="practice-canvas"', html)
         self.assertIn('id="practice-form"', html)
         self.assertIn('id="practice-coverage"', html)
+        self.assertIn('id="practice-readiness"', html)
         self.assertIn('id="practice-next-needed"', html)
         self.assertIn("HEIC", html)
         self.assertIn(".heif", html)
@@ -667,13 +668,16 @@ class WebAppRenderingTests(unittest.TestCase):
         self.assertIn(".correction-form", css)
         self.assertIn(".practice-panel", css)
         self.assertIn(".coverage-chip", css)
+        self.assertIn(".readiness-card", css)
         self.assertIn("touch-action: none", css)
         self.assertIn("grid-template-columns: minmax(52px, 1fr) auto", css)
         self.assertIn('fetch("/api/predict"', js)
         self.assertIn('fetch("/api/correct"', js)
         self.assertIn('fetch("/api/correction-coverage"', js)
+        self.assertIn('fetch("/api/correction-readiness"', js)
         self.assertIn("practiceLabels", js)
         self.assertIn("practiceLabelValuesFromCoverage", js)
+        self.assertIn("renderCorrectionReadiness", js)
         self.assertIn("renderPracticeLabelButtons", js)
         self.assertIn("nextNeededPracticeLabel", js)
         self.assertIn("refreshPracticeCoverage(true)", js)
@@ -1273,6 +1277,16 @@ class WebAppRenderingTests(unittest.TestCase):
 
         for label in ["q", "g", "F", "f", "U", "u", "T", "t", "7", ":", ";", "!", "+"]:
             self.assertIn(label, main.PRACTICE_PRIORITY_LABELS)
+
+    def test_correction_readiness_report_exposes_training_gates(self) -> None:
+        """The app should expose machine-readable correction readiness."""
+
+        report = main.correction_readiness_report()
+
+        self.assertTrue(report["ok"])
+        self.assertIn("readiness", report["character"])
+        self.assertIn("readiness", report["folded_alnum"])
+        self.assertIn("readiness", report["mixedcase"])
 
 
 if __name__ == "__main__":

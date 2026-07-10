@@ -8,6 +8,7 @@ const practiceCanvas = document.querySelector("#practice-canvas");
 const practiceForm = document.querySelector("#practice-form");
 const practiceLabelsEl = document.querySelector("#practice-labels");
 const practiceCoverageEl = document.querySelector("#practice-coverage");
+const practiceReadinessEl = document.querySelector("#practice-readiness");
 const practiceLabelInput = document.querySelector("#practice-label-input");
 const practiceTargetEl = document.querySelector("#practice-target");
 const practiceClearButton = document.querySelector("#practice-clear");
@@ -243,6 +244,49 @@ async function refreshPracticeCoverage(selectNext = false) {
   }
 }
 
+function renderReadinessCard(name, readiness) {
+  const card = makeElement("div", readiness.ready ? "readiness-card ready" : "readiness-card");
+  card.append(makeElement("strong", "", name));
+  card.append(
+    makeElement(
+      "span",
+      "",
+      `${Number(readiness.ready_labels || 0)}/${Number(readiness.total_labels || 0)} labels, ${Number(readiness.samples || 0)}/${Number(readiness.target_samples || 0)} samples`,
+    ),
+  );
+  card.append(makeElement("span", "", readiness.ready ? "ready" : `${Number(readiness.needed_samples || 0)} needed`));
+  return card;
+}
+
+function renderCorrectionReadiness(payload) {
+  if (!practiceReadinessEl || !payload || !payload.ok) {
+    return;
+  }
+  practiceReadinessEl.replaceChildren();
+  practiceReadinessEl.append(makeElement("div", "practice-coverage-summary", "Training readiness"));
+  const grid = makeElement("div", "readiness-grid");
+  grid.append(renderReadinessCard("Character", payload.character?.readiness || {}));
+  grid.append(renderReadinessCard("Folded", payload.folded_alnum?.readiness || {}));
+  grid.append(renderReadinessCard("Mixed case", payload.mixedcase?.readiness || {}));
+  practiceReadinessEl.append(grid);
+}
+
+async function refreshCorrectionReadiness() {
+  if (!practiceReadinessEl) {
+    return;
+  }
+  try {
+    const response = await fetch("/api/correction-readiness");
+    const payload = await response.json();
+    if (!response.ok || !payload.ok) {
+      throw new Error("readiness unavailable");
+    }
+    renderCorrectionReadiness(payload);
+  } catch {
+    practiceReadinessEl.replaceChildren(makeElement("div", "practice-coverage-summary", "Readiness unavailable"));
+  }
+}
+
 function practicePoint(event) {
   const rect = practiceCanvas.getBoundingClientRect();
   return {
@@ -335,6 +379,7 @@ async function savePracticeSample(event) {
     practiceStatus.textContent = `Saved ${label}.`;
     clearPracticeCanvas(false);
     await refreshPracticeCoverage(true);
+    await refreshCorrectionReadiness();
   } catch (error) {
     practiceStatus.textContent = error.message;
   } finally {
@@ -358,6 +403,7 @@ function setupPracticeMode() {
   setPracticeLabel(practiceLabels[0]);
   clearPracticeCanvas();
   refreshPracticeCoverage(true);
+  refreshCorrectionReadiness();
 }
 
 function predictionBoxData(prediction) {

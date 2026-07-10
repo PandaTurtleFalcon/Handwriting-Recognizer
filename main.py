@@ -815,6 +815,9 @@ class MnistWebHandler(BaseHTTPRequestHandler):
         if parsed.path == "/api/correction-coverage":
             self._send_json(correction_coverage_report())
             return
+        if parsed.path == "/api/correction-readiness":
+            self._send_json(correction_readiness_report())
+            return
         self.send_error(HTTPStatus.NOT_FOUND)
 
     def do_POST(self) -> None:
@@ -1234,6 +1237,36 @@ def correction_coverage_report() -> dict[str, object]:
     labels = load_character_labels()
     counts = exportable_character_correction_counts(labels)
     return build_correction_coverage_report(counts)
+
+
+def correction_readiness_report() -> dict[str, object]:
+    """Return machine-readable correction-training readiness for the app."""
+
+    from scripts.train_from_corrections import (
+        LABELS,
+        MIXEDCASE_LABELS,
+        DEFAULT_MIXEDCASE_PRIORITY_LABELS,
+        DEFAULT_PRIORITY_LABELS,
+        correction_item_label_counts,
+        dry_run_report,
+        exportable_character_correction_counts,
+        load_character_labels,
+        load_correction_cache,
+    )
+
+    character_labels = load_character_labels()
+    folded_corrections = load_correction_cache(LABELS)
+    mixed_corrections = load_correction_cache(list(MIXEDCASE_LABELS))
+    report = dry_run_report(
+        exportable_character_correction_counts(character_labels),
+        correction_item_label_counts(LABELS, folded_corrections),
+        correction_item_label_counts(list(MIXEDCASE_LABELS), mixed_corrections),
+        0 if folded_corrections is None else len(folded_corrections[1]),
+        0 if mixed_corrections is None else len(mixed_corrections[1]),
+        DEFAULT_PRIORITY_LABELS,
+        DEFAULT_MIXEDCASE_PRIORITY_LABELS,
+    )
+    return {"ok": True, **report}
 
 
 def should_use_digit_specialist_predictions(

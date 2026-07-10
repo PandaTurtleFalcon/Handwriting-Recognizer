@@ -205,6 +205,11 @@ h2 {
   gap: 8px;
 }
 
+.practice-readiness {
+  display: grid;
+  gap: 8px;
+}
+
 .practice-coverage-summary {
   color: var(--muted);
   font-weight: 800;
@@ -228,6 +233,29 @@ h2 {
 }
 
 .coverage-chip.ready {
+  border-color: #a7d8bd;
+  background: #f0fbf5;
+  color: #146c43;
+}
+
+.readiness-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 8px;
+}
+
+.readiness-card {
+  display: grid;
+  gap: 4px;
+  min-height: 72px;
+  padding: 10px 12px;
+  border: 1px solid #f1c46b;
+  border-radius: 8px;
+  background: var(--warn-bg);
+  color: #5b4a15;
+}
+
+.readiness-card.ready {
   border-color: #a7d8bd;
   background: #f0fbf5;
   color: #146c43;
