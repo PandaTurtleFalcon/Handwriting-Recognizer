@@ -258,8 +258,16 @@ function renderReadinessCard(name, report) {
   );
   card.append(makeElement("span", "", readiness.ready ? "ready" : `${Number(readiness.needed_samples || 0)} needed`));
   if (nextNeeded.length > 0) {
-    const labels = nextNeeded.map((item) => `${text(item.label)}:${Number(item.needed || 0)}`).join(" ");
-    card.append(makeElement("span", "readiness-next", `next ${labels}`));
+    const nextWrap = makeElement("div", "readiness-next");
+    nextWrap.append(makeElement("span", "", "next"));
+    nextNeeded.forEach((item) => {
+      const label = text(item.label);
+      const button = makeElement("button", "readiness-next-button", `${label}:${Number(item.needed || 0)}`);
+      button.type = "button";
+      button.addEventListener("click", () => setPracticeLabel(label));
+      nextWrap.append(button);
+    });
+    card.append(nextWrap);
   }
   return card;
 }

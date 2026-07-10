@@ -262,10 +262,31 @@ h2 {
 }
 
 .readiness-next {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 5px;
   overflow-wrap: anywhere;
   color: var(--muted);
   font-size: 0.9rem;
   font-weight: 800;
+}
+
+.readiness-next-button {
+  min-height: 28px;
+  padding: 2px 7px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+  color: var(--ink);
+  cursor: pointer;
+  font-weight: 900;
+}
+
+.readiness-next-button:hover,
+.readiness-next-button:focus {
+  border-color: var(--accent);
+  outline: 2px solid rgba(67, 56, 202, 0.16);
 }
 
 .practice-label-button {
