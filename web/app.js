@@ -192,6 +192,15 @@ function renderSelectedPracticeProgress() {
   practiceTargetProgressEl.classList.toggle("ready", needed <= 0);
 }
 
+function repeatPracticeStatus(label) {
+  const coverage = selectedPracticeCoverage(label);
+  if (!coverage) {
+    return `Saved ${label}.`;
+  }
+  const needed = Number(coverage.needed || 0);
+  return needed > 0 ? `Saved ${label}. ${needed} more ${label} needed.` : `Saved ${label}. ${label} is ready.`;
+}
+
 function nextNeededPracticeLabel() {
   if (!latestPracticeCoverage || !Array.isArray(latestPracticeCoverage.labels)) {
     return practiceLabels[0];
@@ -250,7 +259,7 @@ function renderPracticeCoverage(payload) {
 
 async function refreshPracticeCoverage(selectNext = false) {
   if (!practiceCoverageEl) {
-    return;
+    return null;
   }
   try {
     const response = await fetch("/api/correction-coverage");
@@ -262,8 +271,10 @@ async function refreshPracticeCoverage(selectNext = false) {
     if (selectNext) {
       selectNextNeededPracticeLabel(false);
     }
+    return payload;
   } catch {
     practiceCoverageEl.replaceChildren(makeElement("div", "practice-coverage-summary", "Coverage unavailable"));
+    return null;
   }
 }
 
@@ -425,10 +436,11 @@ async function submitPracticeSample() {
     if (!response.ok || !result.ok) {
       throw new Error(result.error || "Could not save that sample.");
     }
-    practiceStatus.textContent = `Saved ${label}.`;
+    const autoNext = Boolean(practiceAutoNextInput?.checked);
     clearPracticeCanvas(false);
-    await refreshPracticeCoverage(Boolean(practiceAutoNextInput?.checked));
+    await refreshPracticeCoverage(autoNext);
     await refreshCorrectionReadiness();
+    practiceStatus.textContent = autoNext ? `Saved ${label}.` : repeatPracticeStatus(label);
   } catch (error) {
     practiceStatus.textContent = error.message;
   } finally {

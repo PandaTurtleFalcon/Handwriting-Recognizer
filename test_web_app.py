@@ -688,6 +688,8 @@ class WebAppRenderingTests(unittest.TestCase):
         self.assertIn("practiceLabelValuesFromCoverage", js)
         self.assertIn("renderSelectedPracticeProgress", js)
         self.assertIn("selectedPracticeCoverage", js)
+        self.assertIn("repeatPracticeStatus", js)
+        self.assertIn("more ${label} needed", js)
         self.assertIn("renderCorrectionReadiness", js)
         self.assertIn("handlePracticeShortcut", js)
         self.assertIn("submitPracticeSample", js)
