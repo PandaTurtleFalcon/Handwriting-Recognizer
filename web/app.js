@@ -247,13 +247,21 @@ async function refreshPracticeCoverage(selectNext = false) {
 function renderReadinessCard(name, report) {
   const readiness = report?.readiness || {};
   const nextNeeded = Array.isArray(report?.next_needed) ? report.next_needed.slice(0, 4) : [];
+  const samples = Number(readiness.samples || 0);
+  const targetSamples = Number(readiness.target_samples || 0);
+  const percent = targetSamples > 0 ? Math.min(100, Math.max(0, (100 * samples) / targetSamples)) : 0;
   const card = makeElement("div", readiness.ready ? "readiness-card ready" : "readiness-card");
   card.append(makeElement("strong", "", name));
+  const meter = makeElement("div", "readiness-meter");
+  const fill = makeElement("div", "readiness-meter-fill");
+  fill.style.width = `${percent.toFixed(1)}%`;
+  meter.append(fill);
+  card.append(meter);
   card.append(
     makeElement(
       "span",
       "",
-      `${Number(readiness.ready_labels || 0)}/${Number(readiness.total_labels || 0)} labels, ${Number(readiness.samples || 0)}/${Number(readiness.target_samples || 0)} samples`,
+      `${Number(readiness.ready_labels || 0)}/${Number(readiness.total_labels || 0)} labels, ${samples}/${targetSamples} samples`,
     ),
   );
   card.append(makeElement("span", "", readiness.ready ? "ready" : `${Number(readiness.needed_samples || 0)} needed`));
