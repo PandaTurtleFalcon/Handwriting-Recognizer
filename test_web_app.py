@@ -1297,6 +1297,12 @@ class WebAppRenderingTests(unittest.TestCase):
 
         for label in ["q", "g", "F", "f", "U", "u", "T", "t", "7", ":", ";", "!", "+"]:
             self.assertIn(label, main.PRACTICE_PRIORITY_LABELS)
+        self.assertEqual(len(main.PRACTICE_PRIORITY_LABELS), len(set(main.PRACTICE_PRIORITY_LABELS)))
+
+    def test_practice_priority_labels_start_with_verified_worst_labels(self) -> None:
+        """Practice collection should attack the measured exact-recognition gaps first."""
+
+        self.assertEqual(main.PRACTICE_PRIORITY_LABELS[:10], ["s", "O", "V", "1", "c", "I", "F", "o", "m", "0"])
 
     def test_correction_readiness_report_exposes_training_gates(self) -> None:
         """The app should expose machine-readable correction readiness."""
