@@ -235,6 +235,32 @@ h2 {
   font-weight: 800;
 }
 
+.practice-focus {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  color: var(--muted);
+  font-weight: 900;
+}
+
+.practice-focus-button {
+  min-width: 34px;
+  min-height: 32px;
+  padding: 3px 8px;
+  border: 1px solid var(--accent);
+  border-radius: 8px;
+  background: #eef2ff;
+  color: var(--accent);
+  cursor: pointer;
+  font-weight: 900;
+}
+
+.practice-focus-button:hover,
+.practice-focus-button:focus {
+  outline: 2px solid rgba(67, 56, 202, 0.18);
+}
+
 .practice-coverage-grid {
   display: flex;
   flex-wrap: wrap;

@@ -1220,11 +1220,13 @@ def build_correction_coverage_report(
             }
         )
     ready = sum(1 for row in rows if bool(row["ready"]))
+    focus_labels = [str(row["label"]) for row in rows if not bool(row["ready"])][:8]
     return {
         "ok": True,
         "target_per_label": target_per_label,
         "ready_labels": ready,
         "total_labels": len(rows),
+        "focus_labels": focus_labels,
         "labels": rows,
     }
 

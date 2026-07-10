@@ -244,6 +244,18 @@ function renderPracticeCoverage(payload) {
     `${payload.ready_labels || 0}/${payload.total_labels || practiceLabels.length} labels ready, target ${payload.target_per_label || 20} each`,
   );
   practiceCoverageEl.append(summary);
+  const focusLabels = Array.isArray(payload.focus_labels) ? payload.focus_labels.map(text).filter(Boolean).slice(0, 8) : [];
+  if (focusLabels.length > 0) {
+    const focus = makeElement("div", "practice-focus");
+    focus.append(makeElement("span", "", "Focus"));
+    focusLabels.forEach((label) => {
+      const button = makeElement("button", "practice-focus-button", label);
+      button.type = "button";
+      button.addEventListener("click", () => setPracticeLabel(label));
+      focus.append(button);
+    });
+    practiceCoverageEl.append(focus);
+  }
   const grid = makeElement("div", "practice-coverage-grid");
   payload.labels.forEach((item) => {
     const count = Number(item.count || 0);

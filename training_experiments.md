@@ -222,6 +222,10 @@ restored, so future improvement loops do not repeat known-bad blends.
   - Code path: reordered `PRACTICE_PRIORITY_LABELS` so practice collection starts with the current worst verified exact labels from the mixed-case and character confusion reports (`s`, `O`, `V`, `1`, `c`, `I`, `F`, `o`, `m`, `0`) before moving through the rest of the visual twins and punctuation blockers.
   - Verification: `python3 -m pytest -q test_web_app.py test_train_from_corrections.py` passed (`86` tests), `python3 scripts/train_from_corrections.py --dry-run --json` now reports those labels first in `next_needed`, and `python3 scripts/summarize_benchmarks.py --include-app-hardcases` confirmed model metrics are unchanged.
 
+- Practice focus chips:
+  - Code path: `/api/correction-coverage` now includes `focus_labels`, and the static practice panel renders those highest-priority not-ready labels as clickable focus chips above the full coverage grid.
+  - Verification: `python3 -m pytest -q test_web_app.py test_train_from_corrections.py` passed (`86` tests), and `python3 scripts/summarize_benchmarks.py --include-app-hardcases` confirmed model metrics are unchanged.
+
 - Mixed-case helper with very-light inverse-frequency class-balanced loss:
   - Command shape: `python3 alnum_model.py --mixed-case --warm-start --samples-per-class 3500 --include-nist-sd19 --nist-samples-per-class 800 --include-corrections --epochs 3 --learning-rate 0.000015 --seed 2020 --min-accuracy 0 --mixedcase-class-balance-strength 0.05 --mixedcase-label-smoothing 0.025`
   - Result: stopped after epoch 1 because exact reached only `77.78%` (`98.09%` digits, `67.30%` upper, `86.18%` lower), well below the current `80.50%` checkpoint and showing the same uppercase regression pattern as stronger class balancing. The backed-up `mixedcase_cnn.pt` and `mixedcase_training_metrics.json` were restored.
