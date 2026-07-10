@@ -246,6 +246,25 @@ def correction_readiness_summary(
     }
 
 
+def next_needed_labels(
+    counts: Counter[str],
+    priority_labels: str,
+    target_per_label: int = PRACTICE_TARGET_PER_LABEL,
+    limit: int = 8,
+) -> list[dict[str, int | str]]:
+    """Return the highest-need labels to collect next."""
+
+    rows = []
+    for index, label in enumerate(dict.fromkeys(priority_labels)):
+        count = counts.get(label, 0)
+        needed = max(0, target_per_label - count)
+        if needed <= 0:
+            continue
+        rows.append({"label": label, "count": count, "needed": needed, "rank": index})
+    rows.sort(key=lambda item: (-int(item["needed"]), int(item["count"]), int(item["rank"])))
+    return [{"label": str(item["label"]), "count": int(item["count"]), "needed": int(item["needed"])} for item in rows[:limit]]
+
+
 def format_readiness_summary(name: str, summary: dict[str, int | bool]) -> str:
     """Return a compact readiness line for correction dry-runs."""
 
@@ -281,16 +300,19 @@ def dry_run_report(
             "coverage": dict(character_counts),
             "priority_labels": list(dict.fromkeys(character_priority_labels)),
             "readiness": correction_readiness_summary(character_counts, character_priority_labels),
+            "next_needed": next_needed_labels(character_counts, character_priority_labels),
         },
         "folded_alnum": {
             "coverage": dict(folded_counts),
             "priority_labels": list(dict.fromkeys(folded_priority_labels)),
             "readiness": correction_readiness_summary(folded_counts, folded_priority_labels),
+            "next_needed": next_needed_labels(folded_counts, folded_priority_labels),
         },
         "mixedcase": {
             "coverage": dict(mixed_counts),
             "priority_labels": list(dict.fromkeys(mixed_priority_labels)),
             "readiness": correction_readiness_summary(mixed_counts, mixed_priority_labels),
+            "next_needed": next_needed_labels(mixed_counts, mixed_priority_labels),
         },
     }
 

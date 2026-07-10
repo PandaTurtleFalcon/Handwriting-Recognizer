@@ -244,7 +244,9 @@ async function refreshPracticeCoverage(selectNext = false) {
   }
 }
 
-function renderReadinessCard(name, readiness) {
+function renderReadinessCard(name, report) {
+  const readiness = report?.readiness || {};
+  const nextNeeded = Array.isArray(report?.next_needed) ? report.next_needed.slice(0, 4) : [];
   const card = makeElement("div", readiness.ready ? "readiness-card ready" : "readiness-card");
   card.append(makeElement("strong", "", name));
   card.append(
@@ -255,6 +257,10 @@ function renderReadinessCard(name, readiness) {
     ),
   );
   card.append(makeElement("span", "", readiness.ready ? "ready" : `${Number(readiness.needed_samples || 0)} needed`));
+  if (nextNeeded.length > 0) {
+    const labels = nextNeeded.map((item) => `${text(item.label)}:${Number(item.needed || 0)}`).join(" ");
+    card.append(makeElement("span", "readiness-next", `next ${labels}`));
+  }
   return card;
 }
 
@@ -265,9 +271,9 @@ function renderCorrectionReadiness(payload) {
   practiceReadinessEl.replaceChildren();
   practiceReadinessEl.append(makeElement("div", "practice-coverage-summary", "Training readiness"));
   const grid = makeElement("div", "readiness-grid");
-  grid.append(renderReadinessCard("Character", payload.character?.readiness || {}));
-  grid.append(renderReadinessCard("Folded", payload.folded_alnum?.readiness || {}));
-  grid.append(renderReadinessCard("Mixed case", payload.mixedcase?.readiness || {}));
+  grid.append(renderReadinessCard("Character", payload.character || {}));
+  grid.append(renderReadinessCard("Folded", payload.folded_alnum || {}));
+  grid.append(renderReadinessCard("Mixed case", payload.mixedcase || {}));
   practiceReadinessEl.append(grid);
 }
 

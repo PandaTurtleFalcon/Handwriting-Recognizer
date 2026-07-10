@@ -21,6 +21,7 @@ from scripts.train_from_corrections import (
     filter_priority_labels,
     format_priority_coverage,
     format_readiness_summary,
+    next_needed_labels,
 )
 from main import PRACTICE_PRIORITY_LABELS
 
@@ -111,6 +112,13 @@ class TrainFromCorrectionsTests(unittest.TestCase):
             "Character correction readiness: not_ready labels=1/3 samples=23/60 needed=37",
         )
 
+    def test_next_needed_labels_prioritizes_largest_gaps(self) -> None:
+        """Readiness reports should expose concrete labels to collect next."""
+
+        labels = next_needed_labels({"A": 19, "B": 0, "C": 5}, "ABC", target_per_label=20, limit=2)
+
+        self.assertEqual(labels, [{"label": "B", "count": 0, "needed": 20}, {"label": "C", "count": 5, "needed": 15}])
+
     def test_dry_run_report_exposes_machine_readable_readiness(self) -> None:
         """Automation should be able to read correction readiness without parsing text."""
 
@@ -128,6 +136,7 @@ class TrainFromCorrectionsTests(unittest.TestCase):
         self.assertEqual(report["summary"]["folded_items"], 1)
         self.assertEqual(report["summary"]["mixedcase_items"], 2)
         self.assertEqual(report["character"]["readiness"]["needed_samples"], 40)
+        self.assertEqual(report["character"]["next_needed"][0], {"label": "-", "count": 0, "needed": 20})
         self.assertEqual(report["folded_alnum"]["priority_labels"], ["A"])
         self.assertEqual(report["mixedcase"]["priority_labels"], ["A", "a"])
 

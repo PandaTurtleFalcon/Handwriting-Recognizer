@@ -261,6 +261,13 @@ h2 {
   color: #146c43;
 }
 
+.readiness-next {
+  overflow-wrap: anywhere;
+  color: var(--muted);
+  font-size: 0.9rem;
+  font-weight: 800;
+}
+
 .practice-label-button {
   min-width: 42px;
   min-height: 42px;

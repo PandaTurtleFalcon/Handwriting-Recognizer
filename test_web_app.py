@@ -669,6 +669,7 @@ class WebAppRenderingTests(unittest.TestCase):
         self.assertIn(".practice-panel", css)
         self.assertIn(".coverage-chip", css)
         self.assertIn(".readiness-card", css)
+        self.assertIn(".readiness-next", css)
         self.assertIn("touch-action: none", css)
         self.assertIn("grid-template-columns: minmax(52px, 1fr) auto", css)
         self.assertIn('fetch("/api/predict"', js)
@@ -678,6 +679,7 @@ class WebAppRenderingTests(unittest.TestCase):
         self.assertIn("practiceLabels", js)
         self.assertIn("practiceLabelValuesFromCoverage", js)
         self.assertIn("renderCorrectionReadiness", js)
+        self.assertIn("next_needed", js)
         self.assertIn("renderPracticeLabelButtons", js)
         self.assertIn("nextNeededPracticeLabel", js)
         self.assertIn("refreshPracticeCoverage(true)", js)
@@ -1285,6 +1287,7 @@ class WebAppRenderingTests(unittest.TestCase):
 
         self.assertTrue(report["ok"])
         self.assertIn("readiness", report["character"])
+        self.assertIn("next_needed", report["character"])
         self.assertIn("readiness", report["folded_alnum"])
         self.assertIn("readiness", report["mixedcase"])
 
