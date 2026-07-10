@@ -29,14 +29,15 @@ from alnum_model import (
 from character_model import DATASET_ROOT as CHARACTER_DATASET_ROOT
 from character_model import LABELS_PATH as CHARACTER_LABELS_PATH
 from character_model import train_character_model
+from main import PRACTICE_PRIORITY_LABELS
 
 
 CHARACTER_CORRECTION_ROOT = PROJECT_DIR / "data" / "corrections" / "character_ascii"
 HASY_CHARACTER_ROOT = PROJECT_DIR / "data" / "extra_hasyv2" / "character_ascii"
 DEFAULT_MIN_CHARACTER_CORRECTIONS = 10
 DEFAULT_MIN_ALNUM_CORRECTIONS = 10
-DEFAULT_PRIORITY_LABELS = "OloI01iscZv-"
-DEFAULT_MIXEDCASE_PRIORITY_LABELS = "1Il0OoSs54YyJjTt7"
+DEFAULT_PRIORITY_LABELS = "".join(PRACTICE_PRIORITY_LABELS)
+DEFAULT_MIXEDCASE_PRIORITY_LABELS = "".join(PRACTICE_PRIORITY_LABELS)
 
 
 def export_character_correction_folder(
@@ -205,6 +206,20 @@ def format_priority_coverage(counts: Counter[str], priority_labels: str) -> str:
     return ", ".join(parts)
 
 
+def filter_priority_labels(priority_labels: str, allowed_labels: list[str]) -> str:
+    """Keep priority labels that are valid for a specific recognizer label set."""
+
+    allowed = set(allowed_labels)
+    seen: set[str] = set()
+    filtered = []
+    for label in priority_labels:
+        if label in seen or label not in allowed:
+            continue
+        seen.add(label)
+        filtered.append(label)
+    return "".join(filtered)
+
+
 def correction_item_label_counts(
     labels: list[str],
     corrections: tuple[object, object] | None,
@@ -246,11 +261,11 @@ def main(argv: list[str] | None = None) -> None:
         print(f"Character priority coverage: {format_priority_coverage(character_counts, args.priority_labels)}")
         print(
             "Folded alnum priority coverage: "
-            f"{format_priority_coverage(folded_counts, args.priority_labels.upper())}"
+            f"{format_priority_coverage(folded_counts, filter_priority_labels(args.priority_labels.upper(), LABELS))}"
         )
         print(
             "Mixed-case priority coverage: "
-            f"{format_priority_coverage(mixed_counts, args.mixedcase_priority_labels)}"
+            f"{format_priority_coverage(mixed_counts, filter_priority_labels(args.mixedcase_priority_labels, list(MIXEDCASE_LABELS)))}"
         )
         return
 

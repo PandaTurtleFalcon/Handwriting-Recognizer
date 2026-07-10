@@ -11,11 +11,15 @@ from PIL import Image, ImageDraw
 from scripts import train_from_corrections
 from scripts.train_from_corrections import export_character_correction_folder
 from scripts.train_from_corrections import (
+    DEFAULT_MIXEDCASE_PRIORITY_LABELS,
+    DEFAULT_PRIORITY_LABELS,
     correction_item_label_counts,
     exportable_character_correction_counts,
     exported_character_crop_counts,
+    filter_priority_labels,
     format_priority_coverage,
 )
+from main import PRACTICE_PRIORITY_LABELS
 
 
 class TrainFromCorrectionsTests(unittest.TestCase):
@@ -73,6 +77,19 @@ class TrainFromCorrectionsTests(unittest.TestCase):
         self.assertIn("--min-alnum-corrections", help_text)
         self.assertIn("--priority-labels", help_text)
         self.assertIn("--mixedcase-priority-labels", help_text)
+
+    def test_default_priority_labels_match_practice_targets(self) -> None:
+        """Dry-run reporting should use the same weak labels as practice mode."""
+
+        practice_labels = "".join(PRACTICE_PRIORITY_LABELS)
+
+        self.assertEqual(DEFAULT_PRIORITY_LABELS, practice_labels)
+        self.assertEqual(DEFAULT_MIXEDCASE_PRIORITY_LABELS, practice_labels)
+
+    def test_filters_priority_labels_to_recognizer_label_set(self) -> None:
+        """Dry-run coverage should not report labels a recognizer cannot train."""
+
+        self.assertEqual(filter_priority_labels("0Oo-+qQ", ["0", "O", "Q"]), "0OQ")
 
     def test_counts_exported_character_crops_by_priority_label(self) -> None:
         """Dry-run coverage should show which weak labels have examples."""
