@@ -16,60 +16,7 @@ const practiceStatus = document.querySelector("#practice-status");
 
 const lowConfidenceThreshold = 0.8;
 const closeGuessMargin = 0.12;
-const practiceLabels = [
-  "0",
-  "O",
-  "o",
-  "1",
-  "I",
-  "l",
-  "i",
-  "S",
-  "s",
-  "5",
-  "C",
-  "c",
-  "2",
-  "Z",
-  "z",
-  "9",
-  "q",
-  "g",
-  "F",
-  "f",
-  "U",
-  "u",
-  "M",
-  "m",
-  "V",
-  "v",
-  "P",
-  "p",
-  "W",
-  "w",
-  "Y",
-  "y",
-  "4",
-  "T",
-  "t",
-  "7",
-  "J",
-  "j",
-  "K",
-  "k",
-  "X",
-  "x",
-  "-",
-  "_",
-  ".",
-  "'",
-  "|",
-  "/",
-  ":",
-  ";",
-  "!",
-  "+",
-];
+let practiceLabels = ["0"];
 let practicePointerDown = false;
 let practiceHasInk = false;
 let latestPracticeCoverage = null;
@@ -199,6 +146,28 @@ function setPracticeLabel(label) {
   });
 }
 
+function practiceLabelValuesFromCoverage(payload) {
+  if (!payload || !Array.isArray(payload.labels)) {
+    return [];
+  }
+  return payload.labels.map((item) => text(item.label)).filter((label) => label.length === 1);
+}
+
+function renderPracticeLabelButtons(labels) {
+  const nextLabels = labels.length > 0 ? labels : ["0"];
+  const selectedLabel = text(practiceLabelInput.value);
+  practiceLabels = nextLabels;
+  practiceLabelsEl.replaceChildren();
+  practiceLabels.forEach((label) => {
+    const button = makeElement("button", "practice-label-button", label);
+    button.type = "button";
+    button.dataset.label = label;
+    button.addEventListener("click", () => setPracticeLabel(label));
+    practiceLabelsEl.append(button);
+  });
+  setPracticeLabel(practiceLabels.includes(selectedLabel) ? selectedLabel : practiceLabels[0]);
+}
+
 function nextNeededPracticeLabel() {
   if (!latestPracticeCoverage || !Array.isArray(latestPracticeCoverage.labels)) {
     return practiceLabels[0];
@@ -234,6 +203,7 @@ function renderPracticeCoverage(payload) {
     return;
   }
   latestPracticeCoverage = payload;
+  renderPracticeLabelButtons(practiceLabelValuesFromCoverage(payload));
   practiceCoverageEl.replaceChildren();
   const summary = makeElement(
     "div",
@@ -376,13 +346,7 @@ function setupPracticeMode() {
   if (!practiceCanvas || !practiceForm) {
     return;
   }
-  practiceLabels.forEach((label) => {
-    const button = makeElement("button", "practice-label-button", label);
-    button.type = "button";
-    button.dataset.label = label;
-    button.addEventListener("click", () => setPracticeLabel(label));
-    practiceLabelsEl.append(button);
-  });
+  renderPracticeLabelButtons(practiceLabels);
   practiceCanvas.addEventListener("pointerdown", beginPracticeStroke);
   practiceCanvas.addEventListener("pointermove", drawPracticeStroke);
   practiceCanvas.addEventListener("pointerup", endPracticeStroke);
