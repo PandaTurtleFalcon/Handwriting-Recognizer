@@ -383,6 +383,10 @@ function practiceImageId() {
 
 async function savePracticeSample(event) {
   event.preventDefault();
+  await submitPracticeSample();
+}
+
+async function submitPracticeSample() {
   const label = text(practiceLabelInput.value).trim();
   if (label.length !== 1) {
     practiceStatus.textContent = "Pick one label.";
@@ -431,6 +435,30 @@ async function savePracticeSample(event) {
   }
 }
 
+function eventIsInsidePractice(event) {
+  return Boolean(event.target && practiceForm.closest(".practice-panel")?.contains(event.target));
+}
+
+function handlePracticeShortcut(event) {
+  if (!eventIsInsidePractice(event)) {
+    return;
+  }
+  if ((event.metaKey || event.ctrlKey) && (event.key === "Enter" || event.key.toLowerCase() === "s")) {
+    event.preventDefault();
+    submitPracticeSample();
+    return;
+  }
+  if (event.key === "Escape") {
+    event.preventDefault();
+    clearPracticeCanvas();
+    return;
+  }
+  if (event.altKey && event.key.toLowerCase() === "n") {
+    event.preventDefault();
+    selectNextNeededPracticeLabel();
+  }
+}
+
 function setupPracticeMode() {
   if (!practiceCanvas || !practiceForm) {
     return;
@@ -444,6 +472,7 @@ function setupPracticeMode() {
   practiceNextButton.addEventListener("click", () => selectNextNeededPracticeLabel());
   practiceLabelInput.addEventListener("input", () => setPracticeLabel(text(practiceLabelInput.value).slice(0, 1)));
   practiceForm.addEventListener("submit", savePracticeSample);
+  document.addEventListener("keydown", handlePracticeShortcut);
   setPracticeLabel(practiceLabels[0]);
   clearPracticeCanvas();
   refreshPracticeCoverage(true);
