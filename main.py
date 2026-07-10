@@ -73,6 +73,8 @@ TOP_GUESS_LIMIT = 3
 DIGIT_SPECIALIST_COMPATIBLE_LABELS = set("0123456789BIJLOSYZlo")
 DIGIT_SPECIALIST_LETTER_BLOCKERS = set("BOSo")
 DIGIT_SPECIALIST_MAX_LETTER_RATIO = 0.25
+PRACTICE_PRIORITY_LABELS = ["0", "O", "o", "1", "I", "l", "i", "S", "s", "5", "C", "c", "-", "_", ".", "'", "|", "/"]
+PRACTICE_TARGET_PER_LABEL = 20
 DISPLAY_AMBIGUITY_GROUPS = [
     frozenset("0Oo"),
     frozenset("1Ili|!/"),
@@ -757,6 +759,9 @@ class MnistWebHandler(BaseHTTPRequestHandler):
         if parsed.path == "/health":
             self._send_json({"ok": True, "model_loaded": self.model is not None, "recognizer": self.recognizer_kind})
             return
+        if parsed.path == "/api/correction-coverage":
+            self._send_json(correction_coverage_report())
+            return
         self.send_error(HTTPStatus.NOT_FOUND)
 
     def do_POST(self) -> None:
@@ -1138,6 +1143,44 @@ def save_practice_source_image(form: dict[str, str], image_id: str) -> None:
             save_correction_source_image(image_id, ImageOps.exif_transpose(image).convert("RGB"))
     except (UnidentifiedImageError, OSError) as exc:
         raise ValueError("Practice correction image is malformed.") from exc
+
+
+def build_correction_coverage_report(
+    counts: dict[str, int],
+    labels: list[str] = PRACTICE_PRIORITY_LABELS,
+    target_per_label: int = PRACTICE_TARGET_PER_LABEL,
+) -> dict[str, object]:
+    """Build practice-label coverage data for the browser UI."""
+
+    rows = []
+    for label in labels:
+        count = int(counts.get(label, 0))
+        rows.append(
+            {
+                "label": label,
+                "count": count,
+                "needed": max(0, target_per_label - count),
+                "ready": count >= target_per_label,
+            }
+        )
+    ready = sum(1 for row in rows if bool(row["ready"]))
+    return {
+        "ok": True,
+        "target_per_label": target_per_label,
+        "ready_labels": ready,
+        "total_labels": len(rows),
+        "labels": rows,
+    }
+
+
+def correction_coverage_report() -> dict[str, object]:
+    """Return current trainable practice/correction coverage by weak label."""
+
+    from scripts.train_from_corrections import exportable_character_correction_counts, load_character_labels
+
+    labels = load_character_labels()
+    counts = exportable_character_correction_counts(labels)
+    return build_correction_coverage_report(counts)
 
 
 def should_use_digit_specialist_predictions(

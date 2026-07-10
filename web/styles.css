@@ -200,6 +200,39 @@ h2 {
   gap: 8px;
 }
 
+.practice-coverage {
+  display: grid;
+  gap: 8px;
+}
+
+.practice-coverage-summary {
+  color: var(--muted);
+  font-weight: 800;
+}
+
+.practice-coverage-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.coverage-chip {
+  min-height: 32px;
+  padding: 4px 9px;
+  border: 1px solid #f1c46b;
+  border-radius: 8px;
+  background: var(--warn-bg);
+  color: #5b4a15;
+  cursor: pointer;
+  font-weight: 900;
+}
+
+.coverage-chip.ready {
+  border-color: #a7d8bd;
+  background: #f0fbf5;
+  color: #146c43;
+}
+
 .practice-label-button {
   min-width: 42px;
   min-height: 42px;

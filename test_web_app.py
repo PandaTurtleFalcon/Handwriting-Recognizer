@@ -658,16 +658,19 @@ class WebAppRenderingTests(unittest.TestCase):
         self.assertIn('<form class="upload-panel" id="upload-form"', html)
         self.assertIn('id="practice-canvas"', html)
         self.assertIn('id="practice-form"', html)
+        self.assertIn('id="practice-coverage"', html)
         self.assertIn("HEIC", html)
         self.assertIn(".heif", html)
         self.assertIn('href="/styles.css"', html)
         self.assertIn('src="/app.js"', html)
         self.assertIn(".correction-form", css)
         self.assertIn(".practice-panel", css)
+        self.assertIn(".coverage-chip", css)
         self.assertIn("touch-action: none", css)
         self.assertIn("grid-template-columns: minmax(52px, 1fr) auto", css)
         self.assertIn('fetch("/api/predict"', js)
         self.assertIn('fetch("/api/correct"', js)
+        self.assertIn('fetch("/api/correction-coverage"', js)
         self.assertIn("practiceLabels", js)
         self.assertIn("source_image", js)
 
@@ -1248,6 +1251,17 @@ class WebAppRenderingTests(unittest.TestCase):
 
         with self.assertRaises(ValueError):
             main.save_practice_source_image({"source_image": "data:text/plain;base64,abc"}, "practice-abc")
+
+    def test_build_correction_coverage_report_tracks_needed_labels(self) -> None:
+        """Practice coverage should show which weak labels still need samples."""
+
+        report = main.build_correction_coverage_report({"O": 20, "0": 3}, labels=["0", "O"], target_per_label=20)
+
+        self.assertEqual(report["ready_labels"], 1)
+        self.assertEqual(report["total_labels"], 2)
+        self.assertEqual(report["labels"][0]["needed"], 17)
+        self.assertFalse(report["labels"][0]["ready"])
+        self.assertTrue(report["labels"][1]["ready"])
 
 
 if __name__ == "__main__":

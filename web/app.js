@@ -7,6 +7,7 @@ const modelNote = document.querySelector("#model-note");
 const practiceCanvas = document.querySelector("#practice-canvas");
 const practiceForm = document.querySelector("#practice-form");
 const practiceLabelsEl = document.querySelector("#practice-labels");
+const practiceCoverageEl = document.querySelector("#practice-coverage");
 const practiceLabelInput = document.querySelector("#practice-label-input");
 const practiceTargetEl = document.querySelector("#practice-target");
 const practiceClearButton = document.querySelector("#practice-clear");
@@ -143,6 +144,46 @@ function setPracticeLabel(label) {
   });
 }
 
+function renderPracticeCoverage(payload) {
+  if (!practiceCoverageEl || !payload || !Array.isArray(payload.labels)) {
+    return;
+  }
+  practiceCoverageEl.replaceChildren();
+  const summary = makeElement(
+    "div",
+    "practice-coverage-summary",
+    `${payload.ready_labels || 0}/${payload.total_labels || practiceLabels.length} labels ready, target ${payload.target_per_label || 20} each`,
+  );
+  practiceCoverageEl.append(summary);
+  const grid = makeElement("div", "practice-coverage-grid");
+  payload.labels.forEach((item) => {
+    const count = Number(item.count || 0);
+    const needed = Number(item.needed || 0);
+    const chip = makeElement("button", item.ready ? "coverage-chip ready" : "coverage-chip", `${text(item.label)} ${count}`);
+    chip.type = "button";
+    chip.title = item.ready ? "Ready for correction training" : `${needed} more needed`;
+    chip.addEventListener("click", () => setPracticeLabel(text(item.label)));
+    grid.append(chip);
+  });
+  practiceCoverageEl.append(grid);
+}
+
+async function refreshPracticeCoverage() {
+  if (!practiceCoverageEl) {
+    return;
+  }
+  try {
+    const response = await fetch("/api/correction-coverage");
+    const payload = await response.json();
+    if (!response.ok || !payload.ok) {
+      throw new Error("coverage unavailable");
+    }
+    renderPracticeCoverage(payload);
+  } catch {
+    practiceCoverageEl.replaceChildren(makeElement("div", "practice-coverage-summary", "Coverage unavailable"));
+  }
+}
+
 function practicePoint(event) {
   const rect = practiceCanvas.getBoundingClientRect();
   return {
@@ -234,6 +275,7 @@ async function savePracticeSample(event) {
     }
     practiceStatus.textContent = `Saved ${label}.`;
     clearPracticeCanvas(false);
+    refreshPracticeCoverage();
   } catch (error) {
     practiceStatus.textContent = error.message;
   } finally {
@@ -261,6 +303,7 @@ function setupPracticeMode() {
   practiceForm.addEventListener("submit", savePracticeSample);
   setPracticeLabel(practiceLabels[0]);
   clearPracticeCanvas();
+  refreshPracticeCoverage();
 }
 
 function predictionBoxData(prediction) {
