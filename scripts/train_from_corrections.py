@@ -29,7 +29,7 @@ from alnum_model import (
 from character_model import DATASET_ROOT as CHARACTER_DATASET_ROOT
 from character_model import LABELS_PATH as CHARACTER_LABELS_PATH
 from character_model import train_character_model
-from main import PRACTICE_PRIORITY_LABELS
+from main import PRACTICE_PRIORITY_LABELS, PRACTICE_TARGET_PER_LABEL
 
 
 CHARACTER_CORRECTION_ROOT = PROJECT_DIR / "data" / "corrections" / "character_ascii"
@@ -220,6 +220,39 @@ def filter_priority_labels(priority_labels: str, allowed_labels: list[str]) -> s
     return "".join(filtered)
 
 
+def correction_readiness_summary(
+    counts: Counter[str],
+    priority_labels: str,
+    target_per_label: int = PRACTICE_TARGET_PER_LABEL,
+) -> dict[str, int | bool]:
+    """Summarize whether weak-label correction coverage is ready for training."""
+
+    unique_labels = list(dict.fromkeys(priority_labels))
+    ready_labels = sum(1 for label in unique_labels if counts.get(label, 0) >= target_per_label)
+    total_samples = sum(counts.get(label, 0) for label in unique_labels)
+    target_total = len(unique_labels) * target_per_label
+    return {
+        "ready": ready_labels == len(unique_labels) and len(unique_labels) > 0,
+        "ready_labels": ready_labels,
+        "total_labels": len(unique_labels),
+        "samples": total_samples,
+        "target_samples": target_total,
+        "needed_samples": max(0, target_total - total_samples),
+    }
+
+
+def format_readiness_summary(name: str, summary: dict[str, int | bool]) -> str:
+    """Return a compact readiness line for correction dry-runs."""
+
+    status = "ready" if summary["ready"] else "not_ready"
+    return (
+        f"{name} correction readiness: {status} "
+        f"labels={summary['ready_labels']}/{summary['total_labels']} "
+        f"samples={summary['samples']}/{summary['target_samples']} "
+        f"needed={summary['needed_samples']}"
+    )
+
+
 def correction_item_label_counts(
     labels: list[str],
     corrections: tuple[object, object] | None,
@@ -259,14 +292,19 @@ def main(argv: list[str] | None = None) -> None:
             f"mixedcase_items={0 if mixed_corrections is None else len(mixed_corrections[1])}"
         )
         print(f"Character priority coverage: {format_priority_coverage(character_counts, args.priority_labels)}")
+        print(format_readiness_summary("Character", correction_readiness_summary(character_counts, args.priority_labels)))
+        folded_priority_labels = filter_priority_labels(args.priority_labels.upper(), LABELS)
         print(
             "Folded alnum priority coverage: "
-            f"{format_priority_coverage(folded_counts, filter_priority_labels(args.priority_labels.upper(), LABELS))}"
+            f"{format_priority_coverage(folded_counts, folded_priority_labels)}"
         )
+        print(format_readiness_summary("Folded alnum", correction_readiness_summary(folded_counts, folded_priority_labels)))
+        mixed_priority_labels = filter_priority_labels(args.mixedcase_priority_labels, list(MIXEDCASE_LABELS))
         print(
             "Mixed-case priority coverage: "
-            f"{format_priority_coverage(mixed_counts, filter_priority_labels(args.mixedcase_priority_labels, list(MIXEDCASE_LABELS)))}"
+            f"{format_priority_coverage(mixed_counts, mixed_priority_labels)}"
         )
+        print(format_readiness_summary("Mixed-case", correction_readiness_summary(mixed_counts, mixed_priority_labels)))
         return
 
     character_count = export_character_correction_folder(character_labels) if character_labels else 0

@@ -14,10 +14,12 @@ from scripts.train_from_corrections import (
     DEFAULT_MIXEDCASE_PRIORITY_LABELS,
     DEFAULT_PRIORITY_LABELS,
     correction_item_label_counts,
+    correction_readiness_summary,
     exportable_character_correction_counts,
     exported_character_crop_counts,
     filter_priority_labels,
     format_priority_coverage,
+    format_readiness_summary,
 )
 from main import PRACTICE_PRIORITY_LABELS
 
@@ -90,6 +92,22 @@ class TrainFromCorrectionsTests(unittest.TestCase):
         """Dry-run coverage should not report labels a recognizer cannot train."""
 
         self.assertEqual(filter_priority_labels("0Oo-+qQ", ["0", "O", "Q"]), "0OQ")
+
+    def test_correction_readiness_summary_tracks_label_and_sample_gaps(self) -> None:
+        """Dry-run readiness should show how far correction data is from training."""
+
+        summary = correction_readiness_summary({"A": 20, "B": 3}, "ABC", target_per_label=20)
+
+        self.assertFalse(summary["ready"])
+        self.assertEqual(summary["ready_labels"], 1)
+        self.assertEqual(summary["total_labels"], 3)
+        self.assertEqual(summary["samples"], 23)
+        self.assertEqual(summary["target_samples"], 60)
+        self.assertEqual(summary["needed_samples"], 37)
+        self.assertEqual(
+            format_readiness_summary("Character", summary),
+            "Character correction readiness: not_ready labels=1/3 samples=23/60 needed=37",
+        )
 
     def test_counts_exported_character_crops_by_priority_label(self) -> None:
         """Dry-run coverage should show which weak labels have examples."""
