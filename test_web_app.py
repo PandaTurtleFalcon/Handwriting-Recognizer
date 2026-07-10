@@ -659,6 +659,7 @@ class WebAppRenderingTests(unittest.TestCase):
         self.assertIn('id="practice-canvas"', html)
         self.assertIn('id="practice-form"', html)
         self.assertIn('id="practice-coverage"', html)
+        self.assertIn('id="practice-next-needed"', html)
         self.assertIn("HEIC", html)
         self.assertIn(".heif", html)
         self.assertIn('href="/styles.css"', html)
@@ -672,6 +673,8 @@ class WebAppRenderingTests(unittest.TestCase):
         self.assertIn('fetch("/api/correct"', js)
         self.assertIn('fetch("/api/correction-coverage"', js)
         self.assertIn("practiceLabels", js)
+        self.assertIn("nextNeededPracticeLabel", js)
+        self.assertIn("refreshPracticeCoverage(true)", js)
         self.assertIn("source_image", js)
 
     def test_low_confidence_prediction_is_marked_uncertain(self) -> None:

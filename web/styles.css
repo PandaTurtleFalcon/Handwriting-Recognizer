@@ -272,10 +272,10 @@ h2 {
 
 .practice-actions {
   display: grid;
-  grid-template-columns: minmax(64px, 96px) auto auto;
+  grid-template-columns: minmax(64px, 96px) auto auto auto;
   gap: 10px;
   align-items: center;
-  max-width: 560px;
+  max-width: 720px;
 }
 
 .practice-actions .text-input {

@@ -11,6 +11,7 @@ const practiceCoverageEl = document.querySelector("#practice-coverage");
 const practiceLabelInput = document.querySelector("#practice-label-input");
 const practiceTargetEl = document.querySelector("#practice-target");
 const practiceClearButton = document.querySelector("#practice-clear");
+const practiceNextButton = document.querySelector("#practice-next-needed");
 const practiceStatus = document.querySelector("#practice-status");
 
 const lowConfidenceThreshold = 0.8;
@@ -18,6 +19,7 @@ const closeGuessMargin = 0.12;
 const practiceLabels = ["0", "O", "o", "1", "I", "l", "i", "S", "s", "5", "C", "c", "-", "_", ".", "'", "|", "/"];
 let practicePointerDown = false;
 let practiceHasInk = false;
+let latestPracticeCoverage = null;
 
 function text(value) {
   return value === undefined || value === null ? "" : String(value);
@@ -144,10 +146,41 @@ function setPracticeLabel(label) {
   });
 }
 
+function nextNeededPracticeLabel() {
+  if (!latestPracticeCoverage || !Array.isArray(latestPracticeCoverage.labels)) {
+    return practiceLabels[0];
+  }
+  const labelRanks = new Map(practiceLabels.map((label, index) => [label, index]));
+  const needyLabels = latestPracticeCoverage.labels
+    .filter((item) => Number(item.needed || 0) > 0)
+    .slice()
+    .sort((left, right) => {
+      const neededDelta = Number(right.needed || 0) - Number(left.needed || 0);
+      if (neededDelta !== 0) {
+        return neededDelta;
+      }
+      const countDelta = Number(left.count || 0) - Number(right.count || 0);
+      if (countDelta !== 0) {
+        return countDelta;
+      }
+      return (labelRanks.get(text(left.label)) ?? 999) - (labelRanks.get(text(right.label)) ?? 999);
+    });
+  return text(needyLabels[0]?.label || practiceLabels[0]);
+}
+
+function selectNextNeededPracticeLabel(showStatus = true) {
+  const label = nextNeededPracticeLabel();
+  setPracticeLabel(label);
+  if (showStatus) {
+    practiceStatus.textContent = `Next needed: ${label}`;
+  }
+}
+
 function renderPracticeCoverage(payload) {
   if (!practiceCoverageEl || !payload || !Array.isArray(payload.labels)) {
     return;
   }
+  latestPracticeCoverage = payload;
   practiceCoverageEl.replaceChildren();
   const summary = makeElement(
     "div",
@@ -168,7 +201,7 @@ function renderPracticeCoverage(payload) {
   practiceCoverageEl.append(grid);
 }
 
-async function refreshPracticeCoverage() {
+async function refreshPracticeCoverage(selectNext = false) {
   if (!practiceCoverageEl) {
     return;
   }
@@ -179,6 +212,9 @@ async function refreshPracticeCoverage() {
       throw new Error("coverage unavailable");
     }
     renderPracticeCoverage(payload);
+    if (selectNext) {
+      selectNextNeededPracticeLabel(false);
+    }
   } catch {
     practiceCoverageEl.replaceChildren(makeElement("div", "practice-coverage-summary", "Coverage unavailable"));
   }
@@ -275,7 +311,7 @@ async function savePracticeSample(event) {
     }
     practiceStatus.textContent = `Saved ${label}.`;
     clearPracticeCanvas(false);
-    refreshPracticeCoverage();
+    await refreshPracticeCoverage(true);
   } catch (error) {
     practiceStatus.textContent = error.message;
   } finally {
@@ -299,11 +335,12 @@ function setupPracticeMode() {
   practiceCanvas.addEventListener("pointerup", endPracticeStroke);
   practiceCanvas.addEventListener("pointercancel", endPracticeStroke);
   practiceClearButton.addEventListener("click", clearPracticeCanvas);
+  practiceNextButton.addEventListener("click", () => selectNextNeededPracticeLabel());
   practiceLabelInput.addEventListener("input", () => setPracticeLabel(text(practiceLabelInput.value).slice(0, 1)));
   practiceForm.addEventListener("submit", savePracticeSample);
   setPracticeLabel(practiceLabels[0]);
   clearPracticeCanvas();
-  refreshPracticeCoverage();
+  refreshPracticeCoverage(true);
 }
 
 function predictionBoxData(prediction) {
