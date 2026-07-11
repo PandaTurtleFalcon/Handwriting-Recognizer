@@ -1352,6 +1352,8 @@ class WebAppRenderingTests(unittest.TestCase):
 
         report = main.build_correction_coverage_report({"O": 20, "0": 3}, labels=["0", "O"], target_per_label=20)
 
+        self.assertFalse(report["ready"])
+        self.assertEqual(report["training_blocked_reason"], "Need 17 more labeled samples across 1 labels before training.")
         self.assertEqual(report["ready_labels"], 1)
         self.assertEqual(report["total_labels"], 2)
         self.assertEqual(report["not_ready_labels"], 1)
@@ -1366,6 +1368,17 @@ class WebAppRenderingTests(unittest.TestCase):
         self.assertEqual(report["labels"][0]["needed"], 17)
         self.assertFalse(report["labels"][0]["ready"])
         self.assertTrue(report["labels"][1]["ready"])
+
+    def test_correction_coverage_report_marks_ready_when_complete(self) -> None:
+        """Coverage should tell automation when correction fine-tuning is unblocked."""
+
+        report = main.build_correction_coverage_report({"A": 20, "B": 21}, labels=["A", "B"], target_per_label=20)
+
+        self.assertTrue(report["ready"])
+        self.assertEqual(report["training_blocked_reason"], "")
+        self.assertEqual(report["needed_samples"], 0)
+        self.assertIsNone(report["next_label"])
+        self.assertEqual(report["next_needed"], 0)
 
     def test_correction_coverage_focus_prioritizes_largest_gaps(self) -> None:
         """Next-needed labels should prefer the biggest remaining sample gaps."""

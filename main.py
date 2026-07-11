@@ -1236,8 +1236,16 @@ def build_correction_coverage_report(
         for row in ranked_rows
     ][:8]
     next_item = focus_items[0] if focus_items else None
+    is_ready = ready == len(rows) and len(rows) > 0
+    blocked_reason = (
+        ""
+        if is_ready
+        else f"Need {needed_samples} more labeled samples across {max(0, len(rows) - ready)} labels before training."
+    )
     return {
         "ok": True,
+        "ready": is_ready,
+        "training_blocked_reason": blocked_reason,
         "target_per_label": target_per_label,
         "ready_labels": ready,
         "total_labels": len(rows),

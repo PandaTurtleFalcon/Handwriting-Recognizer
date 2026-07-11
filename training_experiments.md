@@ -299,6 +299,10 @@ restored, so future improvement loops do not repeat known-bad blends.
   - Result: mixed-case exact remains `80.50%`, with worst labels starting `s`, `O`, `V`, `1`, `c`, `I`, `F`, `o`, `m`, `0`, `l`, `U`, `k`, `i`; character exact remains `92.18%`, with the same visual-twin families dominating failures. The practice priority order was adjusted from `l`, `i`, `U`, `k` to `l`, `U`, `k`, `i` so collection follows the latest measured mixed-case blocker order.
   - Verification: `python3 -m pytest -q test_web_app.py test_train_from_corrections.py` passed (`90` tests), and `python3 scripts/summarize_benchmarks.py --include-app-hardcases` confirmed model metrics are unchanged.
 
+- Coverage training readiness flag:
+  - Code path: `/api/correction-coverage` now exposes `ready` and `training_blocked_reason`, so automation can avoid unsafe fine-tuning attempts until the weak-label correction set has enough samples.
+  - Verification: `python3 -m pytest -q test_web_app.py test_train_from_corrections.py` passed (`91` tests), and `python3 scripts/summarize_benchmarks.py --include-app-hardcases` confirmed model metrics are unchanged.
+
 - Local automation artifact ignores:
   - Code path: `.gitignore` now excludes `$CODEX_HOME/` and `backups/`, matching existing local backup ignores and preventing generated automation state from being accidentally committed.
   - Verification: `python3 -m pytest -q test_web_app.py test_train_from_corrections.py` passed (`89` tests), `git status --short` no longer lists those generated folders, and `python3 scripts/summarize_benchmarks.py --include-app-hardcases` confirmed model metrics are unchanged.
