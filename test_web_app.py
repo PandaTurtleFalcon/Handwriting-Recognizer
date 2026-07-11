@@ -701,7 +701,8 @@ class WebAppRenderingTests(unittest.TestCase):
         self.assertIn("focus_labels", js)
         self.assertIn("focus_items", js)
         self.assertIn("payload.focus_needed_samples", js)
-        self.assertIn("Focus (${focusNeeded} samples)", js)
+        self.assertIn("payload.focus_coverage_percent", js)
+        self.assertIn("Focus (${focusNeeded} samples, ${focusPercent.toFixed(1)}%)", js)
         self.assertIn("practice-focus-button", js)
         self.assertIn("`${item.label}:${item.needed}`", js)
         self.assertIn("payload.not_ready_labels", js)
@@ -1369,7 +1370,10 @@ class WebAppRenderingTests(unittest.TestCase):
         self.assertAlmostEqual(report["coverage_percent"], 57.5)
         self.assertEqual(report["next_label"], "0")
         self.assertEqual(report["next_needed"], 17)
+        self.assertEqual(report["focus_samples"], 3)
+        self.assertEqual(report["focus_target_samples"], 20)
         self.assertEqual(report["focus_needed_samples"], 17)
+        self.assertAlmostEqual(report["focus_coverage_percent"], 15.0)
         self.assertEqual(report["focus_labels"], ["0"])
         self.assertEqual(report["focus_items"], [{"label": "0", "count": 3, "needed": 17}])
         self.assertEqual(report["labels"][0]["needed"], 17)
@@ -1398,7 +1402,10 @@ class WebAppRenderingTests(unittest.TestCase):
 
         self.assertEqual(report["next_label"], "B")
         self.assertEqual(report["next_needed"], 18)
+        self.assertEqual(report["focus_samples"], 23)
+        self.assertEqual(report["focus_target_samples"], 60)
         self.assertEqual(report["focus_needed_samples"], 37)
+        self.assertAlmostEqual(report["focus_coverage_percent"], 38.3333333333)
         self.assertEqual(
             report["focus_items"],
             [
