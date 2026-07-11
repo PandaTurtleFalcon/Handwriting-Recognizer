@@ -1235,6 +1235,7 @@ def build_correction_coverage_report(
         "target_per_label": target_per_label,
         "ready_labels": ready,
         "total_labels": len(rows),
+        "not_ready_labels": max(0, len(rows) - ready),
         "samples": sample_count,
         "target_samples": target_samples,
         "needed_samples": needed_samples,

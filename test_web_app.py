@@ -1352,6 +1352,7 @@ class WebAppRenderingTests(unittest.TestCase):
 
         self.assertEqual(report["ready_labels"], 1)
         self.assertEqual(report["total_labels"], 2)
+        self.assertEqual(report["not_ready_labels"], 1)
         self.assertEqual(report["samples"], 23)
         self.assertEqual(report["target_samples"], 40)
         self.assertEqual(report["needed_samples"], 17)
