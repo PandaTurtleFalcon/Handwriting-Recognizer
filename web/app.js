@@ -248,6 +248,14 @@ function renderPracticeCoverage(payload) {
     payload.needed_samples ?? payload.labels.reduce((total, item) => total + Number(item.needed || 0), 0),
   );
   practiceCoverageEl.append(makeElement("div", "practice-needed-summary", `${totalNeeded} samples still needed`));
+  const sampleCount = Number(payload.samples || 0);
+  const targetSamples = Number(payload.target_samples || 0);
+  const percent = targetSamples > 0 ? Math.min(100, Math.max(0, (100 * sampleCount) / targetSamples)) : 0;
+  const meter = makeElement("div", "practice-coverage-meter");
+  const fill = makeElement("div", "practice-coverage-meter-fill");
+  fill.style.width = `${percent.toFixed(1)}%`;
+  meter.append(fill);
+  practiceCoverageEl.append(meter);
   const focusItems = Array.isArray(payload.focus_items)
     ? payload.focus_items
         .map((item) => ({
