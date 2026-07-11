@@ -275,7 +275,8 @@ def format_readiness_summary(name: str, summary: dict[str, int | bool]) -> str:
         f"{name} correction readiness: {status} "
         f"labels={summary['ready_labels']}/{summary['total_labels']} "
         f"samples={summary['samples']}/{summary['target_samples']} "
-        f"needed={summary['needed_samples']}"
+        f"needed={summary['needed_samples']} "
+        f"coverage={float(summary.get('coverage_percent', 0.0)):.2f}%"
     )
 
 

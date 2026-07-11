@@ -110,7 +110,7 @@ class TrainFromCorrectionsTests(unittest.TestCase):
         self.assertAlmostEqual(summary["coverage_percent"], 38.333333333333336)
         self.assertEqual(
             format_readiness_summary("Character", summary),
-            "Character correction readiness: not_ready labels=1/3 samples=23/60 needed=37",
+            "Character correction readiness: not_ready labels=1/3 samples=23/60 needed=37 coverage=38.33%",
         )
 
     def test_next_needed_labels_prioritizes_largest_gaps(self) -> None:
