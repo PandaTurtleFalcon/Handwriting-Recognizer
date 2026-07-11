@@ -1359,6 +1359,8 @@ class WebAppRenderingTests(unittest.TestCase):
         self.assertEqual(report["target_samples"], 40)
         self.assertEqual(report["needed_samples"], 17)
         self.assertAlmostEqual(report["coverage_percent"], 57.5)
+        self.assertEqual(report["next_label"], "0")
+        self.assertEqual(report["next_needed"], 17)
         self.assertEqual(report["focus_labels"], ["0"])
         self.assertEqual(report["focus_items"], [{"label": "0", "count": 3, "needed": 17}])
         self.assertEqual(report["labels"][0]["needed"], 17)

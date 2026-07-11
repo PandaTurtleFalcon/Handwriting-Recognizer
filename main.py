@@ -1230,6 +1230,7 @@ def build_correction_coverage_report(
         for row in rows
         if not bool(row["ready"])
     ][:8]
+    next_item = focus_items[0] if focus_items else None
     return {
         "ok": True,
         "target_per_label": target_per_label,
@@ -1240,6 +1241,8 @@ def build_correction_coverage_report(
         "target_samples": target_samples,
         "needed_samples": needed_samples,
         "coverage_percent": coverage_percent,
+        "next_label": None if next_item is None else next_item["label"],
+        "next_needed": 0 if next_item is None else next_item["needed"],
         "focus_labels": focus_labels,
         "focus_items": focus_items,
         "labels": rows,
