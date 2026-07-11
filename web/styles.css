@@ -235,6 +235,11 @@ h2 {
   font-weight: 800;
 }
 
+.practice-needed-summary {
+  color: #5b4a15;
+  font-weight: 900;
+}
+
 .practice-focus {
   display: flex;
   flex-wrap: wrap;
