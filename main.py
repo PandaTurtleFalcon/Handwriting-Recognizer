@@ -1235,6 +1235,7 @@ def build_correction_coverage_report(
         {"label": str(row["label"]), "count": int(row["count"]), "needed": int(row["needed"])}
         for row in ranked_rows
     ][:8]
+    focus_needed_samples = sum(int(item["needed"]) for item in focus_items)
     next_item = focus_items[0] if focus_items else None
     is_ready = ready == len(rows) and len(rows) > 0
     blocked_reason = (
@@ -1256,6 +1257,7 @@ def build_correction_coverage_report(
         "coverage_percent": coverage_percent,
         "next_label": None if next_item is None else next_item["label"],
         "next_needed": 0 if next_item is None else next_item["needed"],
+        "focus_needed_samples": focus_needed_samples,
         "focus_labels": focus_labels,
         "focus_items": focus_items,
         "labels": rows,
