@@ -702,6 +702,8 @@ class WebAppRenderingTests(unittest.TestCase):
         self.assertIn("focus_items", js)
         self.assertIn("practice-focus-button", js)
         self.assertIn("`${item.label}:${item.needed}`", js)
+        self.assertIn("payload.not_ready_labels", js)
+        self.assertIn("not ready, target", js)
         self.assertIn("payload.needed_samples", js)
         self.assertIn("payload.coverage_percent", js)
         self.assertIn("practice-coverage-meter-fill", js)

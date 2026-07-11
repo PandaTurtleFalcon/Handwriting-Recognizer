@@ -238,10 +238,13 @@ function renderPracticeCoverage(payload) {
   latestPracticeCoverage = payload;
   renderPracticeLabelButtons(practiceLabelValuesFromCoverage(payload));
   practiceCoverageEl.replaceChildren();
+  const readyLabels = Number(payload.ready_labels || 0);
+  const totalLabels = Number(payload.total_labels || practiceLabels.length);
+  const notReadyLabels = Number(payload.not_ready_labels ?? Math.max(0, totalLabels - readyLabels));
   const summary = makeElement(
     "div",
     "practice-coverage-summary",
-    `${payload.ready_labels || 0}/${payload.total_labels || practiceLabels.length} labels ready, target ${payload.target_per_label || 20} each`,
+    `${readyLabels}/${totalLabels} labels ready, ${notReadyLabels} not ready, target ${payload.target_per_label || 20} each`,
   );
   practiceCoverageEl.append(summary);
   const totalNeeded = Number(
