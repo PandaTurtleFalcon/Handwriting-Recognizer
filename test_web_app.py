@@ -769,6 +769,36 @@ class WebAppRenderingTests(unittest.TestCase):
         self.assertEqual(record["bbox"], {"x": 10.0, "y": 20.0, "width": 30.0, "height": 40.0, "row": 1})
         self.assertIn("timestamp", record)
 
+    def test_practice_correction_rejects_non_priority_label(self) -> None:
+        """Generated practice samples should not pollute the weak-label queue."""
+
+        body = (
+            b"filename=practice-abc.png&image_id=practice-abc&sequence=A&prediction_index=1"
+            b"&original_label=A&corrected_label=A&confidence=1"
+            b"&bbox=%7B%22x%22%3A0%2C%22y%22%3A0%2C%22width%22%3A32%2C%22height%22%3A32%2C%22row%22%3A1%7D"
+            b"&source_image=data%3Aimage%2Fpng%3Bbase64%2Cabc"
+        )
+
+        form = main.parse_correction_form(body)
+
+        with self.assertRaisesRegex(ValueError, "practice label"):
+            main.build_correction_record(form)
+
+    def test_practice_correction_accepts_priority_label(self) -> None:
+        """Generated practice samples should still save active weak labels."""
+
+        body = (
+            b"filename=practice-abc.png&image_id=practice-abc&sequence=s&prediction_index=1"
+            b"&original_label=s&corrected_label=s&confidence=1"
+            b"&bbox=%7B%22x%22%3A0%2C%22y%22%3A0%2C%22width%22%3A32%2C%22height%22%3A32%2C%22row%22%3A1%7D"
+            b"&source_image=data%3Aimage%2Fpng%3Bbase64%2Cabc"
+        )
+
+        form = main.parse_correction_form(body)
+        record = main.build_correction_record(form)
+
+        self.assertEqual(record["corrected_label"], "s")
+
     def test_parse_sequence_correction_builds_training_record(self) -> None:
         """Whole-result corrections should preserve the complete corrected text."""
 
