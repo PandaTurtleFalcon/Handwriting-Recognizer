@@ -274,6 +274,10 @@ restored, so future improvement loops do not repeat known-bad blends.
   - Code path: the human-readable `scripts/train_from_corrections.py --dry-run` readiness lines now include `coverage=...%`, matching the JSON readiness field.
   - Verification: `python3 -m pytest -q test_web_app.py test_train_from_corrections.py` passed (`89` tests), text dry-run reports character `0.19%`, folded alnum `0.38%`, and mixed-case `0.24%`, and benchmark metrics are unchanged.
 
+- Dry-run not-ready labels:
+  - Code path: correction readiness summaries now include `not_ready_labels`, and text dry-runs print `not_ready=...` beside the ready-label ratio.
+  - Verification: `python3 -m pytest -q test_web_app.py test_train_from_corrections.py` passed (`89` tests), text dry-run reports character `not_ready=52`, folded alnum `not_ready=26`, and mixed-case `not_ready=42`, and benchmark metrics are unchanged.
+
 - Local automation artifact ignores:
   - Code path: `.gitignore` now excludes `$CODEX_HOME/` and `backups/`, matching existing local backup ignores and preventing generated automation state from being accidentally committed.
   - Verification: `python3 -m pytest -q test_web_app.py test_train_from_corrections.py` passed (`89` tests), `git status --short` no longer lists those generated folders, and `python3 scripts/summarize_benchmarks.py --include-app-hardcases` confirmed model metrics are unchanged.

@@ -104,13 +104,14 @@ class TrainFromCorrectionsTests(unittest.TestCase):
         self.assertFalse(summary["ready"])
         self.assertEqual(summary["ready_labels"], 1)
         self.assertEqual(summary["total_labels"], 3)
+        self.assertEqual(summary["not_ready_labels"], 2)
         self.assertEqual(summary["samples"], 23)
         self.assertEqual(summary["target_samples"], 60)
         self.assertEqual(summary["needed_samples"], 37)
         self.assertAlmostEqual(summary["coverage_percent"], 38.333333333333336)
         self.assertEqual(
             format_readiness_summary("Character", summary),
-            "Character correction readiness: not_ready labels=1/3 samples=23/60 needed=37 coverage=38.33%",
+            "Character correction readiness: not_ready labels=1/3 not_ready=2 samples=23/60 needed=37 coverage=38.33%",
         )
 
     def test_next_needed_labels_prioritizes_largest_gaps(self) -> None:
@@ -137,6 +138,7 @@ class TrainFromCorrectionsTests(unittest.TestCase):
         self.assertEqual(report["summary"]["folded_items"], 1)
         self.assertEqual(report["summary"]["mixedcase_items"], 2)
         self.assertEqual(report["character"]["readiness"]["needed_samples"], 40)
+        self.assertEqual(report["character"]["readiness"]["not_ready_labels"], 2)
         self.assertAlmostEqual(report["character"]["readiness"]["coverage_percent"], 33.333333333333336)
         self.assertEqual(report["character"]["next_needed"][0], {"label": "-", "count": 0, "needed": 20})
         self.assertEqual(report["folded_alnum"]["priority_labels"], ["A"])

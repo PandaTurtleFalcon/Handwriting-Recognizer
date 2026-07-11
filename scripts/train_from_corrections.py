@@ -241,6 +241,7 @@ def correction_readiness_summary(
         "ready": ready_labels == len(unique_labels) and len(unique_labels) > 0,
         "ready_labels": ready_labels,
         "total_labels": len(unique_labels),
+        "not_ready_labels": max(0, len(unique_labels) - ready_labels),
         "samples": total_samples,
         "target_samples": target_total,
         "needed_samples": max(0, target_total - total_samples),
@@ -274,6 +275,7 @@ def format_readiness_summary(name: str, summary: dict[str, int | bool]) -> str:
     return (
         f"{name} correction readiness: {status} "
         f"labels={summary['ready_labels']}/{summary['total_labels']} "
+        f"not_ready={summary.get('not_ready_labels', 0)} "
         f"samples={summary['samples']}/{summary['target_samples']} "
         f"needed={summary['needed_samples']} "
         f"coverage={float(summary.get('coverage_percent', 0.0)):.2f}%"
