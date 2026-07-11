@@ -205,6 +205,10 @@ function nextNeededPracticeLabel() {
   if (!latestPracticeCoverage || !Array.isArray(latestPracticeCoverage.labels)) {
     return practiceLabels[0];
   }
+  const serverNextLabel = text(latestPracticeCoverage.next_label);
+  if (serverNextLabel && practiceLabels.includes(serverNextLabel)) {
+    return serverNextLabel;
+  }
   const labelRanks = new Map(practiceLabels.map((label, index) => [label, index]));
   const needyLabels = latestPracticeCoverage.labels
     .filter((item) => Number(item.needed || 0) > 0)

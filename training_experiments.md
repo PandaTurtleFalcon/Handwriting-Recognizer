@@ -307,6 +307,10 @@ restored, so future improvement loops do not repeat known-bad blends.
   - Code path: the static practice panel now renders `training_blocked_reason` from `/api/correction-coverage` when `ready` is false, so the browser shows the same collection blocker that automation reads.
   - Verification: `python3 -m pytest -q test_web_app.py test_train_from_corrections.py` passed (`91` tests), and `python3 scripts/summarize_benchmarks.py --include-app-hardcases` confirmed model metrics are unchanged.
 
+- Server-directed next practice label:
+  - Code path: the static practice panel now uses `next_label` from `/api/correction-coverage` as the first choice for the "Next needed" label before falling back to browser-side ranking, keeping manual collection aligned with automation targeting.
+  - Verification: `python3 -m pytest -q test_web_app.py test_train_from_corrections.py` passed (`91` tests), and `python3 scripts/summarize_benchmarks.py --include-app-hardcases` confirmed model metrics are unchanged.
+
 - Local automation artifact ignores:
   - Code path: `.gitignore` now excludes `$CODEX_HOME/` and `backups/`, matching existing local backup ignores and preventing generated automation state from being accidentally committed.
   - Verification: `python3 -m pytest -q test_web_app.py test_train_from_corrections.py` passed (`89` tests), `git status --short` no longer lists those generated folders, and `python3 scripts/summarize_benchmarks.py --include-app-hardcases` confirmed model metrics are unchanged.

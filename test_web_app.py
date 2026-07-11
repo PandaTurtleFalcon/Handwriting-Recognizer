@@ -723,6 +723,8 @@ class WebAppRenderingTests(unittest.TestCase):
         self.assertIn("readiness-next-button", js)
         self.assertIn("renderPracticeLabelButtons", js)
         self.assertIn("nextNeededPracticeLabel", js)
+        self.assertIn("latestPracticeCoverage.next_label", js)
+        self.assertIn("practiceLabels.includes(serverNextLabel)", js)
         self.assertIn("refreshPracticeCoverage(true)", js)
         self.assertIn("source_image", js)
 
