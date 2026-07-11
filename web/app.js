@@ -428,6 +428,12 @@ async function submitPracticeSample() {
     practiceLabelInput.focus();
     return;
   }
+  if (practiceLabels.length > 0 && !practiceLabels.includes(label)) {
+    practiceStatus.textContent = "Pick one of the practice labels.";
+    setPracticeLabel(nextNeededPracticeLabel());
+    practiceLabelInput.focus();
+    return;
+  }
   if (!practiceHasInk) {
     practiceStatus.textContent = "Draw the sample first.";
     return;

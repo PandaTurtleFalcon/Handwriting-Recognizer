@@ -687,6 +687,7 @@ class WebAppRenderingTests(unittest.TestCase):
         self.assertIn('fetch("/api/correction-readiness"', js)
         self.assertIn("practiceLabels", js)
         self.assertIn("practiceAutoNextInput", js)
+        self.assertIn("Pick one of the practice labels.", js)
         self.assertIn("practiceLabelValuesFromCoverage", js)
         self.assertIn("renderSelectedPracticeProgress", js)
         self.assertIn("selectedPracticeCoverage", js)
