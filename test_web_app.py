@@ -705,6 +705,8 @@ class WebAppRenderingTests(unittest.TestCase):
         self.assertIn("payload.not_ready_labels", js)
         self.assertIn("not ready, target", js)
         self.assertIn("payload.needed_samples", js)
+        self.assertIn("payload.training_blocked_reason", js)
+        self.assertIn("payload.ready === false", js)
         self.assertIn("payload.coverage_percent", js)
         self.assertIn("practice-coverage-meter-fill", js)
         self.assertIn("target_samples", js)

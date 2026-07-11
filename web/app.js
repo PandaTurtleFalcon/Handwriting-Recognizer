@@ -251,6 +251,9 @@ function renderPracticeCoverage(payload) {
     payload.needed_samples ?? payload.labels.reduce((total, item) => total + Number(item.needed || 0), 0),
   );
   practiceCoverageEl.append(makeElement("div", "practice-needed-summary", `${totalNeeded} samples still needed`));
+  if (payload.ready === false && text(payload.training_blocked_reason)) {
+    practiceCoverageEl.append(makeElement("div", "practice-needed-summary", text(payload.training_blocked_reason)));
+  }
   const sampleCount = Number(payload.samples || 0);
   const targetSamples = Number(payload.target_samples || 0);
   const rawPercent = Number(payload.coverage_percent ?? (targetSamples > 0 ? (100 * sampleCount) / targetSamples : 0));
