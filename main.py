@@ -1223,6 +1223,7 @@ def build_correction_coverage_report(
     sample_count = sum(int(row["count"]) for row in rows)
     target_samples = len(rows) * target_per_label
     needed_samples = sum(int(row["needed"]) for row in rows)
+    coverage_percent = 100.0 * sample_count / target_samples if target_samples else 0.0
     focus_labels = [str(row["label"]) for row in rows if not bool(row["ready"])][:8]
     focus_items = [
         {"label": str(row["label"]), "count": int(row["count"]), "needed": int(row["needed"])}
@@ -1237,6 +1238,7 @@ def build_correction_coverage_report(
         "samples": sample_count,
         "target_samples": target_samples,
         "needed_samples": needed_samples,
+        "coverage_percent": coverage_percent,
         "focus_labels": focus_labels,
         "focus_items": focus_items,
         "labels": rows,
