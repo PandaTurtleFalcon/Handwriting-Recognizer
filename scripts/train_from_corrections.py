@@ -236,6 +236,7 @@ def correction_readiness_summary(
     ready_labels = sum(1 for label in unique_labels if counts.get(label, 0) >= target_per_label)
     total_samples = sum(counts.get(label, 0) for label in unique_labels)
     target_total = len(unique_labels) * target_per_label
+    coverage_percent = 100.0 * total_samples / target_total if target_total else 0.0
     return {
         "ready": ready_labels == len(unique_labels) and len(unique_labels) > 0,
         "ready_labels": ready_labels,
@@ -243,6 +244,7 @@ def correction_readiness_summary(
         "samples": total_samples,
         "target_samples": target_total,
         "needed_samples": max(0, target_total - total_samples),
+        "coverage_percent": coverage_percent,
     }
 
 

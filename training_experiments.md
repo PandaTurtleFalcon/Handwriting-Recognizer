@@ -266,6 +266,10 @@ restored, so future improvement loops do not repeat known-bad blends.
   - Code path: `/api/correction-coverage` now exposes `coverage_percent`, and the practice panel uses that server-provided value with the previous browser calculation as a fallback.
   - Verification: `python3 -m pytest -q test_web_app.py test_train_from_corrections.py` passed (`89` tests), and `python3 scripts/summarize_benchmarks.py --include-app-hardcases` confirmed model metrics are unchanged.
 
+- Dry-run coverage percent:
+  - Code path: `scripts/train_from_corrections.py --dry-run --json` now includes `coverage_percent` in each recognizer readiness object, matching `/api/correction-coverage` for automation consumers.
+  - Verification: `python3 -m pytest -q test_web_app.py test_train_from_corrections.py` passed (`89` tests), `python3 scripts/train_from_corrections.py --dry-run --json` reports character `0.1923%` and mixed-case `0.2381%`, and benchmark metrics are unchanged.
+
 - Local automation artifact ignores:
   - Code path: `.gitignore` now excludes `$CODEX_HOME/` and `backups/`, matching existing local backup ignores and preventing generated automation state from being accidentally committed.
   - Verification: `python3 -m pytest -q test_web_app.py test_train_from_corrections.py` passed (`89` tests), `git status --short` no longer lists those generated folders, and `python3 scripts/summarize_benchmarks.py --include-app-hardcases` confirmed model metrics are unchanged.
