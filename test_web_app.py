@@ -784,6 +784,21 @@ class WebAppRenderingTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "practice label"):
             main.build_correction_record(form)
 
+    def test_practice_correction_requires_practice_image_id(self) -> None:
+        """Generated practice samples should be tied to generated practice images."""
+
+        body = (
+            b"filename=upload.png&image_id=upload-abc&sequence=s&prediction_index=1"
+            b"&original_label=s&corrected_label=s&confidence=1"
+            b"&bbox=%7B%22x%22%3A0%2C%22y%22%3A0%2C%22width%22%3A32%2C%22height%22%3A32%2C%22row%22%3A1%7D"
+            b"&source_image=data%3Aimage%2Fpng%3Bbase64%2Cabc"
+        )
+
+        form = main.parse_correction_form(body)
+
+        with self.assertRaisesRegex(ValueError, "Practice correction is malformed"):
+            main.build_correction_record(form)
+
     def test_practice_correction_accepts_priority_label(self) -> None:
         """Generated practice samples should still save active weak labels."""
 

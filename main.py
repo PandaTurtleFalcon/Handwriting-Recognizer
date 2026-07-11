@@ -1749,8 +1749,11 @@ def build_correction_record(form: dict[str, str]) -> dict[str, object]:
         # specific prediction; only individual-character corrections need a
         # real 1-based prediction index.
         raise ValueError("Correction request is malformed.")
-    if form.get("source_image") and corrected_label not in PRACTICE_PRIORITY_LABELS:
-        raise ValueError("Practice corrections must use a practice label.")
+    if form.get("source_image"):
+        if correction_kind != "character" or not form.get("image_id", "").startswith("practice-"):
+            raise ValueError("Practice correction is malformed.")
+        if corrected_label not in PRACTICE_PRIORITY_LABELS:
+            raise ValueError("Practice corrections must use a practice label.")
     cleaned_prediction_boxes = []
     if correction_kind == "sequence":
         for item in prediction_boxes[:255]:
