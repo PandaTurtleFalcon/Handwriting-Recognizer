@@ -1398,6 +1398,7 @@ class WebAppRenderingTests(unittest.TestCase):
         """Practice collection should attack the measured exact-recognition gaps first."""
 
         self.assertEqual(main.PRACTICE_PRIORITY_LABELS[:10], ["s", "O", "V", "1", "c", "I", "F", "o", "m", "0"])
+        self.assertEqual(main.PRACTICE_PRIORITY_LABELS[10:14], ["l", "U", "k", "i"])
 
     def test_correction_readiness_report_exposes_training_gates(self) -> None:
         """The app should expose machine-readable correction readiness."""
