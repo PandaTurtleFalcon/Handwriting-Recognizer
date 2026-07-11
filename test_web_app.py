@@ -691,6 +691,7 @@ class WebAppRenderingTests(unittest.TestCase):
         self.assertIn("renderSelectedPracticeProgress", js)
         self.assertIn("selectedPracticeCoverage", js)
         self.assertIn("repeatPracticeStatus", js)
+        self.assertIn('`Saved ${label}. Next: ${nextLabel || "none"}.`', js)
         self.assertIn("more ${label} needed", js)
         self.assertIn("focus_labels", js)
         self.assertIn("focus_items", js)

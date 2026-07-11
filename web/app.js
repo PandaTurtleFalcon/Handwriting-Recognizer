@@ -463,7 +463,8 @@ async function submitPracticeSample() {
     clearPracticeCanvas(false);
     await refreshPracticeCoverage(autoNext);
     await refreshCorrectionReadiness();
-    practiceStatus.textContent = autoNext ? `Saved ${label}.` : repeatPracticeStatus(label);
+    const nextLabel = text(practiceLabelInput.value).trim();
+    practiceStatus.textContent = autoNext ? `Saved ${label}. Next: ${nextLabel || "none"}.` : repeatPracticeStatus(label);
   } catch (error) {
     practiceStatus.textContent = error.message;
   } finally {
