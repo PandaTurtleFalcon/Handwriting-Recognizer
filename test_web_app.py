@@ -1367,6 +1367,26 @@ class WebAppRenderingTests(unittest.TestCase):
         self.assertFalse(report["labels"][0]["ready"])
         self.assertTrue(report["labels"][1]["ready"])
 
+    def test_correction_coverage_focus_prioritizes_largest_gaps(self) -> None:
+        """Next-needed labels should prefer the biggest remaining sample gaps."""
+
+        report = main.build_correction_coverage_report(
+            {"A": 19, "B": 2, "C": 2},
+            labels=["A", "B", "C"],
+            target_per_label=20,
+        )
+
+        self.assertEqual(report["next_label"], "B")
+        self.assertEqual(report["next_needed"], 18)
+        self.assertEqual(
+            report["focus_items"],
+            [
+                {"label": "B", "count": 2, "needed": 18},
+                {"label": "C", "count": 2, "needed": 18},
+                {"label": "A", "count": 19, "needed": 1},
+            ],
+        )
+
     def test_practice_priority_labels_cover_mixedcase_and_punctuation_twins(self) -> None:
         """Practice samples should target the audited exact-recognition blockers."""
 

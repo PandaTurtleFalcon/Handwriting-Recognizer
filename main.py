@@ -1224,11 +1224,16 @@ def build_correction_coverage_report(
     target_samples = len(rows) * target_per_label
     needed_samples = sum(int(row["needed"]) for row in rows)
     coverage_percent = 100.0 * sample_count / target_samples if target_samples else 0.0
-    focus_labels = [str(row["label"]) for row in rows if not bool(row["ready"])][:8]
+    ranked_rows = [
+        {**row, "rank": index}
+        for index, row in enumerate(rows)
+        if not bool(row["ready"])
+    ]
+    ranked_rows.sort(key=lambda row: (-int(row["needed"]), int(row["count"]), int(row["rank"])))
+    focus_labels = [str(row["label"]) for row in ranked_rows][:8]
     focus_items = [
         {"label": str(row["label"]), "count": int(row["count"]), "needed": int(row["needed"])}
-        for row in rows
-        if not bool(row["ready"])
+        for row in ranked_rows
     ][:8]
     next_item = focus_items[0] if focus_items else None
     return {
