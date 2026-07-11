@@ -699,6 +699,7 @@ class WebAppRenderingTests(unittest.TestCase):
         self.assertIn("focus_items", js)
         self.assertIn("practice-focus-button", js)
         self.assertIn("`${item.label}:${item.needed}`", js)
+        self.assertIn("payload.needed_samples", js)
         self.assertIn("samples still needed", js)
         self.assertIn("renderCorrectionReadiness", js)
         self.assertIn("handlePracticeShortcut", js)
@@ -1343,6 +1344,9 @@ class WebAppRenderingTests(unittest.TestCase):
 
         self.assertEqual(report["ready_labels"], 1)
         self.assertEqual(report["total_labels"], 2)
+        self.assertEqual(report["samples"], 23)
+        self.assertEqual(report["target_samples"], 40)
+        self.assertEqual(report["needed_samples"], 17)
         self.assertEqual(report["focus_labels"], ["0"])
         self.assertEqual(report["focus_items"], [{"label": "0", "count": 3, "needed": 17}])
         self.assertEqual(report["labels"][0]["needed"], 17)

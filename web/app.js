@@ -244,7 +244,9 @@ function renderPracticeCoverage(payload) {
     `${payload.ready_labels || 0}/${payload.total_labels || practiceLabels.length} labels ready, target ${payload.target_per_label || 20} each`,
   );
   practiceCoverageEl.append(summary);
-  const totalNeeded = payload.labels.reduce((total, item) => total + Number(item.needed || 0), 0);
+  const totalNeeded = Number(
+    payload.needed_samples ?? payload.labels.reduce((total, item) => total + Number(item.needed || 0), 0),
+  );
   practiceCoverageEl.append(makeElement("div", "practice-needed-summary", `${totalNeeded} samples still needed`));
   const focusItems = Array.isArray(payload.focus_items)
     ? payload.focus_items
