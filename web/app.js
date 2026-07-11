@@ -256,6 +256,9 @@ function renderPracticeCoverage(payload) {
   fill.style.width = `${percent.toFixed(1)}%`;
   meter.append(fill);
   practiceCoverageEl.append(meter);
+  practiceCoverageEl.append(
+    makeElement("div", "practice-sample-progress", `${sampleCount}/${targetSamples} samples (${percent.toFixed(1)}%)`),
+  );
   const focusItems = Array.isArray(payload.focus_items)
     ? payload.focus_items
         .map((item) => ({

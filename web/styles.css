@@ -255,6 +255,12 @@ h2 {
   background: var(--accent);
 }
 
+.practice-sample-progress {
+  color: var(--muted);
+  font-size: 0.9rem;
+  font-weight: 800;
+}
+
 .practice-focus {
   display: flex;
   flex-wrap: wrap;

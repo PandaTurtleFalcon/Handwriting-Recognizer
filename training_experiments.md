@@ -258,6 +258,10 @@ restored, so future improvement loops do not repeat known-bad blends.
   - Code path: the practice coverage panel now renders a compact progress meter from `samples / target_samples`, making collection progress visible at a glance.
   - Verification: `python3 -m pytest -q test_web_app.py test_train_from_corrections.py` passed (`89` tests), served static assets include `practice-coverage-meter-fill`, and `python3 scripts/summarize_benchmarks.py --include-app-hardcases` confirmed model metrics are unchanged.
 
+- Numeric practice sample progress:
+  - Code path: the practice coverage panel now prints the exact `samples/target_samples` count and percent under the progress meter.
+  - Verification: `python3 -m pytest -q test_web_app.py test_train_from_corrections.py` passed (`89` tests), served static assets include `practice-sample-progress`, and `python3 scripts/summarize_benchmarks.py --include-app-hardcases` confirmed model metrics are unchanged.
+
 - Local automation artifact ignores:
   - Code path: `.gitignore` now excludes `$CODEX_HOME/` and `backups/`, matching existing local backup ignores and preventing generated automation state from being accidentally committed.
   - Verification: `python3 -m pytest -q test_web_app.py test_train_from_corrections.py` passed (`89` tests), `git status --short` no longer lists those generated folders, and `python3 scripts/summarize_benchmarks.py --include-app-hardcases` confirmed model metrics are unchanged.
