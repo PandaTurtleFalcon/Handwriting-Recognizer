@@ -277,6 +277,25 @@ def next_needed_labels(
     ]
 
 
+def not_ready_label_list(
+    counts: Counter[str],
+    priority_labels: str,
+    target_per_label: int = PRACTICE_TARGET_PER_LABEL,
+) -> list[str]:
+    """Return all labels below target, ordered by current collection need."""
+
+    priority_count = len(list(dict.fromkeys(priority_labels)))
+    return [
+        str(item["label"])
+        for item in next_needed_labels(
+            counts,
+            priority_labels,
+            target_per_label=target_per_label,
+            limit=priority_count,
+        )
+    ]
+
+
 def correction_recommendation(
     readiness: dict[str, int | bool],
     next_needed: list[dict[str, int | str]],
@@ -341,12 +360,15 @@ def dry_run_report(
     mixed_priority_labels = filter_priority_labels(mixedcase_priority_labels, list(MIXEDCASE_LABELS))
     character_readiness = correction_readiness_summary(character_counts, character_priority_labels)
     character_next_needed = next_needed_labels(character_counts, character_priority_labels)
+    character_not_ready_labels = not_ready_label_list(character_counts, character_priority_labels)
     character_recommendation = correction_recommendation(character_readiness, character_next_needed)
     folded_readiness = correction_readiness_summary(folded_counts, folded_priority_labels)
     folded_next_needed = next_needed_labels(folded_counts, folded_priority_labels)
+    folded_not_ready_labels = not_ready_label_list(folded_counts, folded_priority_labels)
     folded_recommendation = correction_recommendation(folded_readiness, folded_next_needed)
     mixed_readiness = correction_readiness_summary(mixed_counts, mixed_priority_labels)
     mixed_next_needed = next_needed_labels(mixed_counts, mixed_priority_labels)
+    mixed_not_ready_labels = not_ready_label_list(mixed_counts, mixed_priority_labels)
     mixed_recommendation = correction_recommendation(mixed_readiness, mixed_next_needed)
     recommendations = [character_recommendation, folded_recommendation, mixed_recommendation]
     summary_action = (
@@ -386,6 +408,7 @@ def dry_run_report(
             "recommended_action": summary_action,
             "recommended_label": summary_label,
             "recommended_batch_labels": summary_batch_labels,
+            "not_ready_label_list": character_not_ready_labels,
             "recommended_batch_size": len(summary_batch_labels),
             "recommended_batch_samples": summary_batch_samples,
             "recommended_batch_target_samples": summary_batch_target_samples,
@@ -397,6 +420,7 @@ def dry_run_report(
             "coverage": dict(character_counts),
             "priority_labels": list(dict.fromkeys(character_priority_labels)),
             "readiness": character_readiness,
+            "not_ready_label_list": character_not_ready_labels,
             "next_needed": character_next_needed,
             **character_recommendation,
         },
@@ -404,6 +428,7 @@ def dry_run_report(
             "coverage": dict(folded_counts),
             "priority_labels": list(dict.fromkeys(folded_priority_labels)),
             "readiness": folded_readiness,
+            "not_ready_label_list": folded_not_ready_labels,
             "next_needed": folded_next_needed,
             **folded_recommendation,
         },
@@ -411,6 +436,7 @@ def dry_run_report(
             "coverage": dict(mixed_counts),
             "priority_labels": list(dict.fromkeys(mixed_priority_labels)),
             "readiness": mixed_readiness,
+            "not_ready_label_list": mixed_not_ready_labels,
             "next_needed": mixed_next_needed,
             **mixed_recommendation,
         },

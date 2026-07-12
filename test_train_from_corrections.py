@@ -24,6 +24,7 @@ from scripts.train_from_corrections import (
     format_priority_coverage,
     format_readiness_summary,
     format_recommendation_summary,
+    not_ready_label_list,
     next_needed_labels,
 )
 from main import PRACTICE_PRIORITY_LABELS
@@ -130,6 +131,13 @@ class TrainFromCorrectionsTests(unittest.TestCase):
             ],
         )
 
+    def test_not_ready_label_list_returns_full_ordered_gap_queue(self) -> None:
+        """Automation should be able to read every missing label without scraping rows."""
+
+        labels = not_ready_label_list({"A": 19, "B": 0, "C": 20, "D": 5}, "ABCD", target_per_label=20)
+
+        self.assertEqual(labels, ["B", "D", "A"])
+
     def test_correction_recommendation_tracks_training_gate(self) -> None:
         """Dry-run automation should know whether to collect or train."""
 
@@ -175,6 +183,7 @@ class TrainFromCorrectionsTests(unittest.TestCase):
         self.assertEqual(report["summary"]["recommended_action"], "collect_corrections")
         self.assertEqual(report["summary"]["recommended_label"], "-")
         self.assertEqual(report["summary"]["recommended_batch_labels"], ["-", "+"])
+        self.assertEqual(report["summary"]["not_ready_label_list"], ["-", "+"])
         self.assertEqual(report["summary"]["recommended_batch_size"], 2)
         self.assertEqual(report["summary"]["recommended_batch_samples"], 0)
         self.assertEqual(report["summary"]["recommended_batch_target_samples"], 40)
@@ -190,12 +199,15 @@ class TrainFromCorrectionsTests(unittest.TestCase):
         )
         self.assertEqual(report["character"]["recommended_action"], "collect_corrections")
         self.assertEqual(report["character"]["recommended_label"], "-")
+        self.assertEqual(report["character"]["not_ready_label_list"], ["-", "+"])
         self.assertEqual(report["folded_alnum"]["priority_labels"], ["A"])
         self.assertEqual(report["folded_alnum"]["recommended_action"], "collect_corrections")
         self.assertEqual(report["folded_alnum"]["recommended_label"], "A")
+        self.assertEqual(report["folded_alnum"]["not_ready_label_list"], ["A"])
         self.assertEqual(report["mixedcase"]["priority_labels"], ["A", "a"])
         self.assertEqual(report["mixedcase"]["recommended_action"], "collect_corrections")
         self.assertEqual(report["mixedcase"]["recommended_label"], "A")
+        self.assertEqual(report["mixedcase"]["not_ready_label_list"], ["A", "a"])
 
         output = io.StringIO()
         with contextlib.redirect_stdout(output):

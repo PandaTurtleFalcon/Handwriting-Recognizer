@@ -1231,6 +1231,7 @@ def build_correction_coverage_report(
     ]
     ranked_rows.sort(key=lambda row: (-int(row["needed"]), int(row["count"]), int(row["rank"])))
     focus_labels = [str(row["label"]) for row in ranked_rows][:8]
+    not_ready_label_list = [str(row["label"]) for row in ranked_rows]
     focus_items = [
         {
             "label": str(row["label"]),
@@ -1266,6 +1267,7 @@ def build_correction_coverage_report(
         "ready_labels": ready,
         "total_labels": len(rows),
         "not_ready_labels": max(0, len(rows) - ready),
+        "not_ready_label_list": not_ready_label_list,
         "samples": sample_count,
         "target_samples": target_samples,
         "needed_samples": needed_samples,

@@ -379,6 +379,10 @@ restored, so future improvement loops do not repeat known-bad blends.
   - Code path: `scripts/train_from_corrections.py --dry-run --json` summary now includes `ready`, derived from the top-level correction recommendation, so automation can check one boolean before deciding whether to train.
   - Verification: `python3 -m pytest -q test_web_app.py test_train_from_corrections.py` passed (`92` tests), and `python3 scripts/summarize_benchmarks.py --include-app-hardcases` confirmed model metrics are unchanged.
 
+- Not-ready label queue:
+  - Code path: `/api/correction-coverage` and `scripts/train_from_corrections.py --dry-run --json` now expose `not_ready_label_list`, ordered by largest remaining sample gap, so automation can build a balanced collection queue without parsing nested focus rows.
+  - Verification: `python3 -m pytest -q test_web_app.py test_train_from_corrections.py` passed (`93` tests), `python3 scripts/train_from_corrections.py --dry-run --json` reports `52` not-ready character labels beginning with `s, O, V, c, I, F, o, m`, live `/api/correction-coverage` exposes the same queue, and `python3 scripts/summarize_benchmarks.py --include-app-hardcases` confirmed model metrics are unchanged.
+
 - Local automation artifact ignores:
   - Code path: `.gitignore` now excludes `$CODEX_HOME/` and `backups/`, matching existing local backup ignores and preventing generated automation state from being accidentally committed.
   - Verification: `python3 -m pytest -q test_web_app.py test_train_from_corrections.py` passed (`89` tests), `git status --short` no longer lists those generated folders, and `python3 scripts/summarize_benchmarks.py --include-app-hardcases` confirmed model metrics are unchanged.
