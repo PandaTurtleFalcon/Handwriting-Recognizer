@@ -363,6 +363,10 @@ restored, so future improvement loops do not repeat known-bad blends.
   - Code path: `scripts/train_from_corrections.py --dry-run --json` summary now includes `recommended_action` and `recommended_label`, derived from the recognizer-specific recommendations, so automation can inspect one top-level decision before drilling into sections.
   - Verification: `python3 -m pytest -q test_web_app.py test_train_from_corrections.py` passed (`92` tests), and `python3 scripts/summarize_benchmarks.py --include-app-hardcases` confirmed model metrics are unchanged.
 
+- Top-level dry-run batch labels:
+  - Code path: `scripts/train_from_corrections.py --dry-run --json` summary now includes `recommended_batch_labels` and `recommended_batch_size`, derived from character next-needed labels, so automation can read the current collection batch from one place.
+  - Verification: `python3 -m pytest -q test_web_app.py test_train_from_corrections.py` passed (`92` tests), and `python3 scripts/summarize_benchmarks.py --include-app-hardcases` confirmed model metrics are unchanged.
+
 - Local automation artifact ignores:
   - Code path: `.gitignore` now excludes `$CODEX_HOME/` and `backups/`, matching existing local backup ignores and preventing generated automation state from being accidentally committed.
   - Verification: `python3 -m pytest -q test_web_app.py test_train_from_corrections.py` passed (`89` tests), `git status --short` no longer lists those generated folders, and `python3 scripts/summarize_benchmarks.py --include-app-hardcases` confirmed model metrics are unchanged.

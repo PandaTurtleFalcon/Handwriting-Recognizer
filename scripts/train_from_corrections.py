@@ -358,6 +358,11 @@ def dry_run_report(
         (item["recommended_label"] for item in recommendations if item["recommended_label"] is not None),
         None,
     )
+    summary_batch_labels = [
+        str(item["label"])
+        for item in character_next_needed
+        if isinstance(item, dict) and item.get("label") is not None
+    ]
     return {
         "summary": {
             "character_crops": sum(character_counts.values()),
@@ -365,6 +370,8 @@ def dry_run_report(
             "mixedcase_items": mixed_item_count,
             "recommended_action": summary_action,
             "recommended_label": summary_label,
+            "recommended_batch_labels": summary_batch_labels,
+            "recommended_batch_size": len(summary_batch_labels),
         },
         "character": {
             "coverage": dict(character_counts),

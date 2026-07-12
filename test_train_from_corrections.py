@@ -173,6 +173,8 @@ class TrainFromCorrectionsTests(unittest.TestCase):
         self.assertEqual(report["summary"]["mixedcase_items"], 2)
         self.assertEqual(report["summary"]["recommended_action"], "collect_corrections")
         self.assertEqual(report["summary"]["recommended_label"], "-")
+        self.assertEqual(report["summary"]["recommended_batch_labels"], ["-", "+"])
+        self.assertEqual(report["summary"]["recommended_batch_size"], 2)
         self.assertEqual(report["character"]["readiness"]["needed_samples"], 40)
         self.assertEqual(report["character"]["readiness"]["not_ready_labels"], 2)
         self.assertAlmostEqual(report["character"]["readiness"]["coverage_percent"], 33.333333333333336)
