@@ -354,6 +354,7 @@ def dry_run_report(
         if all(item["recommended_action"] == "train_corrections" for item in recommendations)
         else "collect_corrections"
     )
+    summary_ready = summary_action == "train_corrections"
     summary_label = next(
         (item["recommended_label"] for item in recommendations if item["recommended_label"] is not None),
         None,
@@ -381,6 +382,7 @@ def dry_run_report(
             "character_crops": sum(character_counts.values()),
             "folded_items": folded_item_count,
             "mixedcase_items": mixed_item_count,
+            "ready": summary_ready,
             "recommended_action": summary_action,
             "recommended_label": summary_label,
             "recommended_batch_labels": summary_batch_labels,

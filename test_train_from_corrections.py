@@ -171,6 +171,7 @@ class TrainFromCorrectionsTests(unittest.TestCase):
         self.assertEqual(report["summary"]["character_crops"], 22)
         self.assertEqual(report["summary"]["folded_items"], 1)
         self.assertEqual(report["summary"]["mixedcase_items"], 2)
+        self.assertFalse(report["summary"]["ready"])
         self.assertEqual(report["summary"]["recommended_action"], "collect_corrections")
         self.assertEqual(report["summary"]["recommended_label"], "-")
         self.assertEqual(report["summary"]["recommended_batch_labels"], ["-", "+"])
