@@ -1262,6 +1262,8 @@ def build_correction_coverage_report(
         "needed_samples": needed_samples,
         "coverage_percent": coverage_percent,
         "next_label": None if next_item is None else next_item["label"],
+        "next_count": 0 if next_item is None else next_item["count"],
+        "next_target": target_per_label if next_item is not None else 0,
         "next_needed": 0 if next_item is None else next_item["needed"],
         "focus_samples": focus_samples,
         "focus_target_samples": focus_target_samples,

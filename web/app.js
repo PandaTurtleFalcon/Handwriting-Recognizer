@@ -257,8 +257,11 @@ function renderPracticeCoverage(payload) {
   practiceCoverageEl.append(makeElement("div", "practice-needed-summary", `${totalNeeded} samples still needed`));
   if (text(payload.recommended_action)) {
     const actionLabel = text(payload.recommended_label);
+    const nextCount = Number(payload.next_count ?? 0);
+    const nextTarget = Number(payload.next_target ?? 0);
+    const nextProgress = actionLabel && nextTarget > 0 ? ` (${nextCount}/${nextTarget})` : "";
     const actionText = actionLabel
-      ? `${text(payload.recommended_action)}: ${actionLabel}`
+      ? `${text(payload.recommended_action)}: ${actionLabel}${nextProgress}`
       : text(payload.recommended_action);
     practiceCoverageEl.append(makeElement("div", "practice-needed-summary", actionText));
   }
