@@ -286,7 +286,9 @@ function renderPracticeCoverage(payload) {
         .map((item) => ({
           label: text(item?.label),
           count: Number(item?.count || 0),
+          target: Number(item?.target || payload.target_per_label || 20),
           needed: Number(item?.needed || 0),
+          coveragePercent: Number(item?.coverage_percent || 0),
         }))
         .filter((item) => item.label)
         .slice(0, 8)
@@ -306,7 +308,9 @@ function renderPracticeCoverage(payload) {
       const chipText = item.needed > 0 ? `${item.label}:${item.needed}` : item.label;
       const button = makeElement("button", "practice-focus-button", chipText);
       button.type = "button";
-      button.title = item.needed > 0 ? `${item.count} saved, ${item.needed} needed` : `${item.count} saved`;
+      button.title = item.needed > 0
+        ? `${item.count}/${item.target} saved, ${item.needed} needed, ${item.coveragePercent.toFixed(1)}%`
+        : `${item.count}/${item.target} saved, ready`;
       button.addEventListener("click", () => setPracticeLabel(item.label));
       focus.append(button);
     });

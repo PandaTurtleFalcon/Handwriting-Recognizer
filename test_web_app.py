@@ -704,6 +704,8 @@ class WebAppRenderingTests(unittest.TestCase):
         self.assertIn("payload.focus_coverage_percent", js)
         self.assertIn("payload.recommended_batch_labels", js)
         self.assertIn('batchLabels.join(" ")', js)
+        self.assertIn("coveragePercent", js)
+        self.assertIn("${item.count}/${item.target} saved", js)
         self.assertIn("Focus (${focusNeeded} samples, ${focusPercent.toFixed(1)}%)", js)
         self.assertIn("practice-focus-button", js)
         self.assertIn("`${item.label}:${item.needed}`", js)
@@ -1390,7 +1392,10 @@ class WebAppRenderingTests(unittest.TestCase):
         self.assertEqual(report["recommended_batch_labels"], ["0"])
         self.assertEqual(report["recommended_batch_size"], 1)
         self.assertEqual(report["focus_labels"], ["0"])
-        self.assertEqual(report["focus_items"], [{"label": "0", "count": 3, "needed": 17}])
+        self.assertEqual(
+            report["focus_items"],
+            [{"label": "0", "count": 3, "target": 20, "needed": 17, "coverage_percent": 15.0}],
+        )
         self.assertEqual(report["labels"][0]["needed"], 17)
         self.assertFalse(report["labels"][0]["ready"])
         self.assertTrue(report["labels"][1]["ready"])
@@ -1434,9 +1439,9 @@ class WebAppRenderingTests(unittest.TestCase):
         self.assertEqual(
             report["focus_items"],
             [
-                {"label": "B", "count": 2, "needed": 18},
-                {"label": "C", "count": 2, "needed": 18},
-                {"label": "A", "count": 19, "needed": 1},
+                {"label": "B", "count": 2, "target": 20, "needed": 18, "coverage_percent": 10.0},
+                {"label": "C", "count": 2, "target": 20, "needed": 18, "coverage_percent": 10.0},
+                {"label": "A", "count": 19, "target": 20, "needed": 1, "coverage_percent": 95.0},
             ],
         )
 

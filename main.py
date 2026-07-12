@@ -1232,7 +1232,13 @@ def build_correction_coverage_report(
     ranked_rows.sort(key=lambda row: (-int(row["needed"]), int(row["count"]), int(row["rank"])))
     focus_labels = [str(row["label"]) for row in ranked_rows][:8]
     focus_items = [
-        {"label": str(row["label"]), "count": int(row["count"]), "needed": int(row["needed"])}
+        {
+            "label": str(row["label"]),
+            "count": int(row["count"]),
+            "target": target_per_label,
+            "needed": int(row["needed"]),
+            "coverage_percent": 100.0 * int(row["count"]) / target_per_label if target_per_label else 100.0,
+        }
         for row in ranked_rows
     ][:8]
     focus_samples = sum(int(item["count"]) for item in focus_items)
