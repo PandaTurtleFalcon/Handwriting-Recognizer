@@ -1376,6 +1376,7 @@ class WebAppRenderingTests(unittest.TestCase):
         self.assertEqual(report["ready_labels"], 1)
         self.assertEqual(report["total_labels"], 2)
         self.assertEqual(report["not_ready_labels"], 1)
+        self.assertEqual(report["not_ready_label_count"], 1)
         self.assertEqual(report["not_ready_label_list"], ["0"])
         self.assertEqual(report["samples"], 23)
         self.assertEqual(report["target_samples"], 40)
@@ -1436,6 +1437,7 @@ class WebAppRenderingTests(unittest.TestCase):
         self.assertEqual(report["focus_needed_samples"], 37)
         self.assertAlmostEqual(report["focus_coverage_percent"], 38.3333333333)
         self.assertEqual(report["recommended_batch_labels"], ["B", "C", "A"])
+        self.assertEqual(report["not_ready_label_count"], 3)
         self.assertEqual(report["not_ready_label_list"], ["B", "C", "A"])
         self.assertEqual(report["recommended_batch_size"], 3)
         self.assertEqual(
