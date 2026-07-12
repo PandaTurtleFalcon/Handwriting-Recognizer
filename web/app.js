@@ -255,6 +255,13 @@ function renderPracticeCoverage(payload) {
     payload.needed_samples ?? payload.labels.reduce((total, item) => total + Number(item.needed || 0), 0),
   );
   practiceCoverageEl.append(makeElement("div", "practice-needed-summary", `${totalNeeded} samples still needed`));
+  if (text(payload.recommended_action)) {
+    const actionLabel = text(payload.recommended_label);
+    const actionText = actionLabel
+      ? `${text(payload.recommended_action)}: ${actionLabel}`
+      : text(payload.recommended_action);
+    practiceCoverageEl.append(makeElement("div", "practice-needed-summary", actionText));
+  }
   if (payload.ready === false && text(payload.training_blocked_reason)) {
     practiceCoverageEl.append(makeElement("div", "practice-needed-summary", text(payload.training_blocked_reason)));
   }

@@ -1241,6 +1241,7 @@ def build_correction_coverage_report(
     focus_coverage_percent = 100.0 * focus_samples / focus_target_samples if focus_target_samples else 100.0
     next_item = focus_items[0] if focus_items else None
     is_ready = ready == len(rows) and len(rows) > 0
+    recommended_action = "train_corrections" if is_ready else "collect_corrections"
     blocked_reason = (
         ""
         if is_ready
@@ -1249,6 +1250,8 @@ def build_correction_coverage_report(
     return {
         "ok": True,
         "ready": is_ready,
+        "recommended_action": recommended_action,
+        "recommended_label": None if next_item is None else next_item["label"],
         "training_blocked_reason": blocked_reason,
         "target_per_label": target_per_label,
         "ready_labels": ready,

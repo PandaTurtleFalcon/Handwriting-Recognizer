@@ -708,6 +708,8 @@ class WebAppRenderingTests(unittest.TestCase):
         self.assertIn("payload.not_ready_labels", js)
         self.assertIn("not ready, target", js)
         self.assertIn("payload.needed_samples", js)
+        self.assertIn("payload.recommended_action", js)
+        self.assertIn("payload.recommended_label", js)
         self.assertIn("payload.training_blocked_reason", js)
         self.assertIn("payload.ready === false", js)
         self.assertIn("payload.coverage_percent", js)
@@ -1360,6 +1362,8 @@ class WebAppRenderingTests(unittest.TestCase):
         report = main.build_correction_coverage_report({"O": 20, "0": 3}, labels=["0", "O"], target_per_label=20)
 
         self.assertFalse(report["ready"])
+        self.assertEqual(report["recommended_action"], "collect_corrections")
+        self.assertEqual(report["recommended_label"], "0")
         self.assertEqual(report["training_blocked_reason"], "Need 17 more labeled samples across 1 labels before training.")
         self.assertEqual(report["ready_labels"], 1)
         self.assertEqual(report["total_labels"], 2)
@@ -1386,6 +1390,8 @@ class WebAppRenderingTests(unittest.TestCase):
         report = main.build_correction_coverage_report({"A": 20, "B": 21}, labels=["A", "B"], target_per_label=20)
 
         self.assertTrue(report["ready"])
+        self.assertEqual(report["recommended_action"], "train_corrections")
+        self.assertIsNone(report["recommended_label"])
         self.assertEqual(report["training_blocked_reason"], "")
         self.assertEqual(report["needed_samples"], 0)
         self.assertIsNone(report["next_label"])

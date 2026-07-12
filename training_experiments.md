@@ -319,6 +319,10 @@ restored, so future improvement loops do not repeat known-bad blends.
   - Code path: `/api/correction-coverage` now exposes `focus_samples`, `focus_target_samples`, and `focus_coverage_percent`; the static practice panel displays the focus-batch percent beside the sample need.
   - Verification: `python3 -m pytest -q test_web_app.py test_train_from_corrections.py` passed (`91` tests), and `python3 scripts/summarize_benchmarks.py --include-app-hardcases` confirmed model metrics are unchanged.
 
+- Correction coverage recommended action:
+  - Code path: `/api/correction-coverage` now exposes `recommended_action` (`collect_corrections` or `train_corrections`) and `recommended_label`, and the static practice panel displays that action above the training-blocked reason.
+  - Verification: `python3 -m pytest -q test_web_app.py test_train_from_corrections.py` passed (`91` tests), and `python3 scripts/summarize_benchmarks.py --include-app-hardcases` confirmed model metrics are unchanged.
+
 - Local automation artifact ignores:
   - Code path: `.gitignore` now excludes `$CODEX_HOME/` and `backups/`, matching existing local backup ignores and preventing generated automation state from being accidentally committed.
   - Verification: `python3 -m pytest -q test_web_app.py test_train_from_corrections.py` passed (`89` tests), `git status --short` no longer lists those generated folders, and `python3 scripts/summarize_benchmarks.py --include-app-hardcases` confirmed model metrics are unchanged.
