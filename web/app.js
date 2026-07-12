@@ -296,6 +296,12 @@ function renderPracticeCoverage(payload) {
     const focusNeeded = Number(payload.focus_needed_samples ?? focusItems.reduce((total, item) => total + item.needed, 0));
     const focusPercent = Number(payload.focus_coverage_percent ?? 0);
     focus.append(makeElement("span", "", `Focus (${focusNeeded} samples, ${focusPercent.toFixed(1)}%)`));
+    const batchLabels = Array.isArray(payload.recommended_batch_labels)
+      ? payload.recommended_batch_labels.map((label) => text(label)).filter((label) => label)
+      : focusItems.map((item) => item.label);
+    if (batchLabels.length > 0) {
+      focus.append(makeElement("span", "", batchLabels.join(" ")));
+    }
     focusItems.forEach((item) => {
       const chipText = item.needed > 0 ? `${item.label}:${item.needed}` : item.label;
       const button = makeElement("button", "practice-focus-button", chipText);

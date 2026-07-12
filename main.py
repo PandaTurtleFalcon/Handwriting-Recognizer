@@ -1273,6 +1273,8 @@ def build_correction_coverage_report(
         "focus_target_samples": focus_target_samples,
         "focus_needed_samples": focus_needed_samples,
         "focus_coverage_percent": focus_coverage_percent,
+        "recommended_batch_labels": focus_labels,
+        "recommended_batch_size": len(focus_labels),
         "focus_labels": focus_labels,
         "focus_items": focus_items,
         "labels": rows,
