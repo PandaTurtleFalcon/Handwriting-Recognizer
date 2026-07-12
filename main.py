@@ -1240,6 +1240,9 @@ def build_correction_coverage_report(
     focus_target_samples = focus_samples + focus_needed_samples
     focus_coverage_percent = 100.0 * focus_samples / focus_target_samples if focus_target_samples else 100.0
     next_item = focus_items[0] if focus_items else None
+    next_count = 0 if next_item is None else int(next_item["count"])
+    next_target = target_per_label if next_item is not None else 0
+    next_coverage_percent = 100.0 * next_count / next_target if next_target else 100.0
     is_ready = ready == len(rows) and len(rows) > 0
     recommended_action = "train_corrections" if is_ready else "collect_corrections"
     blocked_reason = (
@@ -1262,8 +1265,9 @@ def build_correction_coverage_report(
         "needed_samples": needed_samples,
         "coverage_percent": coverage_percent,
         "next_label": None if next_item is None else next_item["label"],
-        "next_count": 0 if next_item is None else next_item["count"],
-        "next_target": target_per_label if next_item is not None else 0,
+        "next_count": next_count,
+        "next_target": next_target,
+        "next_coverage_percent": next_coverage_percent,
         "next_needed": 0 if next_item is None else next_item["needed"],
         "focus_samples": focus_samples,
         "focus_target_samples": focus_target_samples,

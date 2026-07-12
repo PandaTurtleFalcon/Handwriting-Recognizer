@@ -712,6 +712,7 @@ class WebAppRenderingTests(unittest.TestCase):
         self.assertIn("payload.recommended_label", js)
         self.assertIn("payload.next_count", js)
         self.assertIn("payload.next_target", js)
+        self.assertIn("payload.next_coverage_percent", js)
         self.assertIn("${actionLabel}${nextProgress}", js)
         self.assertIn("payload.training_blocked_reason", js)
         self.assertIn("payload.ready === false", js)
@@ -1378,6 +1379,7 @@ class WebAppRenderingTests(unittest.TestCase):
         self.assertEqual(report["next_label"], "0")
         self.assertEqual(report["next_count"], 3)
         self.assertEqual(report["next_target"], 20)
+        self.assertAlmostEqual(report["next_coverage_percent"], 15.0)
         self.assertEqual(report["next_needed"], 17)
         self.assertEqual(report["focus_samples"], 3)
         self.assertEqual(report["focus_target_samples"], 20)
@@ -1402,6 +1404,7 @@ class WebAppRenderingTests(unittest.TestCase):
         self.assertIsNone(report["next_label"])
         self.assertEqual(report["next_count"], 0)
         self.assertEqual(report["next_target"], 0)
+        self.assertEqual(report["next_coverage_percent"], 100.0)
         self.assertEqual(report["next_needed"], 0)
 
     def test_correction_coverage_focus_prioritizes_largest_gaps(self) -> None:
@@ -1416,6 +1419,7 @@ class WebAppRenderingTests(unittest.TestCase):
         self.assertEqual(report["next_label"], "B")
         self.assertEqual(report["next_count"], 2)
         self.assertEqual(report["next_target"], 20)
+        self.assertAlmostEqual(report["next_coverage_percent"], 10.0)
         self.assertEqual(report["next_needed"], 18)
         self.assertEqual(report["focus_samples"], 23)
         self.assertEqual(report["focus_target_samples"], 60)

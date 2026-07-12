@@ -259,7 +259,8 @@ function renderPracticeCoverage(payload) {
     const actionLabel = text(payload.recommended_label);
     const nextCount = Number(payload.next_count ?? 0);
     const nextTarget = Number(payload.next_target ?? 0);
-    const nextProgress = actionLabel && nextTarget > 0 ? ` (${nextCount}/${nextTarget})` : "";
+    const nextPercent = Number(payload.next_coverage_percent ?? (nextTarget > 0 ? (100 * nextCount) / nextTarget : 0));
+    const nextProgress = actionLabel && nextTarget > 0 ? ` (${nextCount}/${nextTarget}, ${nextPercent.toFixed(1)}%)` : "";
     const actionText = actionLabel
       ? `${text(payload.recommended_action)}: ${actionLabel}${nextProgress}`
       : text(payload.recommended_action);
