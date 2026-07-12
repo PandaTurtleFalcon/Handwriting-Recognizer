@@ -294,6 +294,15 @@ def format_readiness_summary(name: str, summary: dict[str, int | bool]) -> str:
     )
 
 
+def format_recommendation_summary(name: str, report_section: dict[str, object]) -> str:
+    """Return a compact next-action line for correction dry-runs."""
+
+    action = str(report_section.get("recommended_action") or "collect_corrections")
+    label = report_section.get("recommended_label")
+    suffix = f" label={label}" if label is not None else ""
+    return f"{name} correction recommendation: action={action}{suffix}"
+
+
 def dry_run_report(
     character_counts: Counter[str],
     folded_counts: Counter[str],
@@ -361,16 +370,19 @@ def print_text_dry_run_report(report: dict[str, object]) -> None:
         f"{format_priority_coverage(Counter(character['coverage']), ''.join(character['priority_labels']))}"
     )
     print(format_readiness_summary("Character", character["readiness"]))
+    print(format_recommendation_summary("Character", character))
     print(
         "Folded alnum priority coverage: "
         f"{format_priority_coverage(Counter(folded['coverage']), ''.join(folded['priority_labels']))}"
     )
     print(format_readiness_summary("Folded alnum", folded["readiness"]))
+    print(format_recommendation_summary("Folded alnum", folded))
     print(
         "Mixed-case priority coverage: "
         f"{format_priority_coverage(Counter(mixed['coverage']), ''.join(mixed['priority_labels']))}"
     )
     print(format_readiness_summary("Mixed-case", mixed["readiness"]))
+    print(format_recommendation_summary("Mixed-case", mixed))
 
 
 def correction_item_label_counts(

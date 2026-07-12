@@ -22,6 +22,7 @@ from scripts.train_from_corrections import (
     filter_priority_labels,
     format_priority_coverage,
     format_readiness_summary,
+    format_recommendation_summary,
     next_needed_labels,
 )
 from main import PRACTICE_PRIORITY_LABELS
@@ -133,6 +134,14 @@ class TrainFromCorrectionsTests(unittest.TestCase):
 
         self.assertEqual(blocked, {"recommended_action": "collect_corrections", "recommended_label": "s"})
         self.assertEqual(ready, {"recommended_action": "train_corrections", "recommended_label": None})
+        self.assertEqual(
+            format_recommendation_summary("Character", blocked),
+            "Character correction recommendation: action=collect_corrections label=s",
+        )
+        self.assertEqual(
+            format_recommendation_summary("Character", ready),
+            "Character correction recommendation: action=train_corrections",
+        )
 
     def test_dry_run_report_exposes_machine_readable_readiness(self) -> None:
         """Automation should be able to read correction readiness without parsing text."""
@@ -162,6 +171,15 @@ class TrainFromCorrectionsTests(unittest.TestCase):
         self.assertEqual(report["mixedcase"]["priority_labels"], ["A", "a"])
         self.assertEqual(report["mixedcase"]["recommended_action"], "collect_corrections")
         self.assertEqual(report["mixedcase"]["recommended_label"], "A")
+
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            train_from_corrections.print_text_dry_run_report(report)
+
+        text = output.getvalue()
+        self.assertIn("Character correction recommendation: action=collect_corrections label=-", text)
+        self.assertIn("Folded alnum correction recommendation: action=collect_corrections label=A", text)
+        self.assertIn("Mixed-case correction recommendation: action=collect_corrections label=A", text)
 
     def test_counts_exported_character_crops_by_priority_label(self) -> None:
         """Dry-run coverage should show which weak labels have examples."""
