@@ -355,6 +355,10 @@ restored, so future improvement loops do not repeat known-bad blends.
   - Code path: human-readable `scripts/train_from_corrections.py --dry-run` output now prints compact `correction next_needed` label lists for character, folded, and mixed-case sections, so logs show the concrete collection batch.
   - Verification: `python3 -m pytest -q test_web_app.py test_train_from_corrections.py` passed (`92` tests), and `python3 scripts/summarize_benchmarks.py --include-app-hardcases` confirmed model metrics are unchanged.
 
+- Dry-run next-needed progress metadata:
+  - Code path: `scripts/train_from_corrections.py --dry-run --json` next-needed entries now include `target` and `coverage_percent`, matching the web focus-item metadata while keeping human-readable dry-run lines compact.
+  - Verification: `python3 -m pytest -q test_web_app.py test_train_from_corrections.py` passed (`92` tests), and `python3 scripts/summarize_benchmarks.py --include-app-hardcases` confirmed model metrics are unchanged.
+
 - Local automation artifact ignores:
   - Code path: `.gitignore` now excludes `$CODEX_HOME/` and `backups/`, matching existing local backup ignores and preventing generated automation state from being accidentally committed.
   - Verification: `python3 -m pytest -q test_web_app.py test_train_from_corrections.py` passed (`89` tests), `git status --short` no longer lists those generated folders, and `python3 scripts/summarize_benchmarks.py --include-app-hardcases` confirmed model metrics are unchanged.

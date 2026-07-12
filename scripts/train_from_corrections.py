@@ -265,7 +265,16 @@ def next_needed_labels(
             continue
         rows.append({"label": label, "count": count, "needed": needed, "rank": index})
     rows.sort(key=lambda item: (-int(item["needed"]), int(item["count"]), int(item["rank"])))
-    return [{"label": str(item["label"]), "count": int(item["count"]), "needed": int(item["needed"])} for item in rows[:limit]]
+    return [
+        {
+            "label": str(item["label"]),
+            "count": int(item["count"]),
+            "target": target_per_label,
+            "needed": int(item["needed"]),
+            "coverage_percent": 100.0 * int(item["count"]) / target_per_label if target_per_label else 100.0,
+        }
+        for item in rows[:limit]
+    ]
 
 
 def correction_recommendation(

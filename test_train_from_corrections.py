@@ -122,14 +122,20 @@ class TrainFromCorrectionsTests(unittest.TestCase):
 
         labels = next_needed_labels({"A": 19, "B": 0, "C": 5}, "ABC", target_per_label=20, limit=2)
 
-        self.assertEqual(labels, [{"label": "B", "count": 0, "needed": 20}, {"label": "C", "count": 5, "needed": 15}])
+        self.assertEqual(
+            labels,
+            [
+                {"label": "B", "count": 0, "target": 20, "needed": 20, "coverage_percent": 0.0},
+                {"label": "C", "count": 5, "target": 20, "needed": 15, "coverage_percent": 25.0},
+            ],
+        )
 
     def test_correction_recommendation_tracks_training_gate(self) -> None:
         """Dry-run automation should know whether to collect or train."""
 
         blocked = correction_recommendation(
             {"ready": False, "needed_samples": 20},
-            [{"label": "s", "count": 0, "needed": 20}],
+            [{"label": "s", "count": 0, "target": 20, "needed": 20, "coverage_percent": 0.0}],
         )
         ready = correction_recommendation({"ready": True, "needed_samples": 0}, [])
 
@@ -168,7 +174,10 @@ class TrainFromCorrectionsTests(unittest.TestCase):
         self.assertEqual(report["character"]["readiness"]["needed_samples"], 40)
         self.assertEqual(report["character"]["readiness"]["not_ready_labels"], 2)
         self.assertAlmostEqual(report["character"]["readiness"]["coverage_percent"], 33.333333333333336)
-        self.assertEqual(report["character"]["next_needed"][0], {"label": "-", "count": 0, "needed": 20})
+        self.assertEqual(
+            report["character"]["next_needed"][0],
+            {"label": "-", "count": 0, "target": 20, "needed": 20, "coverage_percent": 0.0},
+        )
         self.assertEqual(report["character"]["recommended_action"], "collect_corrections")
         self.assertEqual(report["character"]["recommended_label"], "-")
         self.assertEqual(report["folded_alnum"]["priority_labels"], ["A"])
