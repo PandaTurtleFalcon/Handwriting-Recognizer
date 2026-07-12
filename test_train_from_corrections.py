@@ -14,6 +14,7 @@ from scripts.train_from_corrections import (
     DEFAULT_MIXEDCASE_PRIORITY_LABELS,
     DEFAULT_PRIORITY_LABELS,
     correction_item_label_counts,
+    correction_recommendation,
     correction_readiness_summary,
     dry_run_report,
     exportable_character_correction_counts,
@@ -121,6 +122,18 @@ class TrainFromCorrectionsTests(unittest.TestCase):
 
         self.assertEqual(labels, [{"label": "B", "count": 0, "needed": 20}, {"label": "C", "count": 5, "needed": 15}])
 
+    def test_correction_recommendation_tracks_training_gate(self) -> None:
+        """Dry-run automation should know whether to collect or train."""
+
+        blocked = correction_recommendation(
+            {"ready": False, "needed_samples": 20},
+            [{"label": "s", "count": 0, "needed": 20}],
+        )
+        ready = correction_recommendation({"ready": True, "needed_samples": 0}, [])
+
+        self.assertEqual(blocked, {"recommended_action": "collect_corrections", "recommended_label": "s"})
+        self.assertEqual(ready, {"recommended_action": "train_corrections", "recommended_label": None})
+
     def test_dry_run_report_exposes_machine_readable_readiness(self) -> None:
         """Automation should be able to read correction readiness without parsing text."""
 
@@ -141,8 +154,14 @@ class TrainFromCorrectionsTests(unittest.TestCase):
         self.assertEqual(report["character"]["readiness"]["not_ready_labels"], 2)
         self.assertAlmostEqual(report["character"]["readiness"]["coverage_percent"], 33.333333333333336)
         self.assertEqual(report["character"]["next_needed"][0], {"label": "-", "count": 0, "needed": 20})
+        self.assertEqual(report["character"]["recommended_action"], "collect_corrections")
+        self.assertEqual(report["character"]["recommended_label"], "-")
         self.assertEqual(report["folded_alnum"]["priority_labels"], ["A"])
+        self.assertEqual(report["folded_alnum"]["recommended_action"], "collect_corrections")
+        self.assertEqual(report["folded_alnum"]["recommended_label"], "A")
         self.assertEqual(report["mixedcase"]["priority_labels"], ["A", "a"])
+        self.assertEqual(report["mixedcase"]["recommended_action"], "collect_corrections")
+        self.assertEqual(report["mixedcase"]["recommended_label"], "A")
 
     def test_counts_exported_character_crops_by_priority_label(self) -> None:
         """Dry-run coverage should show which weak labels have examples."""

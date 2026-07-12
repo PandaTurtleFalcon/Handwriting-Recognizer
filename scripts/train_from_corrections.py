@@ -268,6 +268,18 @@ def next_needed_labels(
     return [{"label": str(item["label"]), "count": int(item["count"]), "needed": int(item["needed"])} for item in rows[:limit]]
 
 
+def correction_recommendation(
+    readiness: dict[str, int | bool],
+    next_needed: list[dict[str, int | str]],
+) -> dict[str, str | None]:
+    """Return the next correction-training action for automation."""
+
+    if bool(readiness.get("ready")):
+        return {"recommended_action": "train_corrections", "recommended_label": None}
+    next_label = str(next_needed[0]["label"]) if next_needed else None
+    return {"recommended_action": "collect_corrections", "recommended_label": next_label}
+
+
 def format_readiness_summary(name: str, summary: dict[str, int | bool]) -> str:
     """Return a compact readiness line for correction dry-runs."""
 
@@ -295,6 +307,12 @@ def dry_run_report(
 
     folded_priority_labels = filter_priority_labels(character_priority_labels.upper(), LABELS)
     mixed_priority_labels = filter_priority_labels(mixedcase_priority_labels, list(MIXEDCASE_LABELS))
+    character_readiness = correction_readiness_summary(character_counts, character_priority_labels)
+    character_next_needed = next_needed_labels(character_counts, character_priority_labels)
+    folded_readiness = correction_readiness_summary(folded_counts, folded_priority_labels)
+    folded_next_needed = next_needed_labels(folded_counts, folded_priority_labels)
+    mixed_readiness = correction_readiness_summary(mixed_counts, mixed_priority_labels)
+    mixed_next_needed = next_needed_labels(mixed_counts, mixed_priority_labels)
     return {
         "summary": {
             "character_crops": sum(character_counts.values()),
@@ -304,20 +322,23 @@ def dry_run_report(
         "character": {
             "coverage": dict(character_counts),
             "priority_labels": list(dict.fromkeys(character_priority_labels)),
-            "readiness": correction_readiness_summary(character_counts, character_priority_labels),
-            "next_needed": next_needed_labels(character_counts, character_priority_labels),
+            "readiness": character_readiness,
+            "next_needed": character_next_needed,
+            **correction_recommendation(character_readiness, character_next_needed),
         },
         "folded_alnum": {
             "coverage": dict(folded_counts),
             "priority_labels": list(dict.fromkeys(folded_priority_labels)),
-            "readiness": correction_readiness_summary(folded_counts, folded_priority_labels),
-            "next_needed": next_needed_labels(folded_counts, folded_priority_labels),
+            "readiness": folded_readiness,
+            "next_needed": folded_next_needed,
+            **correction_recommendation(folded_readiness, folded_next_needed),
         },
         "mixedcase": {
             "coverage": dict(mixed_counts),
             "priority_labels": list(dict.fromkeys(mixed_priority_labels)),
-            "readiness": correction_readiness_summary(mixed_counts, mixed_priority_labels),
-            "next_needed": next_needed_labels(mixed_counts, mixed_priority_labels),
+            "readiness": mixed_readiness,
+            "next_needed": mixed_next_needed,
+            **correction_recommendation(mixed_readiness, mixed_next_needed),
         },
     }
 
