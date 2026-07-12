@@ -369,6 +369,13 @@ def dry_run_report(
     summary_batch_coverage_percent = (
         100.0 * summary_batch_samples / summary_batch_target_samples if summary_batch_target_samples else 100.0
     )
+    summary_needed_samples = int(character_readiness.get("needed_samples", 0))
+    summary_not_ready_labels = int(character_readiness.get("not_ready_labels", 0))
+    summary_blocked_reason = (
+        ""
+        if summary_action == "train_corrections"
+        else f"Need {summary_needed_samples} more labeled samples across {summary_not_ready_labels} labels before training."
+    )
     return {
         "summary": {
             "character_crops": sum(character_counts.values()),
@@ -382,6 +389,7 @@ def dry_run_report(
             "recommended_batch_target_samples": summary_batch_target_samples,
             "recommended_batch_needed_samples": summary_batch_needed_samples,
             "recommended_batch_coverage_percent": summary_batch_coverage_percent,
+            "training_blocked_reason": summary_blocked_reason,
         },
         "character": {
             "coverage": dict(character_counts),

@@ -179,6 +179,7 @@ class TrainFromCorrectionsTests(unittest.TestCase):
         self.assertEqual(report["summary"]["recommended_batch_target_samples"], 40)
         self.assertEqual(report["summary"]["recommended_batch_needed_samples"], 40)
         self.assertAlmostEqual(report["summary"]["recommended_batch_coverage_percent"], 0.0)
+        self.assertEqual(report["summary"]["training_blocked_reason"], "Need 40 more labeled samples across 2 labels before training.")
         self.assertEqual(report["character"]["readiness"]["needed_samples"], 40)
         self.assertEqual(report["character"]["readiness"]["not_ready_labels"], 2)
         self.assertAlmostEqual(report["character"]["readiness"]["coverage_percent"], 33.333333333333336)
