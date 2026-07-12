@@ -21,6 +21,7 @@ from scripts.train_from_corrections import (
     exported_character_crop_counts,
     filter_priority_labels,
     format_next_needed_summary,
+    format_not_ready_queue_summary,
     format_priority_coverage,
     format_readiness_summary,
     format_recommendation_summary,
@@ -162,6 +163,17 @@ class TrainFromCorrectionsTests(unittest.TestCase):
             "Character correction next_needed: s:20",
         )
         self.assertEqual(format_next_needed_summary("Character", {"next_needed": []}), "Character correction next_needed: none")
+        self.assertEqual(
+            format_not_ready_queue_summary(
+                "Character",
+                {"not_ready_label_count": 2, "not_ready_label_list": ["s", "O"]},
+            ),
+            "Character correction not_ready_queue: count=2 labels=s, O",
+        )
+        self.assertEqual(
+            format_not_ready_queue_summary("Character", {"not_ready_label_count": 0, "not_ready_label_list": []}),
+            "Character correction not_ready_queue: count=0 labels=none",
+        )
 
     def test_dry_run_report_exposes_machine_readable_readiness(self) -> None:
         """Automation should be able to read correction readiness without parsing text."""
@@ -219,10 +231,13 @@ class TrainFromCorrectionsTests(unittest.TestCase):
 
         text = output.getvalue()
         self.assertIn("Character correction recommendation: action=collect_corrections label=-", text)
+        self.assertIn("Character correction not_ready_queue: count=2 labels=-, +", text)
         self.assertIn("Character correction next_needed: -:20, +:20", text)
         self.assertIn("Folded alnum correction recommendation: action=collect_corrections label=A", text)
+        self.assertIn("Folded alnum correction not_ready_queue: count=1 labels=A", text)
         self.assertIn("Folded alnum correction next_needed: A:19", text)
         self.assertIn("Mixed-case correction recommendation: action=collect_corrections label=A", text)
+        self.assertIn("Mixed-case correction not_ready_queue: count=2 labels=A, a", text)
         self.assertIn("Mixed-case correction next_needed: A:19, a:19", text)
 
     def test_counts_exported_character_crops_by_priority_label(self) -> None:

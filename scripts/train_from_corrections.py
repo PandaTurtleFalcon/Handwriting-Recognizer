@@ -345,6 +345,17 @@ def format_next_needed_summary(name: str, report_section: dict[str, object]) -> 
     return f"{name} correction next_needed: {', '.join(labels) if labels else 'none'}"
 
 
+def format_not_ready_queue_summary(name: str, report_section: dict[str, object]) -> str:
+    """Return a compact not-ready queue line for correction dry-runs."""
+
+    count = int(report_section.get("not_ready_label_count", 0))
+    labels = report_section.get("not_ready_label_list")
+    if not isinstance(labels, list) or not labels:
+        return f"{name} correction not_ready_queue: count={count} labels=none"
+    queue = ", ".join(str(label) for label in labels)
+    return f"{name} correction not_ready_queue: count={count} labels={queue}"
+
+
 def dry_run_report(
     character_counts: Counter[str],
     folded_counts: Counter[str],
@@ -466,6 +477,7 @@ def print_text_dry_run_report(report: dict[str, object]) -> None:
     )
     print(format_readiness_summary("Character", character["readiness"]))
     print(format_recommendation_summary("Character", character))
+    print(format_not_ready_queue_summary("Character", character))
     print(format_next_needed_summary("Character", character))
     print(
         "Folded alnum priority coverage: "
@@ -473,6 +485,7 @@ def print_text_dry_run_report(report: dict[str, object]) -> None:
     )
     print(format_readiness_summary("Folded alnum", folded["readiness"]))
     print(format_recommendation_summary("Folded alnum", folded))
+    print(format_not_ready_queue_summary("Folded alnum", folded))
     print(format_next_needed_summary("Folded alnum", folded))
     print(
         "Mixed-case priority coverage: "
@@ -480,6 +493,7 @@ def print_text_dry_run_report(report: dict[str, object]) -> None:
     )
     print(format_readiness_summary("Mixed-case", mixed["readiness"]))
     print(format_recommendation_summary("Mixed-case", mixed))
+    print(format_not_ready_queue_summary("Mixed-case", mixed))
     print(format_next_needed_summary("Mixed-case", mixed))
 
 
