@@ -363,6 +363,12 @@ def dry_run_report(
         for item in character_next_needed
         if isinstance(item, dict) and item.get("label") is not None
     ]
+    summary_batch_samples = sum(int(item["count"]) for item in character_next_needed)
+    summary_batch_target_samples = sum(int(item["target"]) for item in character_next_needed)
+    summary_batch_needed_samples = sum(int(item["needed"]) for item in character_next_needed)
+    summary_batch_coverage_percent = (
+        100.0 * summary_batch_samples / summary_batch_target_samples if summary_batch_target_samples else 100.0
+    )
     return {
         "summary": {
             "character_crops": sum(character_counts.values()),
@@ -372,6 +378,10 @@ def dry_run_report(
             "recommended_label": summary_label,
             "recommended_batch_labels": summary_batch_labels,
             "recommended_batch_size": len(summary_batch_labels),
+            "recommended_batch_samples": summary_batch_samples,
+            "recommended_batch_target_samples": summary_batch_target_samples,
+            "recommended_batch_needed_samples": summary_batch_needed_samples,
+            "recommended_batch_coverage_percent": summary_batch_coverage_percent,
         },
         "character": {
             "coverage": dict(character_counts),
