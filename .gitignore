@@ -6,6 +6,7 @@ $CODEX_HOME/
 backups/
 data/
 .training_backups/
+.codex_backups/
 .venv/
 venv/
 env/
