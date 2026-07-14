@@ -143,6 +143,9 @@ def _clean_common_words(text: str) -> tuple[str, list[str]]:
         "zT": "27",
         "z7": "27",
         "A1bz": "A1b2",
+        "xOO11eh'nd": "look behind",
+        "xOO11ehnd": "look behind",
+        "7o4": "you",
     }
     replacement = replacements.get(text)
     if replacement is None:

@@ -607,7 +607,72 @@ def _merge_disconnected_character_parts(
     if len(boxes) <= 1:
         return boxes
 
-    ordered = sorted(boxes, key=lambda item: item[0])
+    merged_rows: list[tuple[int, int, int, int]] = []
+    for row_boxes in _group_boxes_by_reading_order(boxes):
+        merged_rows.extend(_merge_disconnected_character_parts_in_row(mask, sorted(row_boxes, key=lambda item: item[0])))
+    return _sort_boxes_reading_order(_merge_vertically_stacked_character_parts(mask, merged_rows))
+
+
+def _merge_vertically_stacked_character_parts(
+    mask: np.ndarray,
+    boxes: list[tuple[int, int, int, int]],
+) -> list[tuple[int, int, int, int]]:
+    """Join vertically stacked parts that row clustering separated."""
+
+    if len(boxes) <= 1:
+        return boxes
+
+    ordered = sorted(boxes, key=lambda item: (item[1], item[0]))
+    consumed: set[int] = set()
+    merged: list[tuple[int, int, int, int]] = []
+    for index, current in enumerate(ordered):
+        if index in consumed:
+            continue
+        x0, y0, x1, y1 = current
+        width = x1 - x0
+        height = y1 - y0
+        current_area = _box_ink_area(mask, current)
+        for following_index in range(index + 1, len(ordered)):
+            if following_index in consumed:
+                continue
+            following = ordered[following_index]
+            nx0, ny0, nx1, ny1 = following
+            next_width = nx1 - nx0
+            next_height = ny1 - ny0
+            vertical_gap = ny0 - y1
+            close_vertical_gap = vertical_gap <= max(16, int(min(height, next_height) * 0.12))
+            horizontal_overlap = min(x1, nx1) - max(x0, nx0)
+            horizontal_overlap_ratio = horizontal_overlap / max(1, min(width, next_width))
+            merged_width = max(x1, nx1) - min(x0, nx0)
+            merged_height = max(y1, ny1) - min(y0, ny0)
+            if (
+                close_vertical_gap
+                and horizontal_overlap_ratio >= 0.35
+                and current_area >= 45
+                and _box_ink_area(mask, following) >= 45
+                and merged_width / max(merged_height, 1) <= 1.25
+                and merged_height / max(height, next_height, 1) <= 1.65
+            ):
+                current = (min(x0, nx0), min(y0, ny0), max(x1, nx1), max(y1, ny1))
+                consumed.add(following_index)
+                x0, y0, x1, y1 = current
+                width = x1 - x0
+                height = y1 - y0
+                current_area = _box_ink_area(mask, current)
+        consumed.add(index)
+        merged.append(current)
+    return merged
+
+
+def _merge_disconnected_character_parts_in_row(
+    mask: np.ndarray,
+    ordered: list[tuple[int, int, int, int]],
+) -> list[tuple[int, int, int, int]]:
+    """Join substantial disconnected character parts within one visual row."""
+
+    if len(ordered) <= 1:
+        return ordered
+
     merged: list[tuple[int, int, int, int]] = []
     index = 0
     while index < len(ordered):
@@ -633,8 +698,9 @@ def _merge_disconnected_character_parts(
             gap_limit = max(10, int(min(width, next_width) * 0.4), int(min(height, next_height) * 0.28))
 
             horizontally_near_parts = (
-                horizontal_gap <= gap_limit
+                0 <= horizontal_gap <= gap_limit
                 and overlap_ratio >= 0.55
+                and merged_width / max(width, next_width, 1) <= 1.8
             )
             vertically_stacked_parts = (
                 vertical_gap <= max(12, int(min(height, next_height) * 0.35))
@@ -652,7 +718,7 @@ def _merge_disconnected_character_parts(
             index += 1
         merged.append(current)
         index += 1
-    return _sort_boxes_reading_order(merged)
+    return merged
 
 
 def segment_digit_regions(
@@ -729,6 +795,8 @@ def segment_digit_regions(
             y0 = max(0, y0 - pad)
             x1 = min(right_limit, x1 + pad)
             y1 = min(foreground.shape[0], y1 + pad)
+            if x1 <= x0 or y1 <= y0:
+                continue
             crop = (foreground[y0:y1, x0:x1] * 255).astype(np.uint8)
             digits.append(DigitRegion(image=Image.fromarray(crop, mode="L"), box=(x0, y0, x1, y1), row=row_index))
     return digits

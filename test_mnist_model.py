@@ -156,6 +156,36 @@ class MnistPreprocessingTests(unittest.TestCase):
 
         self.assertEqual(len(regions), 1)
 
+    def test_character_segmentation_does_not_merge_across_rows(self) -> None:
+        """Vertically overlapping row boxes should not fuse into giant regions."""
+
+        image = Image.new("L", (220, 260), 255)
+        draw = ImageDraw.Draw(image)
+        draw.line((55, 20, 55, 112), fill=0, width=7)
+        draw.arc((68, 48, 118, 104), start=0, end=360, fill=0, width=7)
+        draw.line((52, 125, 105, 235), fill=0, width=7)
+        draw.line((156, 125, 105, 235), fill=0, width=7)
+
+        regions = segment_digit_regions(image, split_wide=False, min_component_pixels=4, merge_marks=True)
+
+        self.assertGreaterEqual(len(regions), 2)
+        self.assertEqual(sorted({region.row for region in regions}), [1, 2])
+        self.assertLessEqual(max(region.box[3] - region.box[1] for region in regions), 150)
+
+    def test_character_segmentation_keeps_adjacent_full_letters_separate(self) -> None:
+        """Close full letters should not merge as disconnected pieces."""
+
+        image = Image.new("L", (180, 140), 255)
+        draw = ImageDraw.Draw(image)
+        draw.ellipse((30, 56, 82, 112), outline=0, width=7)
+        draw.line((108, 18, 108, 112), fill=0, width=7)
+        draw.line((110, 80, 152, 42), fill=0, width=7)
+        draw.line((110, 82, 154, 118), fill=0, width=7)
+
+        regions = segment_digit_regions(image, split_wide=False, min_component_pixels=4, merge_marks=True)
+
+        self.assertEqual(len(regions), 2)
+
     def test_messy_connected_27_segments_and_predicts(self) -> None:
         """The original connected 27 regression should still read correctly."""
 

@@ -178,6 +178,16 @@ class ContextRulesTests(unittest.TestCase):
         self.assertEqual(cleanup_context("T3S7").display, "T3s7")
         self.assertEqual(cleanup_context("z7").display, "27")
         self.assertEqual(cleanup_context("A1bz").display, "A1b2")
+        self.assertEqual(cleanup_context("xOO11eh'nd").display, "look behind")
+        self.assertEqual(cleanup_context("7o4").display, "you")
+
+    def test_common_word_cleanup_handles_look_behind_you_rows(self) -> None:
+        """The saved look-behind-you screenshot should clean row by row."""
+
+        cleanup = cleanup_context("xOO11eh'nd7o4", ["xOO11eh'nd", "7o4"])
+
+        self.assertEqual(cleanup.display, "look behind\nyou")
+        self.assertEqual(cleanup.rows, ["look behind", "you"])
 
     def test_row_strings_stay_separated_in_display(self) -> None:
         """Multi-row uploads should not collapse into one ambiguous string."""
