@@ -58,7 +58,13 @@ class BenchmarkSummaryTests(unittest.TestCase):
     def test_summarizes_app_hardcase_gates_on_demand(self) -> None:
         with patch(
             "scripts.evaluate_hardcases.evaluate_cases",
-            return_value={"exact_accuracy": 100.0, "ambiguity_aware_accuracy": 100.0},
+            return_value={
+                "exact_accuracy": 100.0,
+                "exact_correct": 176,
+                "ambiguity_aware_accuracy": 100.0,
+                "ambiguity_aware_correct": 176,
+                "total": 176,
+            },
         ) as evaluate:
             report = summarize_app_hardcases(target=95.0, all_fonts=False)
 
@@ -66,6 +72,8 @@ class BenchmarkSummaryTests(unittest.TestCase):
         by_name = {str(item["name"]): item for item in report}
         self.assertTrue(by_name["app_hardcase_exact"]["passed"])
         self.assertTrue(by_name["app_hardcase_ambiguity"]["passed"])
+        self.assertEqual(by_name["app_hardcase_exact"]["correct"], 176)
+        self.assertEqual(by_name["app_hardcase_exact"]["total"], 176)
 
 
 if __name__ == "__main__":

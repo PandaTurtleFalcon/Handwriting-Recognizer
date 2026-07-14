@@ -32,6 +32,21 @@ def _gate(name: str, value: float | None, target: float) -> dict[str, object]:
     }
 
 
+def _counted_gate(
+    name: str,
+    value: float | None,
+    target: float,
+    correct: object,
+    total: object,
+) -> dict[str, object]:
+    """Create a benchmark row that also carries numerator/denominator counts."""
+
+    row = _gate(name, value, target)
+    row["correct"] = int(correct)
+    row["total"] = int(total)
+    return row
+
+
 def summarize_saved_metrics(project_dir: Path = PROJECT_DIR, target: float = 95.0) -> list[dict[str, object]]:
     """Return saved model-metric gates for the current checkpoints."""
 
@@ -68,8 +83,20 @@ def summarize_app_hardcases(target: float = 95.0, all_fonts: bool = True) -> lis
 
     report = evaluate_cases(all_fonts=all_fonts)
     return [
-        _gate("app_hardcase_exact", _float_or_none(report.get("exact_accuracy")), target),
-        _gate("app_hardcase_ambiguity", _float_or_none(report.get("ambiguity_aware_accuracy")), target),
+        _counted_gate(
+            "app_hardcase_exact",
+            _float_or_none(report.get("exact_accuracy")),
+            target,
+            report.get("exact_correct", 0),
+            report.get("total", 0),
+        ),
+        _counted_gate(
+            "app_hardcase_ambiguity",
+            _float_or_none(report.get("ambiguity_aware_accuracy")),
+            target,
+            report.get("ambiguity_aware_correct", 0),
+            report.get("total", 0),
+        ),
     ]
 
 
@@ -121,6 +148,8 @@ def main() -> None:
     for item in report:
         value = item["value"]
         value_text = "missing" if value is None else f"{float(value):.2f}%"
+        if "correct" in item and "total" in item:
+            value_text = f"{value_text} ({int(item['correct'])}/{int(item['total'])})"
         status = "PASS" if item["passed"] else "FAIL"
         print(f"{status} {item['name']}: {value_text} (target {float(item['target']):.2f}%)")
 

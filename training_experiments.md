@@ -37,6 +37,10 @@ restored, so future improvement loops do not repeat known-bad blends.
   - Code path: character segmentation now merges disconnected glyph parts inside visual rows first, only does a narrow second pass for vertically stacked parts, prevents side-by-side full-letter overmerge, and drops invalid padded boxes. Display cleanup adds whole-row look-behind-you variants observed from the user screenshot and generated all-font stress cases.
   - Verification: `python3 -m pytest -q test_mnist_model.py test_web_app.py test_character_model.py test_context_rules.py` passed (`145` tests, `1` skipped), live `/api/predict` on `Screenshot 2026-07-13 at 12.42.21.png` returns `look behind\nyou` with `13` prediction boxes, `python3 -m pytest -q test_context_rules.py test_evaluate_hardcases.py` passed (`28` tests), `scripts/evaluate_hardcases.py` reports `176/176` all-font exact, and `scripts/summarize_benchmarks.py --include-app-hardcases` confirms app hardcases are back to `100.00%`.
 
+- Counted app hardcase benchmark summary:
+  - Code path: `scripts/summarize_benchmarks.py --include-app-hardcases` now includes exact numerator/denominator counts for app hardcase gates in both text and JSON output, so expanded app-level coverage is visible during hourly checks.
+  - Verification: `python3 -m pytest -q test_summarize_benchmarks.py` passed (`2` tests), text summary prints `app_hardcase_exact: 100.00% (176/176)`, and JSON summary includes `correct=176` plus `total=176` for app hardcase exact and ambiguity gates.
+
 ## Restored Experiments
 
 - Character model with HASY + all UJI character data:
