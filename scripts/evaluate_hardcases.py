@@ -63,6 +63,8 @@ DEFAULT_CASES = [
     "abc123",
     "A1b2",
     "Hi5!",
+    "look behind",
+    "you",
 ]
 FONT_CANDIDATES = [
     "/System/Library/Fonts/Supplemental/Bradley Hand Bold.ttf",

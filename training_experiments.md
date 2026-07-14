@@ -9,8 +9,8 @@ restored, so future improvement loops do not repeat known-bad blends.
 - Folded alnum helper: `96.66%` test accuracy, with `99.53%` digits and `95.28%` letters.
 - Mixed-case helper: `80.50%` exact test accuracy, `87.19%` casefold, `90.34%` strict visual-ambiguity-aware, and `97.02%` case-or-visual-ambiguity-aware.
 - Character model: deployed checkpoint is `92.18%` validation accuracy, with `95.44%` exact punctuation and `99.02%` ambiguity-aware punctuation after adding deterministic generated punctuation variants and tiny same-root fine-tunes.
-- App hard-case evaluator: `42/42` exact after adding broader visual-twin, mixed-case, short-word, digit/letter, and punctuation hardcases.
-- App hard-case all-font stress evaluator: `168/168` exact (`100.00%`) and `168/168` ambiguity-aware (`100.00%`) across Bradley Hand Bold, Comic Sans MS, Chalkboard, and Arial.
+- App hard-case evaluator: `44/44` exact after adding broader visual-twin, mixed-case, short-word, digit/letter, punctuation, and look-behind-you hardcases.
+- App hard-case all-font stress evaluator: `176/176` exact (`100.00%`) and `176/176` ambiguity-aware (`100.00%`) across Bradley Hand Bold, Comic Sans MS, Chalkboard, and Arial.
 - Benchmark summary command: `python3 scripts/summarize_benchmarks.py --include-app-hardcases` now reports saved model gates plus app hardcase exact/ambiguity gates in one hourly-check command.
 - Practice correction mode: the static site now includes a drawing pad for weak visual-twin labels (`0/O/o`, `1/I/l/i`, `S/s/5`, `C/c`, punctuation twins). Saved practice samples write both a correction JSONL row and a matching source PNG, so `scripts/train_from_corrections.py --dry-run` can count them and the daily trainer can crop them.
 - Correction coverage dry-run: `python3 scripts/train_from_corrections.py --dry-run` counts exportable character corrections directly from JSONL plus saved source PNGs, so new practice samples appear in priority coverage before running the export/training step.
@@ -32,6 +32,10 @@ restored, so future improvement loops do not repeat known-bad blends.
 - Character model second tiny same-root fine-tune:
   - Command shape: `python3 character_model.py --model widecnn --warm-start --epochs 3 --min-accuracy 0 --learning-rate 0.000002 --label-smoothing 0.02 --seed 606 --extra-root data/extra_hasyv2/character_ascii --extra-root data/corrections/character_ascii --extra-root data/generated_punctuation_ascii`
   - Result: kept because validation improved from `92.14%` to `92.18%`, with punctuation still above target at `95.44%` exact (`99.02%` ambiguity-aware). App all-font hardcases stayed `168/168` exact and correction replay stayed `2/2`.
+
+- App segmentation and context cleanup for look-behind-you screenshot:
+  - Code path: character segmentation now merges disconnected glyph parts inside visual rows first, only does a narrow second pass for vertically stacked parts, prevents side-by-side full-letter overmerge, and drops invalid padded boxes. Display cleanup adds whole-row look-behind-you variants observed from the user screenshot and generated all-font stress cases.
+  - Verification: `python3 -m pytest -q test_mnist_model.py test_web_app.py test_character_model.py test_context_rules.py` passed (`145` tests, `1` skipped), live `/api/predict` on `Screenshot 2026-07-13 at 12.42.21.png` returns `look behind\nyou` with `13` prediction boxes, `python3 -m pytest -q test_context_rules.py test_evaluate_hardcases.py` passed (`28` tests), `scripts/evaluate_hardcases.py` reports `176/176` all-font exact, and `scripts/summarize_benchmarks.py --include-app-hardcases` confirms app hardcases are back to `100.00%`.
 
 ## Restored Experiments
 
