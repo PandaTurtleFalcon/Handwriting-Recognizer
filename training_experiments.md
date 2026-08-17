@@ -570,6 +570,10 @@ restored, so future improvement loops do not repeat known-bad blends.
   - Verification: `python3 -m pytest -q test_context_rules.py test_evaluate_hardcases.py` passed (`44` tests), `python3 scripts/evaluate_hardcases.py --case 'look behind you'` passed (`100.00%`), and the full benchmark stayed green at clean app `100.00% (45/45)` and script app `95.56% (86/90)`.
   - Result: this directly covers the reported `xOOh:1i`-style phrase failure when segmentation splits the rough word into multiple fragments. It does not change isolated model metrics: mixed-case exact remains `80.71%` and character exact remains `93.50%`.
 
+- Tiny mixed-case calibration re-probe after phrase gate:
+  - Command shape: swept fixed scales `0.02`, `0.03`, and `0.04` with `python3 scripts/calibrate_mixedcase_logits.py --batch-size 4096 --scale <scale> --write --require-app-gates`.
+  - Result: isolated mixed-case exact improved to `80.94%`, `81.18%`, and `81.41%`, respectively, but every scale failed the expanded app gates at clean `93.33%` and script `92.22%`. The guard restored the deployed `0.01` artifact after each failed candidate. Future mixed-case gains need targeted architecture/data or context-aware resolution, not broader train-prior bias.
+
 ## Next Higher-Value Directions
 
 - Interrupted full calibration/analyzer startup probe:
