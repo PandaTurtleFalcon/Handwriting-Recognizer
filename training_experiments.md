@@ -591,6 +591,10 @@ restored, so future improvement loops do not repeat known-bad blends.
   - Command shape: backed up `mixedcase_cnn.pt`, `mixedcase_training_metrics.json`, and `mixedcase_logit_bias.pt`, then ran one bounded epoch with `python3 alnum_model.py --mixed-case --model cnn --warm-start --epochs 1 --batch-size 256 --samples-per-class 3500 --min-accuracy 0 --learning-rate 0.000005 --seed 3101 --mixedcase-label-smoothing 0.015 --mixedcase-weak-labels 'oscmlui' --mixedcase-weak-loss-weight 1.20 --mixedcase-lower-loss-weight 1.08 --mixedcase-upper-loss-weight 0.98 --mixedcase-class-balance-strength 0.12 --device mps`.
   - Result: exact regressed to `75.48%` (`99.17%` digits, `60.15%` upper, `88.47%` lower). The backed-up mixed-case checkpoint, metrics, and bias artifact were restored and the full benchmark returned to mixed-case `85.66%` with app gates green. Rebalancing toward lowercase alone sacrifices uppercase too aggressively.
 
+- Aggressive all-label mixed-case greedy calibration:
+  - Command shape: reset to scalar `0.25`, then ran `python3 scripts/calibrate_mixedcase_logits.py --batch-size 4096 --greedy-labels '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz' --greedy-rounds 6 --greedy-deltas=-0.08,-0.04,-0.02,0.02,0.04,0.08 --min-lower 0 --min-upper 0 --min-digit 0 --min-case-or-visual 95.0 --write --require-app-gates`, followed by one smaller 4-round continuation from the written artifact.
+  - Result: deployed mixed-case exact improved from `85.66%` to `87.44%`, case-or-visual improved to `97.77%`, and app gates stayed green at clean `100.00% (45/45)` and script `95.56% (86/90)`. The tradeoff is significant: lowercase split fell to `72.63%`, with `o/c/s/u/m/l` still weak, so future work needs lowercase-preserving model changes or a smarter family resolver rather than more one-way bias.
+
 ## Next Higher-Value Directions
 
 - Interrupted full calibration/analyzer startup probe:
