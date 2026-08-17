@@ -73,7 +73,60 @@ TOP_GUESS_LIMIT = 3
 DIGIT_SPECIALIST_COMPATIBLE_LABELS = set("0123456789BIJLOSYZlo")
 DIGIT_SPECIALIST_LETTER_BLOCKERS = set("BOSo")
 DIGIT_SPECIALIST_MAX_LETTER_RATIO = 0.25
-PRACTICE_PRIORITY_LABELS = [
+CHARACTER_PRACTICE_PRIORITY_LABELS = [
+    "O",
+    "l",
+    "o",
+    "I",
+    "0",
+    "1",
+    "i",
+    "s",
+    "c",
+    "z",
+    "v",
+    "-",
+    ".",
+    "|",
+    "S",
+    "x",
+    "C",
+    "P",
+    "X",
+    "p",
+    "_",
+    "'",
+    "/",
+    ":",
+    ";",
+    "!",
+    "+",
+    "5",
+    "2",
+    "9",
+    "q",
+    "g",
+    "V",
+    "F",
+    "m",
+    "U",
+    "u",
+    "M",
+    "Z",
+    "f",
+    "W",
+    "w",
+    "Y",
+    "y",
+    "4",
+    "T",
+    "t",
+    "7",
+    "J",
+    "j",
+    "K",
+]
+MIXEDCASE_PRACTICE_PRIORITY_LABELS = [
     "s",
     "O",
     "V",
@@ -127,6 +180,60 @@ PRACTICE_PRIORITY_LABELS = [
     "!",
     "+",
 ]
+PRACTICE_PRIORITY_LABELS = list(dict.fromkeys(CHARACTER_PRACTICE_PRIORITY_LABELS + MIXEDCASE_PRACTICE_PRIORITY_LABELS))
+PRACTICE_PRIORITY_EVIDENCE = {
+    "s": "worst mixed-case exact label and s/S confusion",
+    "O": "worst character label and O/0/o confusion",
+    "V": "worst mixed-case uppercase label and V/v confusion",
+    "1": "top mixed-case 1/l/I/i confusion",
+    "c": "worst mixed-case lowercase label and c/C confusion",
+    "I": "worst character label and I/l/1 confusion",
+    "F": "top mixed-case F/f confusion",
+    "o": "worst character label and o/O/0 confusion",
+    "m": "worst mixed-case lowercase label and m/M confusion",
+    "0": "worst character digit and 0/O/o confusion",
+    "l": "worst character label and l/1/I/i confusion",
+    "U": "top mixed-case U/u confusion",
+    "i": "worst character label and i/l/| confusion",
+    "u": "top mixed-case u/U confusion",
+    "g": "top mixed-case 9/q/g confusion",
+    "q": "top mixed-case 9/q confusion",
+    "M": "top mixed-case M/m confusion",
+    "C": "top mixed-case C/c confusion",
+    "P": "top mixed-case P/p confusion",
+    "S": "top mixed-case S/s and 5/S confusion",
+    "v": "worst character label and v/V confusion",
+    "z": "worst character label and 2/Z/z confusion",
+    "x": "worst character label and x/X confusion",
+    "p": "top mixed-case p/P confusion",
+    "2": "top mixed-case 2/z confusion",
+    "Z": "top character 2/Z confusion",
+    "9": "top mixed-case 9/q/g confusion",
+    "f": "top mixed-case F/f confusion",
+    "5": "top character 5/s/S confusion",
+    "W": "mixed-case W/w visual twin",
+    "w": "mixed-case W/w visual twin",
+    "Y": "Y/4 visual twin from app reports",
+    "y": "mixed-case Y/y visual twin",
+    "4": "Y/4 visual twin from app reports",
+    "T": "T/7 visual twin from app reports",
+    "t": "character t/+ confusion",
+    "7": "T/7 visual twin from app reports",
+    "J": "J/1/5 visual confusions from app reports",
+    "j": "mixed-case J/j visual twin",
+    "K": "K/k visual twin from app reports",
+    "X": "character X/x visual twin",
+    "-": "top punctuation -/_ confusion",
+    "_": "top punctuation -/_ confusion",
+    ".": "top punctuation ./apostrophe/comma confusion",
+    "'": "top punctuation ./apostrophe confusion",
+    "|": "top punctuation |/i/l confusion",
+    "/": "top punctuation /|/l confusion",
+    ":": "top punctuation :/;/!/i confusion",
+    ";": "top punctuation :/; confusion",
+    "!": "top punctuation !/:/1 confusion",
+    "+": "character +/t confusion",
+}
 PRACTICE_TARGET_PER_LABEL = 20
 DISPLAY_AMBIGUITY_GROUPS = [
     frozenset("0Oo"),
@@ -1211,12 +1318,14 @@ def build_correction_coverage_report(
     rows = []
     for label in labels:
         count = int(counts.get(label, 0))
+        evidence = PRACTICE_PRIORITY_EVIDENCE.get(label, "measured exact-recognition blocker")
         rows.append(
             {
                 "label": label,
                 "count": count,
                 "needed": max(0, target_per_label - count),
                 "ready": count >= target_per_label,
+                "evidence": evidence,
             }
         )
     ready = sum(1 for row in rows if bool(row["ready"]))
@@ -1239,6 +1348,7 @@ def build_correction_coverage_report(
             "target": target_per_label,
             "needed": int(row["needed"]),
             "coverage_percent": 100.0 * int(row["count"]) / target_per_label if target_per_label else 100.0,
+            "evidence": str(row.get("evidence", "")),
         }
         for row in ranked_rows
     ][:8]

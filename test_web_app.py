@@ -700,12 +700,14 @@ class WebAppRenderingTests(unittest.TestCase):
         self.assertIn("more ${label} needed", js)
         self.assertIn("focus_labels", js)
         self.assertIn("focus_items", js)
+        self.assertIn("item.evidence", js)
         self.assertIn("payload.focus_needed_samples", js)
         self.assertIn("payload.focus_coverage_percent", js)
         self.assertIn("payload.recommended_batch_labels", js)
         self.assertIn('batchLabels.join(" ")', js)
         self.assertIn("coveragePercent", js)
         self.assertIn("${item.count}/${item.target} saved", js)
+        self.assertIn("${item.evidence}", js)
         self.assertIn("Focus (${focusNeeded} samples, ${focusPercent.toFixed(1)}%)", js)
         self.assertIn("practice-focus-button", js)
         self.assertIn("`${item.label}:${item.needed}`", js)
@@ -1396,8 +1398,18 @@ class WebAppRenderingTests(unittest.TestCase):
         self.assertEqual(report["focus_labels"], ["0"])
         self.assertEqual(
             report["focus_items"],
-            [{"label": "0", "count": 3, "target": 20, "needed": 17, "coverage_percent": 15.0}],
+            [
+                {
+                    "label": "0",
+                    "count": 3,
+                    "target": 20,
+                    "needed": 17,
+                    "coverage_percent": 15.0,
+                    "evidence": "worst character digit and 0/O/o confusion",
+                }
+            ],
         )
+        self.assertEqual(report["labels"][0]["evidence"], "worst character digit and 0/O/o confusion")
         self.assertEqual(report["labels"][0]["needed"], 17)
         self.assertFalse(report["labels"][0]["ready"])
         self.assertTrue(report["labels"][1]["ready"])
@@ -1443,9 +1455,30 @@ class WebAppRenderingTests(unittest.TestCase):
         self.assertEqual(
             report["focus_items"],
             [
-                {"label": "B", "count": 2, "target": 20, "needed": 18, "coverage_percent": 10.0},
-                {"label": "C", "count": 2, "target": 20, "needed": 18, "coverage_percent": 10.0},
-                {"label": "A", "count": 19, "target": 20, "needed": 1, "coverage_percent": 95.0},
+                {
+                    "label": "B",
+                    "count": 2,
+                    "target": 20,
+                    "needed": 18,
+                    "coverage_percent": 10.0,
+                    "evidence": "measured exact-recognition blocker",
+                },
+                {
+                    "label": "C",
+                    "count": 2,
+                    "target": 20,
+                    "needed": 18,
+                    "coverage_percent": 10.0,
+                    "evidence": "top mixed-case C/c confusion",
+                },
+                {
+                    "label": "A",
+                    "count": 19,
+                    "target": 20,
+                    "needed": 1,
+                    "coverage_percent": 95.0,
+                    "evidence": "measured exact-recognition blocker",
+                },
             ],
         )
 
@@ -1459,8 +1492,9 @@ class WebAppRenderingTests(unittest.TestCase):
     def test_practice_priority_labels_start_with_verified_worst_labels(self) -> None:
         """Practice collection should attack the measured exact-recognition gaps first."""
 
-        self.assertEqual(main.PRACTICE_PRIORITY_LABELS[:10], ["s", "O", "V", "1", "c", "I", "F", "o", "m", "0"])
-        self.assertEqual(main.PRACTICE_PRIORITY_LABELS[10:14], ["l", "U", "k", "i"])
+        self.assertEqual(main.CHARACTER_PRACTICE_PRIORITY_LABELS[:12], ["O", "l", "o", "I", "0", "1", "i", "s", "c", "z", "v", "-"])
+        self.assertEqual(main.MIXEDCASE_PRACTICE_PRIORITY_LABELS[:10], ["s", "O", "V", "1", "c", "I", "F", "o", "m", "0"])
+        self.assertEqual(main.PRACTICE_PRIORITY_LABELS[:4], ["O", "l", "o", "I"])
 
     def test_correction_readiness_report_exposes_training_gates(self) -> None:
         """The app should expose machine-readable correction readiness."""

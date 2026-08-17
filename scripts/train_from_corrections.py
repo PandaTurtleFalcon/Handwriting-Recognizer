@@ -29,15 +29,20 @@ from alnum_model import (
 from character_model import DATASET_ROOT as CHARACTER_DATASET_ROOT
 from character_model import LABELS_PATH as CHARACTER_LABELS_PATH
 from character_model import train_character_model
-from main import PRACTICE_PRIORITY_LABELS, PRACTICE_TARGET_PER_LABEL
+from main import (
+    CHARACTER_PRACTICE_PRIORITY_LABELS,
+    MIXEDCASE_PRACTICE_PRIORITY_LABELS,
+    PRACTICE_PRIORITY_EVIDENCE,
+    PRACTICE_TARGET_PER_LABEL,
+)
 
 
 CHARACTER_CORRECTION_ROOT = PROJECT_DIR / "data" / "corrections" / "character_ascii"
 HASY_CHARACTER_ROOT = PROJECT_DIR / "data" / "extra_hasyv2" / "character_ascii"
 DEFAULT_MIN_CHARACTER_CORRECTIONS = 10
 DEFAULT_MIN_ALNUM_CORRECTIONS = 10
-DEFAULT_PRIORITY_LABELS = "".join(PRACTICE_PRIORITY_LABELS)
-DEFAULT_MIXEDCASE_PRIORITY_LABELS = "".join(PRACTICE_PRIORITY_LABELS)
+DEFAULT_PRIORITY_LABELS = "".join(CHARACTER_PRACTICE_PRIORITY_LABELS)
+DEFAULT_MIXEDCASE_PRIORITY_LABELS = "".join(MIXEDCASE_PRACTICE_PRIORITY_LABELS)
 
 
 def export_character_correction_folder(
@@ -272,6 +277,7 @@ def next_needed_labels(
             "target": target_per_label,
             "needed": int(item["needed"]),
             "coverage_percent": 100.0 * int(item["count"]) / target_per_label if target_per_label else 100.0,
+            "evidence": PRACTICE_PRIORITY_EVIDENCE.get(str(item["label"]), "measured exact-recognition blocker"),
         }
         for item in rows[:limit]
     ]

@@ -289,6 +289,7 @@ function renderPracticeCoverage(payload) {
           target: Number(item?.target || payload.target_per_label || 20),
           needed: Number(item?.needed || 0),
           coveragePercent: Number(item?.coverage_percent || 0),
+          evidence: text(item?.evidence),
         }))
         .filter((item) => item.label)
         .slice(0, 8)
@@ -309,8 +310,8 @@ function renderPracticeCoverage(payload) {
       const button = makeElement("button", "practice-focus-button", chipText);
       button.type = "button";
       button.title = item.needed > 0
-        ? `${item.count}/${item.target} saved, ${item.needed} needed, ${item.coveragePercent.toFixed(1)}%`
-        : `${item.count}/${item.target} saved, ready`;
+        ? `${item.count}/${item.target} saved, ${item.needed} needed, ${item.coveragePercent.toFixed(1)}%. ${item.evidence}`
+        : `${item.count}/${item.target} saved, ready. ${item.evidence}`;
       button.addEventListener("click", () => setPracticeLabel(item.label));
       focus.append(button);
     });
@@ -322,7 +323,8 @@ function renderPracticeCoverage(payload) {
     const needed = Number(item.needed || 0);
     const chip = makeElement("button", item.ready ? "coverage-chip ready" : "coverage-chip", `${text(item.label)} ${count}`);
     chip.type = "button";
-    chip.title = item.ready ? "Ready for correction training" : `${needed} more needed`;
+    const evidence = text(item.evidence);
+    chip.title = item.ready ? `Ready for correction training. ${evidence}` : `${needed} more needed. ${evidence}`;
     chip.addEventListener("click", () => setPracticeLabel(text(item.label)));
     grid.append(chip);
   });

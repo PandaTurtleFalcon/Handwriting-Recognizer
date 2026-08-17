@@ -28,7 +28,7 @@ from scripts.train_from_corrections import (
     not_ready_label_list,
     next_needed_labels,
 )
-from main import PRACTICE_PRIORITY_LABELS
+from main import CHARACTER_PRACTICE_PRIORITY_LABELS, MIXEDCASE_PRACTICE_PRIORITY_LABELS, PRACTICE_PRIORITY_LABELS
 
 
 class TrainFromCorrectionsTests(unittest.TestCase):
@@ -89,12 +89,12 @@ class TrainFromCorrectionsTests(unittest.TestCase):
         self.assertIn("--json", help_text)
 
     def test_default_priority_labels_match_practice_targets(self) -> None:
-        """Dry-run reporting should use the same weak labels as practice mode."""
+        """Dry-run reporting should target each recognizer's measured weak labels."""
 
-        practice_labels = "".join(PRACTICE_PRIORITY_LABELS)
-
-        self.assertEqual(DEFAULT_PRIORITY_LABELS, practice_labels)
-        self.assertEqual(DEFAULT_MIXEDCASE_PRIORITY_LABELS, practice_labels)
+        self.assertEqual(DEFAULT_PRIORITY_LABELS, "".join(CHARACTER_PRACTICE_PRIORITY_LABELS))
+        self.assertEqual(DEFAULT_MIXEDCASE_PRIORITY_LABELS, "".join(MIXEDCASE_PRACTICE_PRIORITY_LABELS))
+        self.assertTrue(set(CHARACTER_PRACTICE_PRIORITY_LABELS).issubset(set(PRACTICE_PRIORITY_LABELS)))
+        self.assertTrue(set(MIXEDCASE_PRACTICE_PRIORITY_LABELS).issubset(set(PRACTICE_PRIORITY_LABELS)))
 
     def test_filters_priority_labels_to_recognizer_label_set(self) -> None:
         """Dry-run coverage should not report labels a recognizer cannot train."""
@@ -127,8 +127,22 @@ class TrainFromCorrectionsTests(unittest.TestCase):
         self.assertEqual(
             labels,
             [
-                {"label": "B", "count": 0, "target": 20, "needed": 20, "coverage_percent": 0.0},
-                {"label": "C", "count": 5, "target": 20, "needed": 15, "coverage_percent": 25.0},
+                {
+                    "label": "B",
+                    "count": 0,
+                    "target": 20,
+                    "needed": 20,
+                    "coverage_percent": 0.0,
+                    "evidence": "measured exact-recognition blocker",
+                },
+                {
+                    "label": "C",
+                    "count": 5,
+                    "target": 20,
+                    "needed": 15,
+                    "coverage_percent": 25.0,
+                    "evidence": "top mixed-case C/c confusion",
+                },
             ],
         )
 
@@ -208,7 +222,14 @@ class TrainFromCorrectionsTests(unittest.TestCase):
         self.assertAlmostEqual(report["character"]["readiness"]["coverage_percent"], 33.333333333333336)
         self.assertEqual(
             report["character"]["next_needed"][0],
-            {"label": "-", "count": 0, "target": 20, "needed": 20, "coverage_percent": 0.0},
+            {
+                "label": "-",
+                "count": 0,
+                "target": 20,
+                "needed": 20,
+                "coverage_percent": 0.0,
+                "evidence": "top punctuation -/_ confusion",
+            },
         )
         self.assertEqual(report["character"]["recommended_action"], "collect_corrections")
         self.assertEqual(report["character"]["recommended_label"], "-")

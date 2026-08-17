@@ -437,6 +437,10 @@ restored, so future improvement loops do not repeat known-bad blends.
   - Code path: `scripts/summarize_benchmarks.py --include-correction-memory` now reports deployed character correction-memory coverage for the priority exact-failure labels, including sample coverage, ready-label coverage, sparse `by_label` counts, and the not-ready label list while preserving the benchmark JSON's flat list-of-rows shape.
   - Verification: `python3 -m pytest -q test_summarize_benchmarks.py` passed (`3` tests), and `python3 scripts/summarize_benchmarks.py --include-correction-memory --include-app-hardcases --single-font-hardcases` reports `character_correction_memory_samples: 0.19% (2/1040)` and `character_correction_memory_ready_labels: 0.00% (0/52)`, confirming the deployed correction-memory bank is still far below the coverage needed to attack exact-recognition blockers.
 
+- Split character and mixed-case correction priority queues:
+  - Code path: `main.py` now keeps a character-first practice queue for the browser's character correction coverage (`O, l, o, I, ...`) and a mixed-case queue for daily mixed-case fine-tuning (`s, O, V, 1, ...`). Coverage rows and next-needed entries also carry evidence strings explaining the measured confusion each label targets.
+  - Verification: `python3 -m pytest -q test_web_app.py test_train_from_corrections.py` passed (`93` tests), `scripts/train_from_corrections.py --dry-run --json` reports character `recommended_label=O` and mixedcase `recommended_label=s`, and `scripts/summarize_benchmarks.py --include-correction-memory --include-app-hardcases --single-font-hardcases` still reports the same model/app benchmark gates.
+
 ## Next Higher-Value Directions
 
 - Add more real user-labeled correction uploads for exact visual twins, then use `scripts/train_from_corrections.py`.
