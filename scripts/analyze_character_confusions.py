@@ -8,22 +8,48 @@ import sys
 from collections import Counter, defaultdict
 from pathlib import Path
 
-import torch
-from sklearn.model_selection import train_test_split
-from torch.utils.data import DataLoader, TensorDataset
-
 PROJECT_DIR = Path(__file__).resolve().parents[1]
 if str(PROJECT_DIR) not in sys.path:
     sys.path.insert(0, str(PROJECT_DIR))
 
-from character_model import (  # noqa: E402
-    DATASET_ROOT,
-    METRICS_PATH,
-    build_or_load_combined_cache,
-    labels_match_with_ambiguity,
-    load_character_model,
-)
-from mnist_model import get_device  # noqa: E402
+METRICS_PATH = PROJECT_DIR / "character_training_metrics.json"
+AMBIGUITY_GROUPS = [
+    frozenset("0Oo"),
+    frozenset("1Ili|!/"),
+    frozenset("5Ss"),
+    frozenset("2Zz"),
+    frozenset("8B"),
+    frozenset("Cc"),
+    frozenset("Xx"),
+    frozenset("Vv"),
+    frozenset("Kk"),
+    frozenset("Pp"),
+    frozenset("Tt7"),
+    frozenset("-_"),
+    frozenset(".'`"),
+    frozenset(":;i!"),
+    frozenset("+t"),
+    frozenset("&def"),
+    frozenset("@e"),
+    frozenset("9qg"),
+    frozenset("Yy4"),
+    frozenset("Uuv"),
+    frozenset("NnMm"),
+    frozenset("Jj"),
+]
+DATASET_ROOT = None
+build_or_load_combined_cache = None
+get_device = None
+load_character_model = None
+train_test_split = None
+
+
+def labels_match_with_ambiguity(expected: str, predicted: str) -> bool:
+    """Return true when labels are exact or known visual twins."""
+
+    if expected == predicted:
+        return True
+    return any(expected in group and predicted in group for group in AMBIGUITY_GROUPS)
 
 
 def _group(label: str) -> str:
@@ -51,6 +77,36 @@ def analyze_confusions(
     extra_roots: list[Path] | None = None,
 ) -> dict[str, object]:
     """Evaluate the deployed character model on its validation split."""
+
+    global DATASET_ROOT
+    global build_or_load_combined_cache
+    global get_device
+    global load_character_model
+    global train_test_split
+
+    import torch
+    from torch.utils.data import DataLoader, TensorDataset
+
+    if train_test_split is None:
+        from sklearn.model_selection import train_test_split as sklearn_train_test_split
+
+        train_test_split = sklearn_train_test_split
+    if DATASET_ROOT is None:
+        from character_model import DATASET_ROOT as character_dataset_root
+
+        DATASET_ROOT = character_dataset_root
+    if build_or_load_combined_cache is None:
+        from character_model import build_or_load_combined_cache as character_cache_builder
+
+        build_or_load_combined_cache = character_cache_builder
+    if load_character_model is None:
+        from character_model import load_character_model as character_model_loader
+
+        load_character_model = character_model_loader
+    if get_device is None:
+        from mnist_model import get_device as mnist_device_loader
+
+        get_device = mnist_device_loader
 
     device = get_device()
     model, labels = load_character_model(device=device)

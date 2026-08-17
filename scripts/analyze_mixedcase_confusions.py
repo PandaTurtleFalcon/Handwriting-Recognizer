@@ -8,22 +8,48 @@ import sys
 from collections import Counter, defaultdict
 from pathlib import Path
 
-import torch
-from torch.utils.data import DataLoader, TensorDataset
-
 PROJECT_DIR = Path(__file__).resolve().parents[1]
 if str(PROJECT_DIR) not in sys.path:
     sys.path.insert(0, str(PROJECT_DIR))
 
-from alnum_model import (  # noqa: E402
-    MIXEDCASE_LABELS,
-    build_or_load_emnist_byclass_mixedcase_cache,
-    build_or_load_mnist_cache,
-    load_mixedcase_model,
-    mixedcase_labels_match_with_ambiguity,
-    mixedcase_labels_match_with_visual_ambiguity,
-)
-from mnist_model import get_device  # noqa: E402
+MIXEDCASE_AMBIGUITY_GROUPS = [
+    frozenset("0Oo"),
+    frozenset("1Ili|!/"),
+    frozenset("5Ss"),
+    frozenset("2Zz"),
+    frozenset("8B"),
+    frozenset("Cc"),
+    frozenset("Xx"),
+    frozenset("Vv"),
+    frozenset("Kk"),
+    frozenset("Pp"),
+    frozenset("Tt7"),
+    frozenset("9qg"),
+    frozenset("Yy4"),
+    frozenset("Uuv"),
+    frozenset("NnMm"),
+    frozenset("Jj"),
+]
+build_or_load_emnist_byclass_mixedcase_cache = None
+build_or_load_mnist_cache = None
+get_device = None
+load_mixedcase_model = None
+
+
+def mixedcase_labels_match_with_visual_ambiguity(expected: str, predicted: str) -> bool:
+    """Return true when mixed-case labels are exact or visual twins."""
+
+    if expected == predicted:
+        return True
+    return any(expected in group and predicted in group for group in MIXEDCASE_AMBIGUITY_GROUPS)
+
+
+def mixedcase_labels_match_with_ambiguity(expected: str, predicted: str) -> bool:
+    """Return true when labels match by exact, casefold, or visual ambiguity."""
+
+    if mixedcase_labels_match_with_visual_ambiguity(expected, predicted):
+        return True
+    return expected.isalpha() and predicted.isalpha() and expected.lower() == predicted.lower()
 
 
 def _group(label: str) -> str:
@@ -38,6 +64,31 @@ def _group(label: str) -> str:
 
 def analyze_confusions(batch_size: int = 2048, top: int = 25) -> dict[str, object]:
     """Evaluate the mixed-case model and summarize confusion counts."""
+
+    global build_or_load_emnist_byclass_mixedcase_cache
+    global build_or_load_mnist_cache
+    global get_device
+    global load_mixedcase_model
+
+    import torch
+    from torch.utils.data import DataLoader, TensorDataset
+
+    if build_or_load_emnist_byclass_mixedcase_cache is None:
+        from alnum_model import build_or_load_emnist_byclass_mixedcase_cache as byclass_cache_builder
+
+        build_or_load_emnist_byclass_mixedcase_cache = byclass_cache_builder
+    if build_or_load_mnist_cache is None:
+        from alnum_model import build_or_load_mnist_cache as mnist_cache_builder
+
+        build_or_load_mnist_cache = mnist_cache_builder
+    if load_mixedcase_model is None:
+        from alnum_model import load_mixedcase_model as mixedcase_model_loader
+
+        load_mixedcase_model = mixedcase_model_loader
+    if get_device is None:
+        from mnist_model import get_device as mnist_device_loader
+
+        get_device = mnist_device_loader
 
     device = get_device()
     model, labels = load_mixedcase_model(device=device)

@@ -499,6 +499,10 @@ restored, so future improvement loops do not repeat known-bad blends.
 
 ## Next Higher-Value Directions
 
+- Interrupted full calibration/analyzer startup probe:
+  - Command shape: `python3 scripts/calibrate_character_logits.py --batch-size 4096`, `python3 scripts/calibrate_mixedcase_logits.py --batch-size 4096 --max-scale 2 --step 0.05`, plus analyzer `--help` smoke checks.
+  - Result: rejected as a poor fast-iteration loop. The calibration jobs ran for several minutes on CPU without producing tracked artifacts, and even analyzer `--help` paid heavy sklearn/torchvision import costs before argparse could print usage. No model artifact was kept. Follow-up code moved heavy analyzer imports inside the actual analysis path so `--help` stays cheap for future bounded experiments.
+
 - Add more real user-labeled correction uploads for exact visual twins, then use `scripts/train_from_corrections.py`.
 - Try training changes that alter objective/architecture for exact mixed case, not just adding broad or synthetic extra datasets.
 - Keep using `python3 scripts/evaluate_hardcases.py --json` after app-level changes; it catches failures that aggregate model metrics miss.
