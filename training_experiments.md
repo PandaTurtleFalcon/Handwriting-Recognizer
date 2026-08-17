@@ -576,12 +576,16 @@ restored, so future improvement loops do not repeat known-bad blends.
 
 - App-decoupled mixed-case calibration:
   - Code path: `main.load_character_recognizer_stack()` now loads the mixed-case helper with `logit_bias_path=None`, so benchmark-only mixed-case bias artifacts no longer perturb the website's character recognizer. `scripts/calibrate_mixedcase_logits.py` also gained `--greedy-labels` for targeted per-label bias tuning from the current artifact.
-  - Command shape: wrote scalar `0.25` with `python3 scripts/calibrate_mixedcase_logits.py --batch-size 4096 --scale 0.25 --write --require-app-gates`, then tuned with `python3 scripts/calibrate_mixedcase_logits.py --batch-size 4096 --greedy-labels '10OolIiSs5qg92ZzUuVvCc' --greedy-rounds 3 --greedy-deltas=-0.04,-0.02,0.02,0.04 --min-lower 79.7 --write --require-app-gates`.
-  - Result: deployed mixed-case exact improved from `80.71%` to `85.08%`, case-or-visual improved to `97.42%`, and app gates stayed green at clean `100.00% (45/45)` and script `95.56% (86/90)`. A looser greedy probe reached `85.26%` exact but pushed lowercase split accuracy down to `79.00%`, so the healthier `85.08%` artifact with lowercase `79.70%` was kept instead.
+  - Command shape: wrote scalar `0.25` with `python3 scripts/calibrate_mixedcase_logits.py --batch-size 4096 --scale 0.25 --write --require-app-gates`, then tuned with `python3 scripts/calibrate_mixedcase_logits.py --batch-size 4096 --greedy-labels '10OolIiSs5qg92ZzUuVvCcmnMNFfPpKkYy4' --greedy-rounds 4 --greedy-deltas=-0.04,-0.02,0.02,0.04 --min-lower 78.0 --min-upper 80.0 --min-digit 88.0 --min-case-or-visual 97.3 --write --require-app-gates`.
+  - Result: deployed mixed-case exact improved from `80.71%` to `85.66%`, case-or-visual improved to `97.43%`, and app gates stayed green at clean `100.00% (45/45)` and script `95.56% (86/90)`. The tradeoff is lower split accuracy at `78.00%`, so the next mixed-case work should target lowercase `o/s/c/m/l/u` recovery instead of more one-way bias toward digits/uppercase.
 
 - Wider character greedy-bias pass:
   - Command shape: `python3 scripts/calibrate_character_logits.py --batch-size 4096 --greedy-labels 'OlIS0oic1zsvx|-._/' --greedy-rounds 4 --greedy-deltas=-0.08,-0.04,-0.02,0.02,0.04,0.08 --min-ambiguity 98.85 --min-punctuation 96.0 --require-app-gates`.
   - Result: only two tiny steps were accepted (`O -0.02`, `l -0.02`), improving character exact from `93.50%` to `93.52%` while preserving character ambiguity `99.05%`, punctuation exact `96.34%`, clean app `100.00% (45/45)`, and script app `95.56% (86/90)`. This is deployable, but the tiny gain confirms global per-label bias is mostly exhausted; next character work should use a gated visual-family resolver with crop geometry/logit margins.
+
+- Character visual-template resolver prototype:
+  - Command shape: in-memory validation probe using cached character tensors, per-label train-split flattened-image centroids plus simple ink centroid/density features, and threshold sweeps over visual families `0Oo`, `1Ili|!/`, `5Ss`, `Cc`, `2Zz`, `Pp`, `Uuv`, `Xx`, `-_`, and `.'``.
+  - Result: no threshold combination improved over the current calibrated `93.52%` character exact while preserving ambiguity `>=98.8%` and punctuation exact `>=96.0%`. No runtime resolver artifact or code was kept; raw template distance is too weak for this validation split.
 
 ## Next Higher-Value Directions
 
