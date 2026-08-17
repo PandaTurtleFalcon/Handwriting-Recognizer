@@ -595,6 +595,10 @@ restored, so future improvement loops do not repeat known-bad blends.
   - Command shape: reset to scalar `0.25`, then ran `python3 scripts/calibrate_mixedcase_logits.py --batch-size 4096 --greedy-labels '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz' --greedy-rounds 6 --greedy-deltas=-0.08,-0.04,-0.02,0.02,0.04,0.08 --min-lower 0 --min-upper 0 --min-digit 0 --min-case-or-visual 95.0 --write --require-app-gates`, followed by one smaller 4-round continuation from the written artifact.
   - Result: deployed mixed-case exact improved from `85.66%` to `87.44%`, case-or-visual improved to `97.77%`, and app gates stayed green at clean `100.00% (45/45)` and script `95.56% (86/90)`. The tradeoff is significant: lowercase split fell to `72.63%`, with `o/c/s/u/m/l` still weak, so future work needs lowercase-preserving model changes or a smarter family resolver rather than more one-way bias.
 
+- Mixed-case split-gate visibility and split-floor probe:
+  - Code path: `scripts/summarize_benchmarks.py` now reports `mixedcase_digit_exact`, `mixedcase_upper_exact`, and `mixedcase_lower_exact` so the hourly gate shows separate mixed-case quality instead of only aggregate exact.
+  - Result: current artifact reports digit `94.95%`, upper `83.97%`, and lower `72.63%`. A stricter greedy probe from scalar `0.25` with floors `digit>=90`, `upper>=80`, `lower>=80`, and `case_or_visual>=97.3` found no accepted exact-improving steps, so the best `87.44%` artifact was restored.
+
 ## Next Higher-Value Directions
 
 - Interrupted full calibration/analyzer startup probe:

@@ -130,6 +130,9 @@ class BenchmarkSummaryTests(unittest.TestCase):
                     "best_checkpoint": {
                         "test_accuracy": 87.2,
                         "case_or_ambiguity_aware_test_accuracy": 97.6,
+                        "digit_test_accuracy": 94.0,
+                        "upper_test_accuracy": 84.0,
+                        "lower_test_accuracy": 73.0,
                     },
                 },
                 root / "mixedcase_logit_bias.pt",
@@ -140,6 +143,9 @@ class BenchmarkSummaryTests(unittest.TestCase):
         by_name = {str(item["name"]): item for item in report}
         self.assertEqual(by_name["mixedcase_exact"]["value"], 87.2)
         self.assertEqual(by_name["mixedcase_case_or_visual"]["value"], 97.6)
+        self.assertEqual(by_name["mixedcase_digit_exact"]["value"], 94.0)
+        self.assertEqual(by_name["mixedcase_upper_exact"]["value"], 84.0)
+        self.assertEqual(by_name["mixedcase_lower_exact"]["value"], 73.0)
 
     def test_summarizes_app_hardcase_gates_on_demand(self) -> None:
         with patch(
