@@ -191,6 +191,7 @@ class ContextRulesTests(unittest.TestCase):
         self.assertEqual(cleanup_context("HQ11O").display, "hello")
         self.assertEqual(cleanup_context("Abc123").display, "abc123")
         self.assertEqual(cleanup_context("abC1Z3").display, "abc123")
+        self.assertEqual(cleanup_context("4bC!2J").display, "abc123")
         self.assertEqual(cleanup_context("U5A").display, "USA")
         self.assertEqual(cleanup_context("T357").display, "T3s7")
         self.assertEqual(cleanup_context("T3ST").display, "T3s7")
@@ -198,8 +199,16 @@ class ContextRulesTests(unittest.TestCase):
         self.assertEqual(cleanup_context("T'5T").display, "Test")
         self.assertEqual(cleanup_context("T95T").display, "Test")
         self.assertEqual(cleanup_context("C4T").display, "Cat")
+        self.assertEqual(cleanup_context("!17!").display, "Il1!")
+        self.assertEqual(cleanup_context("771").display, "1Il")
+        self.assertEqual(cleanup_context("7!1").display, "I1l")
+        self.assertEqual(cleanup_context("099").display, "9qg")
+        self.assertEqual(cleanup_context("TT7").display, "Tt7")
         self.assertEqual(cleanup_context("z7").display, "27")
+        self.assertEqual(cleanup_context("2P").display, "27")
         self.assertEqual(cleanup_context("A1bz").display, "A1b2")
+        self.assertEqual(cleanup_context("A7b2").display, "A1b2")
+        self.assertEqual(cleanup_context("0Ob").display, "G6b")
         self.assertEqual(cleanup_context("xOO11eh'nd").display, "look behind")
         self.assertEqual(cleanup_context("xOOh:1i").display, "look behind")
         self.assertEqual(cleanup_context("iookbehind").display, "look behind")
@@ -210,6 +219,14 @@ class ContextRulesTests(unittest.TestCase):
         self.assertEqual(cleanup_context("4oU").display, "you")
         self.assertEqual(cleanup_context("Y0U").display, "you")
         self.assertEqual(cleanup_context("You").display, "you")
+
+    def test_common_word_cleanup_rejects_partial_rough_variants(self) -> None:
+        """Exact hardcase cleanups should not become broad letter rewrites."""
+
+        self.assertEqual(cleanup_context("2PA").display, "2PA")
+        self.assertEqual(cleanup_context("0Obj").display, "0Obj")
+        self.assertEqual(cleanup_context("0990").display, "0990")
+        self.assertEqual(cleanup_context("TT70").display, "TT70")
 
     def test_common_word_cleanup_handles_look_behind_you_rows(self) -> None:
         """The saved look-behind-you screenshot should clean row by row."""
