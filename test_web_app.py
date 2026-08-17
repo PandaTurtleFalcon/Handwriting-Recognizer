@@ -216,6 +216,12 @@ class WebAppRenderingTests(unittest.TestCase):
 
         self.assertEqual(main.best_metric_entry(metrics, key="validation_accuracy")["validation_accuracy"], 90.5)
 
+    def test_app_revision_returns_unknown_when_git_is_unavailable(self) -> None:
+        """Health checks should stay usable even when git metadata is unavailable."""
+
+        with patch.object(main.subprocess, "run", side_effect=OSError):
+            self.assertEqual(main.app_revision(), "unknown")
+
     def test_character_stack_prefers_exact_case_alnum_model(self) -> None:
         """Serving should use the mixed-case helper before the folded helper."""
 

@@ -48,6 +48,7 @@ from mnist_model import METRICS_PATH, WEIGHTS_PATH, get_device, load_model, pred
 
 HOST = "127.0.0.1"
 PORT = 8000
+SERVER_STARTED_AT = dt.datetime.now(dt.UTC).isoformat()
 MAX_UPLOAD_BYTES = 8 * 1024 * 1024
 MAX_CORRECTION_BYTES = MAX_UPLOAD_BYTES + 16_384
 MAX_IMAGE_PIXELS = 4_000_000
@@ -917,7 +918,15 @@ class MnistWebHandler(BaseHTTPRequestHandler):
             self._send_static(WEB_ROOT / parsed.path.lstrip("/"))
             return
         if parsed.path == "/health":
-            self._send_json({"ok": True, "model_loaded": self.model is not None, "recognizer": self.recognizer_kind})
+            self._send_json(
+                {
+                    "ok": True,
+                    "model_loaded": self.model is not None,
+                    "recognizer": self.recognizer_kind,
+                    "revision": app_revision(),
+                    "started_at": SERVER_STARTED_AT,
+                }
+            )
             return
         if parsed.path == "/api/correction-coverage":
             query = parse_qs(parsed.query)
@@ -1180,6 +1189,24 @@ def resize_for_recognition(image: Image.Image) -> Image.Image:
     width = max(1, int(image.width * scale))
     height = max(1, int(image.height * scale))
     return image.resize((width, height), Image.Resampling.LANCZOS)
+
+
+def app_revision() -> str:
+    """Return the checked-out git revision serving the local website."""
+
+    try:
+        completed = subprocess.run(
+            ["git", "rev-parse", "--short", "HEAD"],
+            cwd=Path(__file__).resolve().parent,
+            capture_output=True,
+            check=False,
+            text=True,
+            timeout=2,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return "unknown"
+    revision = completed.stdout.strip()
+    return revision if completed.returncode == 0 and revision else "unknown"
 
 
 def classify_files(
