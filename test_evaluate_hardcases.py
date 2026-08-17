@@ -4,7 +4,7 @@ from unittest.mock import patch
 
 from PIL import Image, ImageFont
 
-from scripts.evaluate_hardcases import evaluate_cases, render_script_case, sequence_matches_with_ambiguity
+from scripts.evaluate_hardcases import display_matches, evaluate_cases, render_script_case, sequence_matches_with_ambiguity
 
 
 class HardCaseEvaluationTests(unittest.TestCase):
@@ -15,6 +15,12 @@ class HardCaseEvaluationTests(unittest.TestCase):
         self.assertTrue(sequence_matches_with_ambiguity("Il1", "1lI"))
         self.assertFalse(sequence_matches_with_ambiguity("Hi", "HL:"))
         self.assertFalse(sequence_matches_with_ambiguity("AB", "A"))
+
+    def test_display_matches_treats_row_breaks_as_phrase_spacing(self) -> None:
+        """Whole-phrase hardcases should allow the app's visual row separator."""
+
+        self.assertTrue(display_matches("look behind you", "look behind\nyou"))
+        self.assertFalse(display_matches("look behind you", "look beh1nd\nyou"))
 
     def test_evaluate_cases_reports_per_font_metrics(self) -> None:
         """All-font mode should expose aggregate and per-font accuracy."""

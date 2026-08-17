@@ -263,6 +263,30 @@ class ContextRulesTests(unittest.TestCase):
         self.assertEqual(cleanup.display, "look behind\nyou")
         self.assertEqual(cleanup.rows, ["look behind", "you"])
 
+    def test_common_word_cleanup_handles_fragmented_reported_look_behind_variant(self) -> None:
+        """The reported phrase should clean even when segmentation splits a word."""
+
+        cleanup = cleanup_context("xOOh:1i7o4", ["xOOh", ":1i", "7o4"])
+
+        self.assertEqual(cleanup.display, "look behind\nyou")
+        self.assertEqual(cleanup.rows, ["look behind", "you"])
+
+    def test_common_word_cleanup_handles_fragmented_reported_look_behind_only(self) -> None:
+        """The top phrase row should clean when its fragments are detected separately."""
+
+        cleanup = cleanup_context("xOOh:1i", ["xOOh", ":1i"])
+
+        self.assertEqual(cleanup.display, "look behind")
+        self.assertEqual(cleanup.rows, ["look behind"])
+
+    def test_common_word_cleanup_handles_visual_twin_drift_in_reported_phrase(self) -> None:
+        """Known phrase cleanup should tolerate O/0 drift in fragmented rows."""
+
+        cleanup = cleanup_context("x0Oh:1i7o4", ["x0Oh", ":1i", "7o4"])
+
+        self.assertEqual(cleanup.display, "look behind\nyou")
+        self.assertEqual(cleanup.rows, ["look behind", "you"])
+
     def test_common_word_cleanup_splits_glued_reported_look_behind_variant(self) -> None:
         """The same screenshot should still clean if row detection glues both rows."""
 

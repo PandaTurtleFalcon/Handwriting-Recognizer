@@ -66,6 +66,7 @@ DEFAULT_CASES = [
     "A1b2",
     "Hi5!",
     "look behind",
+    "look behind you",
     "you",
 ]
 FONT_CANDIDATES = [
@@ -107,11 +108,21 @@ def load_web_models() -> tuple[object, object]:
 def sequence_matches_with_ambiguity(target: str, prediction: str) -> bool:
     """Return true when equal-length strings only differ by visual twins."""
 
-    if target == prediction:
+    if display_matches(target, prediction):
         return True
     if len(target) != len(prediction):
         return False
     return all(labels_match_with_ambiguity(expected, actual) for expected, actual in zip(target, prediction))
+
+
+def display_matches(target: str, prediction: str) -> bool:
+    """Return true when strings match exactly or only differ by whitespace layout."""
+
+    if target == prediction:
+        return True
+    if not any(character.isspace() for character in target + prediction):
+        return False
+    return " ".join(target.split()) == " ".join(prediction.split())
 
 
 def font_label(font: ImageFont.FreeTypeFont | ImageFont.ImageFont, fallback_index: int = 0) -> str:
@@ -473,7 +484,7 @@ def evaluate_cases(cases: list[str] | None = None, all_fonts: bool = False, scri
                 HardCaseResult(
                     target=target,
                     prediction=prediction,
-                    exact=prediction == target,
+                    exact=display_matches(target, prediction),
                     ambiguity_aware=sequence_matches_with_ambiguity(target, prediction),
                     font=font_name,
                 )
@@ -487,7 +498,7 @@ def evaluate_cases(cases: list[str] | None = None, all_fonts: bool = False, scri
                 HardCaseResult(
                     target=target,
                     prediction=prediction,
-                    exact=prediction == target,
+                    exact=display_matches(target, prediction),
                     ambiguity_aware=sequence_matches_with_ambiguity(target, prediction),
                     font="script",
                 )

@@ -565,6 +565,11 @@ restored, so future improvement loops do not repeat known-bad blends.
   - Command shape: `python3 scripts/calibrate_character_logits.py --batch-size 4096 --greedy-labels 'lOI0os1iSzc-.|vx' --require-app-gates`.
   - Result: the greedy bias improved character exact from `93.07%` to `93.50%`, punctuation exact from `95.71%` to `96.34%`, and punctuation ambiguity from `99.09%` to `99.16%`. The candidate initially introduced one clean-font `T3s7 -> T3sT` app miss, so `context_rules.py` added the narrow whole-row cleanup `T3sT -> T3s7`. Final gates stayed green: clean app `100.00% (44/44)` and script app `95.45% (84/88)`. This is deployable progress but still below the `95%` character exact target.
 
+- Phrase-level look-behind-you hardcase guard:
+  - Code path: `context_rules.py` now compact-matches split row fragments against the existing allowlisted look-behind-you visual variants, and `scripts/evaluate_hardcases.py` includes the full `look behind you` phrase while treating spaces and row breaks as equivalent phrase layout.
+  - Verification: `python3 -m pytest -q test_context_rules.py test_evaluate_hardcases.py` passed (`44` tests), `python3 scripts/evaluate_hardcases.py --case 'look behind you'` passed (`100.00%`), and the full benchmark stayed green at clean app `100.00% (45/45)` and script app `95.56% (86/90)`.
+  - Result: this directly covers the reported `xOOh:1i`-style phrase failure when segmentation splits the rough word into multiple fragments. It does not change isolated model metrics: mixed-case exact remains `80.71%` and character exact remains `93.50%`.
+
 ## Next Higher-Value Directions
 
 - Interrupted full calibration/analyzer startup probe:

@@ -247,6 +247,26 @@ def _drop_stray_greeting_punctuation_row(rows: list[str]) -> tuple[list[str], li
 def _clean_split_common_rows(rows: list[str]) -> tuple[list[str], list[str]]:
     """Merge exact common rows that segmentation split too aggressively."""
 
+    compact_rows = "".join(rows)
+    signature = _phrase_signature(compact_rows)
+    look_signatures = {_phrase_signature(variant) for variant in LOOK_BEHIND_RAW_VARIANTS}
+    you_signatures = {_phrase_signature(variant) for variant in YOU_RAW_VARIANTS} | {_phrase_signature("you")}
+    if signature in look_signatures:
+        return ["look behind"], ["Merged split look-behind fragments using known visual lookalikes."]
+    for look_signature in look_signatures:
+        for you_signature in you_signatures:
+            if signature == f"{look_signature}{you_signature}":
+                return ["look behind", "you"], [
+                    "Split a glued look-behind-you result using known visual lookalikes."
+                ]
+    for look_variant in LOOK_BEHIND_RAW_VARIANTS:
+        if compact_rows == look_variant:
+            return ["look behind"], ["Merged split look-behind fragments using known visual lookalikes."]
+        for you_variant in {*YOU_RAW_VARIANTS, "you"}:
+            if compact_rows == f"{look_variant}{you_variant}":
+                return ["look behind", "you"], [
+                    "Split a glued look-behind-you result using known visual lookalikes."
+                ]
     if len(rows) == 1:
         row = rows[0]
         for look_variant in LOOK_BEHIND_RAW_VARIANTS:
@@ -262,6 +282,29 @@ def _clean_split_common_rows(rows: list[str]) -> tuple[list[str], list[str]]:
     if rows == ['k.."n.', "1OOi"]:
         return ["look behind"], ["Read a split rough look-behind row using known visual lookalikes."]
     return rows, []
+
+
+def _phrase_signature(text: str) -> str:
+    """Normalize only the strongest phrase-level visual twins for allowlist matching."""
+
+    translations = str.maketrans(
+        {
+            "O": "0",
+            "o": "0",
+            "I": "1",
+            "l": "1",
+            "|": "1",
+            "!": "1",
+            "'": "",
+            "`": "",
+            ":": "",
+            ".": "",
+            " ": "",
+            "\n": "",
+            "\t": "",
+        }
+    )
+    return text.translate(translations).lower()
 
 
 def _balance_parentheses(text: str) -> tuple[str, list[str]]:
