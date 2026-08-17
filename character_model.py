@@ -42,11 +42,16 @@ WEIGHTS_PATH = PROJECT_DIR / "character_cnn.pt"
 METRICS_PATH = PROJECT_DIR / "character_training_metrics.json"
 LABELS_PATH = PROJECT_DIR / "character_labels.json"
 EXEMPLARS_PATH = PROJECT_DIR / "character_exemplars.pt"
+CORRECTIONS_PATH = PROJECT_DIR / "data" / "corrections" / "corrections.jsonl"
+CORRECTION_UPLOAD_DIR = PROJECT_DIR / "data" / "corrections" / "uploads"
 
 IMAGE_SIZE = 32
 CACHE_PATH = PROJECT_DIR / "data" / "unipen_chars" / f"character_cache_segmented_{IMAGE_SIZE}.pt"
 CHAR_MEAN = 0.173
 CHAR_STD = 0.331
+CORRECTION_MEMORY_MAX_DISTANCE = 6.0
+CORRECTION_MEMORY_CONFIDENCE_CEILING = 0.95
+CORRECTION_MEMORY_MIN_MARGIN = 2.0
 LETTER_MODEL_TYPES = {
     "cnn": EmnistCNN,
     "tinycnn": TinyEmnistCNN,
@@ -450,6 +455,113 @@ def build_character_exemplars(
     )
 
 
+def _compact_correction_label(label: object) -> str:
+    """Return a newline-free user correction label."""
+
+    return "".join(character for character in str(label) if character not in {"\n", "\r"})
+
+
+def _safe_correction_crop(image: Image.Image, bbox: object) -> Image.Image | None:
+    """Crop a validated correction box from a saved upload image."""
+
+    if not isinstance(bbox, dict):
+        return None
+    try:
+        x = float(bbox.get("x", 0))
+        y = float(bbox.get("y", 0))
+        width = float(bbox.get("width", 0))
+        height = float(bbox.get("height", 0))
+    except (TypeError, ValueError):
+        return None
+    if width <= 0 or height <= 0:
+        return None
+    left = max(0, int(round(x)))
+    top = max(0, int(round(y)))
+    right = min(image.width, int(round(x + width)))
+    bottom = min(image.height, int(round(y + height)))
+    if right <= left or bottom <= top:
+        return None
+    return image.crop((left, top, right, bottom))
+
+
+def _correction_memory_items(
+    labels: list[str],
+    corrections_path: Path = CORRECTIONS_PATH,
+    upload_dir: Path = CORRECTION_UPLOAD_DIR,
+) -> list[tuple[str, Image.Image]]:
+    """Load trainable one-character crops from saved user corrections."""
+
+    if not corrections_path.exists():
+        return []
+    known_labels = set(labels)
+    items: list[tuple[str, Image.Image]] = []
+    for line in corrections_path.read_text(encoding="utf-8").splitlines():
+        if not line.strip():
+            continue
+        try:
+            record = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        image_id = str(record.get("image_id", ""))
+        if not image_id:
+            continue
+        image_path = upload_dir / f"{image_id}.png"
+        if not image_path.exists():
+            continue
+        corrected_label = _compact_correction_label(record.get("corrected_label", ""))
+        try:
+            image = Image.open(image_path).convert("L")
+        except OSError:
+            continue
+        with image:
+            if record.get("correction_kind") == "character":
+                if len(corrected_label) == 1 and corrected_label in known_labels:
+                    crop = _safe_correction_crop(image, record.get("bbox", {}))
+                    if crop is not None:
+                        items.append((corrected_label, crop.copy()))
+                continue
+            if record.get("correction_kind") != "sequence":
+                continue
+            boxes = record.get("prediction_boxes", [])
+            if not isinstance(boxes, list) or len(corrected_label) != len(boxes):
+                continue
+            for label, box_record in zip(corrected_label, boxes):
+                if label not in known_labels or not isinstance(box_record, dict):
+                    continue
+                crop = _safe_correction_crop(image, box_record.get("bbox", {}))
+                if crop is not None:
+                    items.append((label, crop.copy()))
+    return items
+
+
+def load_correction_memory_exemplars(
+    labels: list[str],
+    corrections_path: Path = CORRECTIONS_PATH,
+    upload_dir: Path = CORRECTION_UPLOAD_DIR,
+) -> tuple[torch.Tensor, torch.Tensor] | None:
+    """Build a tiny nearest-neighbor bank from saved user-labeled crops."""
+
+    label_to_index = {label: index for index, label in enumerate(labels)}
+    images: list[torch.Tensor] = []
+    targets: list[int] = []
+    for label, image in _correction_memory_items(labels, corrections_path, upload_dir):
+        images.append(character_tensor_from_image(image))
+        targets.append(label_to_index[label])
+    if not images:
+        return None
+    return torch.stack(images).float(), torch.tensor(targets, dtype=torch.long)
+
+
+def _correction_memory_signature(corrections_path: Path = CORRECTIONS_PATH) -> tuple[int, int] | None:
+    """Return a cheap change detector for the correction log."""
+
+    try:
+        stat = corrections_path.stat()
+    except OSError:
+        return None
+    return stat.st_mtime_ns, stat.st_size
+
+
 def make_loaders(root: Path, batch_size: int, extra_roots: list[Path] | None = None) -> tuple[DataLoader, DataLoader, list[str]]:
     """Build weighted train and validation loaders for curated characters."""
 
@@ -821,6 +933,12 @@ def load_character_model(weights_path: Path = WEIGHTS_PATH, device: torch.device
         if list(exemplars.get("labels", [])) == labels:
             model.character_exemplars = exemplars["images"].float()
             model.character_exemplar_targets = exemplars["targets"].long()
+    correction_exemplars = load_correction_memory_exemplars(labels)
+    if correction_exemplars is not None:
+        correction_images, correction_targets = correction_exemplars
+        model.correction_exemplars = correction_images
+        model.correction_exemplar_targets = correction_targets
+        model.correction_memory_signature = _correction_memory_signature()
     model.eval()
     return model, labels
 
@@ -887,6 +1005,55 @@ def _nearest_exemplar_label(model: nn.Module, tensor: torch.Tensor) -> tuple[int
     distances = torch.cdist(vector, exemplars.reshape(exemplars.size(0), -1)).squeeze(0)
     distance, exemplar_index = torch.min(distances, dim=0)
     return int(targets[int(exemplar_index)].item()), float(distance.item())
+
+
+def _refresh_correction_memory(model: nn.Module, labels: list[str]) -> None:
+    """Reload saved correction exemplars when the correction log changes."""
+
+    if not hasattr(model, "__dict__"):
+        return
+    signature = _correction_memory_signature()
+    if getattr(model, "correction_memory_signature", None) == signature:
+        return
+    correction_exemplars = load_correction_memory_exemplars(labels)
+    if correction_exemplars is None:
+        if hasattr(model, "correction_exemplars"):
+            delattr(model, "correction_exemplars")
+        if hasattr(model, "correction_exemplar_targets"):
+            delattr(model, "correction_exemplar_targets")
+        model.correction_memory_signature = signature
+        return
+    correction_images, correction_targets = correction_exemplars
+    model.correction_exemplars = correction_images
+    model.correction_exemplar_targets = correction_targets
+    model.correction_memory_signature = signature
+
+
+def _correction_memory_override_label(
+    model: nn.Module,
+    labels: list[str],
+    tensor: torch.Tensor,
+    current_confidence: float,
+) -> tuple[str, float] | None:
+    """Return a safe saved-correction override for a low-confidence crop."""
+
+    exemplars = getattr(model, "correction_exemplars", None)
+    targets = getattr(model, "correction_exemplar_targets", None)
+    if exemplars is None or targets is None or current_confidence >= CORRECTION_MEMORY_CONFIDENCE_CEILING:
+        return None
+    vector = tensor.detach().cpu().flatten().float().unsqueeze(0)
+    distances = torch.cdist(vector, exemplars.reshape(exemplars.size(0), -1)).squeeze(0)
+    best_distance, best_index = torch.min(distances, dim=0)
+    best_target = int(targets[int(best_index)].item())
+    best_distance_value = float(best_distance.item())
+    if best_distance_value > CORRECTION_MEMORY_MAX_DISTANCE:
+        return None
+    different_label_distances = distances[targets != best_target]
+    if different_label_distances.numel() > 0:
+        second_distance = float(torch.min(different_label_distances).item())
+        if second_distance - best_distance_value < CORRECTION_MEMORY_MIN_MARGIN:
+            return None
+    return labels[best_target], best_distance_value
 
 
 def _looks_like_letter_region(region: DigitRegion, label: str, confidence: float) -> bool:
@@ -1856,6 +2023,7 @@ def predict_characters(
     regions = segment_digit_regions(image, split_wide=False, min_component_pixels=4, merge_marks=True)
     regions = _split_touching_character_regions(regions)
     predictions: list[dict[str, float | int | str]] = []
+    _refresh_correction_memory(model, labels)
     with torch.no_grad():
         for region in regions:
             tensor = tensor_from_character_region(region, selected_device)
@@ -1945,6 +2113,11 @@ def predict_characters(
                 if _letter_should_override(str(label), confidence_value, letter_label, letter_confidence, digit_was_used):
                     label = letter_label
                     confidence_value = max(confidence_value, letter_confidence)
+            correction_match = _correction_memory_override_label(model, labels, tensor, confidence_value)
+            if punctuation_label is None and correction_match is not None:
+                correction_label, _correction_distance = correction_match
+                label = correction_label
+                confidence_value = max(confidence_value, CORRECTION_MEMORY_CONFIDENCE_CEILING)
             # Final geometric tie-breakers for the handful of shape confusions
             # that models still get wrong even after every other stage above;
             # these only fire when the current label is already one of the

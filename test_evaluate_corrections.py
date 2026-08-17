@@ -54,6 +54,14 @@ class EvaluateCorrectionsTests(unittest.TestCase):
         self.assertEqual(report["accuracy"], 100.0)
         self.assertEqual(report["results"][0]["prediction"], "Hi")
 
+    def test_saved_user_corrections_are_replayed_exactly(self) -> None:
+        """The deployed recognizer should honor saved user-labeled examples."""
+
+        report = evaluate_cases(load_cases())
+
+        self.assertGreater(report["total"], 0)
+        self.assertEqual(report["correct"], report["total"], report["results"])
+
 
 if __name__ == "__main__":
     unittest.main()

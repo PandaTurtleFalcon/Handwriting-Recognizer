@@ -1,3 +1,4 @@
+import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -5,6 +6,7 @@ from pathlib import Path
 from character_model import (
     _alnum_should_override,
     _combined_cache_path,
+    _correction_memory_override_label,
     _digit_beats_ambiguous_letter,
     _letter_should_override,
     _looks_like_four,
@@ -20,6 +22,7 @@ from character_model import (
     character_loss_weights,
     FocalCrossEntropyLoss,
     labels_match_with_ambiguity,
+    load_correction_memory_exemplars,
 )
 from mnist_model import DigitRegion, segment_digit_regions
 from PIL import Image, ImageDraw
@@ -82,6 +85,73 @@ class CharacterPostprocessingTests(unittest.TestCase):
         self.assertIsNotNone(weights)
         assert weights is not None
         self.assertEqual(weights.tolist(), [2.0, 1.0, 3.0, 1.5])
+
+    def test_load_correction_memory_exemplars_uses_sequence_boxes(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            upload_dir = root / "uploads"
+            upload_dir.mkdir()
+            image_id = "abc123"
+            image = Image.new("L", (80, 60), 255)
+            draw = ImageDraw.Draw(image)
+            draw.ellipse((20, 15, 55, 45), outline=0, width=4)
+            image.save(upload_dir / f"{image_id}.png")
+            corrections_path = root / "corrections.jsonl"
+            corrections_path.write_text(
+                json.dumps(
+                    {
+                        "correction_kind": "sequence",
+                        "image_id": image_id,
+                        "corrected_label": "a",
+                        "prediction_boxes": [
+                            {"bbox": {"x": 15, "y": 10, "width": 45, "height": 40, "row": 1}},
+                        ],
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            exemplars = load_correction_memory_exemplars(["2", "a"], corrections_path, upload_dir)
+
+        self.assertIsNotNone(exemplars)
+        assert exemplars is not None
+        images, targets = exemplars
+        self.assertEqual(tuple(images.shape), (1, 1, 32, 32))
+        self.assertEqual(targets.tolist(), [1])
+
+    def test_correction_memory_overrides_only_low_confidence_close_matches(self) -> None:
+        class MemoryModel:
+            pass
+
+        model = MemoryModel()
+        model.correction_exemplars = torch.zeros((1, 1, 32, 32), dtype=torch.float32)
+        model.correction_exemplar_targets = torch.tensor([1], dtype=torch.long)
+        tensor = torch.zeros((1, 1, 32, 32), dtype=torch.float32)
+
+        self.assertEqual(_correction_memory_override_label(model, ["2", "a"], tensor, 0.94), ("a", 0.0))
+        self.assertIsNone(_correction_memory_override_label(model, ["2", "a"], tensor, 0.95))
+
+    def test_correction_memory_requires_distance_and_label_margin(self) -> None:
+        class MemoryModel:
+            pass
+
+        model = MemoryModel()
+        model.correction_exemplars = torch.stack(
+            [
+                torch.zeros((1, 32, 32), dtype=torch.float32),
+                torch.full((1, 32, 32), 0.03, dtype=torch.float32),
+            ]
+        )
+        model.correction_exemplar_targets = torch.tensor([1, 0], dtype=torch.long)
+        tensor = torch.zeros((1, 1, 32, 32), dtype=torch.float32)
+
+        self.assertIsNone(_correction_memory_override_label(model, ["2", "a"], tensor, 0.80))
+
+        model.correction_exemplars = torch.full((1, 1, 32, 32), 1.0, dtype=torch.float32)
+        model.correction_exemplar_targets = torch.tensor([1], dtype=torch.long)
+
+        self.assertIsNone(_correction_memory_override_label(model, ["2", "a"], tensor, 0.80))
 
     def test_focal_cross_entropy_downweights_easy_examples(self) -> None:
         criterion = FocalCrossEntropyLoss(gamma=1.0)

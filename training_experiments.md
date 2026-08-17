@@ -425,6 +425,10 @@ restored, so future improvement loops do not repeat known-bad blends.
   - Command shape: `python3 character_model.py --model widecnn --warm-start --epochs 3 --min-accuracy 0 --learning-rate 0.0000008 --label-smoothing 0.012 --punctuation-loss-weight 1.01 --weak-labels 'Oo0Il1isScCzZvV-.|/' --weak-loss-weight 1.03 --focal-gamma 0.5 --seed 1818 --extra-root data/extra_hasyv2/character_ascii --extra-root data/corrections/character_ascii --extra-root data/generated_punctuation_ascii`
   - Result: validation reached only `92.01%`, `92.07%`, and `92.06%`, below the current `92.18%` checkpoint. The backed-up `character_cnn.pt`, `character_training_metrics.json`, and `character_exemplars.pt` were restored. Focal scaling at `0.5` did not improve exact visual-twin separation.
 
+- Inference-time correction memory for saved user labels:
+  - Code path: `character_model.py` now builds a small nearest-neighbor memory from saved one-character correction crops and refreshes it when `data/corrections/corrections.jsonl` changes, so very close saved examples can rescue low-confidence app predictions before the daily fine-tuning gate is ready. The overlay only fires below `0.95` confidence, within the normalized-crop distance cutoff, and when no different-label correction is within the safety margin.
+  - Verification: `python3 -m pytest -q test_character_model.py test_evaluate_corrections.py` passed (`31` tests), `python3 -m pytest -q test_web_app.py test_character_model.py test_evaluate_corrections.py` passed (`111` tests), `python3 scripts/evaluate_corrections.py --json` improved saved correction replay from `2/3` to `3/3` including the saved `a` sample, live `/api/predict` returns `a` for that saved upload, `python3 scripts/evaluate_hardcases.py` stayed at `44/44`, and `python3 scripts/summarize_benchmarks.py --include-app-hardcases --single-font-hardcases` confirmed the saved model gates were unchanged.
+
 ## Next Higher-Value Directions
 
 - Add more real user-labeled correction uploads for exact visual twins, then use `scripts/train_from_corrections.py`.
