@@ -19,7 +19,6 @@ from PIL import Image, ImageOps
 from scipy import ndimage
 from torch import nn
 from torch.utils.data import DataLoader
-from torchvision import datasets, transforms
 
 
 PROJECT_DIR = Path(__file__).resolve().parent
@@ -35,6 +34,14 @@ DEFAULT_DATA_ROOTS = [
 # because that's what the network was trained on.
 MNIST_MEAN = 0.1307
 MNIST_STD = 0.3081
+
+
+def _torchvision_datasets_transforms() -> tuple[object, object]:
+    """Import torchvision lazily so non-training CLI paths start faster."""
+
+    from torchvision import datasets, transforms
+
+    return datasets, transforms
 
 
 @dataclass(frozen=True)
@@ -128,6 +135,7 @@ def find_data_root() -> Path:
 def build_loaders(data_root: Path, batch_size: int) -> tuple[DataLoader, DataLoader]:
     """Create augmented training and plain test loaders for MNIST."""
 
+    datasets, transforms = _torchvision_datasets_transforms()
     # Mild random affine jitter (rotation/translate/scale/shear) approximates
     # the natural variation in real handwriting so the model generalizes
     # beyond MNIST's fairly uniform, pre-centered digit style. The ranges are

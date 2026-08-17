@@ -24,7 +24,6 @@ import torch
 from PIL import Image, ImageOps
 from torch import nn
 from torch.utils.data import ConcatDataset, DataLoader, TensorDataset, WeightedRandomSampler
-from torchvision import datasets, transforms
 
 from emnist_experiment import DATA_ROOT as EMNIST_DATA_ROOT
 from emnist_experiment import EMNIST_MEAN, EMNIST_STD, EmnistCNN, EmnistMLP, TinyEmnistCNN, WideEmnistCNN, build_or_load_emnist_cache
@@ -106,9 +105,18 @@ class AlnumEpochMetrics:
     overfit_gap: float
 
 
-def mnist_transform(augment: bool = False) -> transforms.Compose:
+def _torchvision_datasets_transforms() -> tuple[object, object]:
+    """Import torchvision lazily so CLI startup can reach progress logging."""
+
+    from torchvision import datasets, transforms
+
+    return datasets, transforms
+
+
+def mnist_transform(augment: bool = False) -> object:
     """Return the MNIST transform using the same normalization as EMNIST."""
 
+    _, transforms = _torchvision_datasets_transforms()
     steps: list[object] = []
     if augment:
         steps.append(
@@ -137,6 +145,7 @@ def build_or_load_mnist_cache(train: bool) -> tuple[torch.Tensor, torch.Tensor]:
         cache = torch.load(cache_path, map_location="cpu", weights_only=True)
         return cache["images"], cache["targets"]
 
+    datasets, _ = _torchvision_datasets_transforms()
     dataset = datasets.MNIST(
         root=str(MNIST_DATA_ROOT),
         train=train,
@@ -206,6 +215,7 @@ def build_or_load_usps_cache(train: bool) -> tuple[torch.Tensor, torch.Tensor]:
         cache = torch.load(cache_path, map_location="cpu", weights_only=True)
         return cache["images"], cache["targets"]
 
+    datasets, transforms = _torchvision_datasets_transforms()
     dataset = datasets.USPS(
         root=str(USPS_DATA_ROOT),
         train=train,
@@ -704,6 +714,7 @@ class AugmentedTensorDataset(torch.utils.data.Dataset):
     def __init__(self, images: torch.Tensor, targets: torch.Tensor) -> None:
         self.images = images
         self.targets = targets
+        _, transforms = _torchvision_datasets_transforms()
         self.transform = transforms.RandomAffine(
             degrees=7,
             translate=(0.05, 0.05),
@@ -835,6 +846,7 @@ def make_augmented_loaders(
 ) -> tuple[DataLoader, DataLoader, DataLoader, DataLoader]:
     """Build loaders with live MNIST augmentation and cached EMNIST letters."""
 
+    datasets, _ = _torchvision_datasets_transforms()
     mnist_train = datasets.MNIST(
         root=str(MNIST_DATA_ROOT),
         train=True,
@@ -1603,6 +1615,7 @@ def train_mixedcase(
 ) -> list[dict[str, float | int]]:
     """Train a 62-class recognizer that distinguishes uppercase and lowercase."""
 
+    print("Preparing mixed-case loaders...", flush=True)
     torch.manual_seed(seed)
     np.random.seed(seed)
     if device_name == "cpu":
@@ -1625,6 +1638,11 @@ def train_mixedcase(
         include_corrections,
         mixedcase_extra_roots,
         augment,
+    )
+    print(
+        f"Prepared mixed-case loaders: train_batches={len(train_loader)} "
+        f"test_batches={len(test_loader)} extra_roots={len(mixedcase_extra_roots or [])}",
+        flush=True,
     )
     model = MODEL_CLASSES[model_type](num_classes=len(MIXEDCASE_LABELS)).to(device)
     loss_weights = mixedcase_loss_weights(
@@ -1658,6 +1676,7 @@ def train_mixedcase(
     best_per_class_accuracy: dict[str, float] = {}
     best_metrics: dict[str, float | str] | None = None
     if warm_start:
+        print("Evaluating warm-start mixed-case checkpoint...", flush=True)
         warm_start_metrics = evaluate_mixedcase_breakdown(
             model,
             test_loader,
@@ -1669,6 +1688,11 @@ def train_mixedcase(
         best_state = {key: value.detach().cpu() for key, value in model.state_dict().items()}
         best_per_class_accuracy = evaluate_per_class(model, test_loader, list(MIXEDCASE_LABELS), device)
         best_metrics = {**warm_start_metrics, "source": "warm_start_seed"}
+        print(
+            f"Warm-start mixed-case exact={best_accuracy:.2f}% "
+            f"case_or_visual={warm_start_metrics['case_or_ambiguity_aware_test_accuracy']:.2f}%",
+            flush=True,
+        )
 
     for epoch in range(1, epochs + 1):
         start = time.time()
@@ -1676,7 +1700,9 @@ def train_mixedcase(
         train_loss_total = 0.0
         train_correct = 0
         train_total = 0
-        for images, targets in train_loader:
+        progress_interval = max(1, min(100, len(train_loader) // 4 or 1))
+        print(f"Epoch {epoch}/{epochs} training batches={len(train_loader)}...", flush=True)
+        for batch_index, (images, targets) in enumerate(train_loader, start=1):
             images = images.to(device)
             targets = targets.to(device)
             optimizer.zero_grad(set_to_none=True)
@@ -1692,8 +1718,16 @@ def train_mixedcase(
             train_loss_total += loss.item()
             train_correct += (outputs.argmax(dim=1) == targets).sum().item()
             train_total += targets.size(0)
+            if batch_index == 1 or batch_index == len(train_loader) or batch_index % progress_interval == 0:
+                partial_accuracy = 100.0 * train_correct / max(train_total, 1)
+                print(
+                    f"Epoch {epoch}/{epochs} batch {batch_index}/{len(train_loader)} "
+                    f"train_acc={partial_accuracy:.2f}%",
+                    flush=True,
+                )
         scheduler.step()
 
+        print(f"Epoch {epoch}/{epochs} evaluating test split...", flush=True)
         test_loss, test_accuracy = evaluate(model, test_loader, criterion, device)
         _, digit_accuracy = evaluate(model, digit_test_loader, criterion, device)
         _, upper_accuracy = evaluate(model, upper_test_loader, criterion, device)

@@ -507,6 +507,10 @@ restored, so future improvement loops do not repeat known-bad blends.
   - Command shape: backed up `character_cnn.pt`, `character_exemplars.pt`, `character_training_metrics.json`, and `character_logit_bias.pt`, then tried a one-epoch `character_model.py --model widecnn --warm-start ... --extra-root data/uji_pen_v2/character_ascii` probe.
   - Result: interrupted before training began because the process was still paying the module-level sklearn/scipy import cost. No character artifacts changed. Follow-up code replaced the character train/validation split with a local deterministic stratified splitter and updated character calibration/analyzer code to use it, removing sklearn from this hot path. `character_model.py --help` still has other heavy imports, so the next speed target is module-level torchvision/scipy import deferral.
 
+- UJI mixed-case warm-start probe:
+  - Command shape: backed up `mixedcase_cnn.pt` and `mixedcase_training_metrics.json`, then ran `python3 alnum_model.py --mixed-case --model cnn --warm-start --epochs 1 --batch-size 256 --samples-per-class 2500 --min-accuracy 0 --learning-rate 0.00001 --seed 2701 --mixedcase-label-smoothing 0.02 --mixedcase-type-loss-weight 0.03 --mixedcase-extra-root data/uji_pen_v2/character_ascii`.
+  - Result: lazy torchvision imports and mixed-case progress logging made the run observable: loaders were `729` training batches and warm-start was `80.50%` exact / `97.02%` case-or-visual. The one-epoch UJI blend regressed to `78.70%` exact (`99.02%` digits, `69.28%` upper, `85.80%` lower), so the backed-up mixed-case checkpoint and metrics were restored. UJI may still be useful, but this simple warm-start mix over-weights the wrong distribution for uppercase exactness.
+
 - Add more real user-labeled correction uploads for exact visual twins, then use `scripts/train_from_corrections.py`.
 - Try training changes that alter objective/architecture for exact mixed case, not just adding broad or synthetic extra datasets.
 - Keep using `python3 scripts/evaluate_hardcases.py --json` after app-level changes; it catches failures that aggregate model metrics miss.

@@ -17,7 +17,6 @@ import torch
 from PIL import ImageOps
 from torch import nn
 from torch.utils.data import DataLoader, TensorDataset
-from torchvision import datasets, transforms
 
 from mnist_model import get_device
 
@@ -169,7 +168,15 @@ class WideEmnistCNN(nn.Module):
         return self.network(images)
 
 
-def emnist_transform(augment: bool = False) -> transforms.Compose:
+def _torchvision_datasets_transforms() -> tuple[object, object]:
+    """Import torchvision lazily for EMNIST dataset construction."""
+
+    from torchvision import datasets, transforms
+
+    return datasets, transforms
+
+
+def emnist_transform(augment: bool = False) -> object:
     """Return the EMNIST transform, including the required orientation fix.
 
     The EMNIST dataset stores images rotated 90 degrees and mirrored
@@ -180,6 +187,7 @@ def emnist_transform(augment: bool = False) -> transforms.Compose:
     oriented uploads.
     """
 
+    _, transforms = _torchvision_datasets_transforms()
     steps = [transforms.Lambda(lambda image: ImageOps.mirror(image.rotate(-90, expand=True)))]
     if augment:
         steps.append(
@@ -223,6 +231,7 @@ def make_loaders(batch_size: int, split: str, augment: bool) -> tuple[DataLoader
     train_transform = emnist_transform(augment=augment)
     test_transform = emnist_transform(augment=False)
     target_transform = (lambda label: label - 1) if split == "letters" else None
+    datasets, _ = _torchvision_datasets_transforms()
     train_dataset = datasets.EMNIST(
         DATA_ROOT,
         split=split,
@@ -263,6 +272,7 @@ def build_or_load_emnist_cache(split: str, train: bool) -> tuple[torch.Tensor, t
     # so both the targets and the label list must be shifted down by one to
     # get a clean, dense 0-indexed 26-class label space.
     target_transform = (lambda label: label - 1) if split == "letters" else None
+    datasets, _ = _torchvision_datasets_transforms()
     dataset = datasets.EMNIST(
         DATA_ROOT,
         split=split,
