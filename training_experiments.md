@@ -482,6 +482,12 @@ restored, so future improvement loops do not repeat known-bad blends.
   - Command shape: `python3 scripts/generate_rough_character_variants.py --output-root /tmp/rough_character_variants_ascii --samples-per-label 60 --seed 2201`, followed by `python3 character_model.py --model widecnn --warm-start --epochs 3 --min-accuracy 0 --learning-rate 0.000002 --label-smoothing 0.02 --weak-labels 'O0o1IlisScCzZ5Yy4gq9Bb8Tt7PpKkFfMmUuVvWwXx' --weak-loss-weight 1.03 --extra-root data/extra_hasyv2/character_ascii --extra-root data/corrections/character_ascii --extra-root data/generated_punctuation_ascii --extra-root /tmp/rough_character_variants_ascii`.
   - Result: the first incorrect `--model cnn` run could not warm-start the deployed `widecnn` checkpoint and collapsed to `33.11%`; the corrected `widecnn` run reached only `89.93%`, `89.86%`, and `90.06%`, below the current `92.18%` checkpoint. The backed-up `character_cnn.pt`, `character_training_metrics.json`, and `character_exemplars.pt` were restored. The generator is kept as reusable infrastructure, but this rough-data mix is not deployable.
 
+- Mixed-case calibration and frozen-head probe:
+  - Calibration command shape: temporary Python evaluation over deployed `mixedcase_cnn.pt` logits with train-cache log-prior bias and coarse digit/upper/lower offsets. Result: simple group bias reached `86.79%`, train-set log-prior bias reached `87.23%`, and the best coarse combined search reached only `87.30%`, so logit calibration alone cannot get near the `95%` exact target.
+  - Code path: added `--mixedcase-freeze-feature-layers`, which freezes all CNN feature parameters and trains only the final classifier layer for bounded mixed-case head tuning.
+  - Training command shape: `python3 alnum_model.py --mixed-case --model cnn --warm-start --mixedcase-freeze-feature-layers --samples-per-class 3500 --include-nist-sd19 --nist-samples-per-class 800 --include-corrections --epochs 5 --learning-rate 0.00008 --seed 2324 --min-accuracy 0 --mixedcase-label-smoothing 0.02 --mixedcase-type-loss-weight 0.08`.
+  - Result: frozen-head tuning peaked at only `77.89%` exact (`98.56%` digits, `71.01%` upper, `85.85%` lower), below the current `80.50%` checkpoint. The backed-up `mixedcase_cnn.pt` and `mixedcase_training_metrics.json` were restored. The freeze option is kept for future lower-risk head-only experiments, but this setting is not deployable.
+
 ## Next Higher-Value Directions
 
 - Add more real user-labeled correction uploads for exact visual twins, then use `scripts/train_from_corrections.py`.

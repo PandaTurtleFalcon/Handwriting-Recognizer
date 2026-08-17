@@ -19,6 +19,7 @@ from alnum_model import (
     _nist_sd19_label_from_hex,
     build_or_load_mixedcase_ascii_folder_cache,
     evaluate_mixedcase_breakdown,
+    freeze_feature_layers,
     initialize_mixedcase_from_folded_checkpoint,
     load_correction_cache,
     mixedcase_auxiliary_loss,
@@ -117,6 +118,15 @@ class ExtraAlnumDatasetTests(unittest.TestCase):
 
         self.assertEqual(tuple(images.shape), (2, 1, 28, 28))
         self.assertEqual(targets.tolist(), [10, 36])
+
+    def test_freeze_feature_layers_keeps_only_final_classifier_trainable(self) -> None:
+        model = MODEL_CLASSES["widecnn"](num_classes=len(MIXEDCASE_LABELS))
+
+        frozen_count = freeze_feature_layers(model)
+
+        self.assertGreater(frozen_count, 0)
+        trainable = [name for name, parameter in model.named_parameters() if parameter.requires_grad]
+        self.assertEqual(trainable, ["network.10.weight", "network.10.bias"])
 
     def test_mixedcase_train_dataset_can_enable_tensor_augmentation(self) -> None:
         images = torch.zeros((2, 1, 28, 28), dtype=torch.float32)

@@ -1408,6 +1408,29 @@ def initialize_mixedcase_from_folded_checkpoint(
     return True
 
 
+def freeze_feature_layers(model: nn.Module) -> int:
+    """Freeze all parameters except the final classifier layer.
+
+    The EMNIST CNN variants in this project expose their stack as
+    ``model.network`` with the output classifier as the final module. Freezing
+    the earlier layers makes bounded mixed-case experiments less destructive:
+    the shared stroke features stay fixed while only the 62-class decision
+    surface is adjusted.
+    """
+
+    network = getattr(model, "network", None)
+    if not isinstance(network, nn.Sequential) or len(network) == 0:
+        return 0
+    trainable_module = network[-1]
+    frozen_count = 0
+    for parameter in model.parameters():
+        parameter.requires_grad = False
+        frozen_count += 1
+    for parameter in trainable_module.parameters():
+        parameter.requires_grad = True
+    return frozen_count
+
+
 def save_mixedcase_checkpoint(
     history: list[dict[str, float | int]],
     best_state: dict[str, torch.Tensor] | None,
@@ -1436,6 +1459,7 @@ def save_mixedcase_checkpoint(
     label_smoothing: float = 0.03,
     transfer_from_folded: bool = False,
     class_balance_strength: float = 0.0,
+    freeze_feature_layers: bool = False,
 ) -> None:
     """Persist the best mixed-case weights and metrics."""
 
@@ -1466,6 +1490,7 @@ def save_mixedcase_checkpoint(
                 "label_smoothing": label_smoothing,
                 "transfer_from_folded": transfer_from_folded,
                 "class_balance_strength": class_balance_strength,
+                "freeze_feature_layers": freeze_feature_layers,
                 "mixedcase_extra_roots": [str(path) for path in (mixedcase_extra_roots or [])],
                 "normalization": {"mean": EMNIST_MEAN, "std": EMNIST_STD},
             },
@@ -1496,6 +1521,7 @@ def save_mixedcase_checkpoint(
                 "label_smoothing": label_smoothing,
                 "transfer_from_folded": transfer_from_folded,
                 "class_balance_strength": class_balance_strength,
+                "freeze_feature_layers": freeze_feature_layers,
                 "mixedcase_extra_roots": [str(path) for path in (mixedcase_extra_roots or [])],
                 "per_class_accuracy": per_class_accuracy or {},
                 "best_checkpoint": best_metrics or {"test_accuracy": best_accuracy},
@@ -1533,6 +1559,7 @@ def train_mixedcase(
     label_smoothing: float = 0.03,
     transfer_from_folded: bool = False,
     class_balance_strength: float = 0.0,
+    freeze_feature_layers_enabled: bool = False,
 ) -> list[dict[str, float | int]]:
     """Train a 62-class recognizer that distinguishes uppercase and lowercase."""
 
@@ -1580,7 +1607,10 @@ def train_mixedcase(
         checkpoint = torch.load(MIXEDCASE_WEIGHTS_PATH, map_location=device, weights_only=True)
         if list(checkpoint.get("labels", [])) == list(MIXEDCASE_LABELS) and checkpoint.get("model_type", "cnn") == model_type:
             model.load_state_dict(checkpoint["model_state_dict"])
-    optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate, weight_decay=0.0005)
+    if freeze_feature_layers_enabled:
+        freeze_feature_layers(model)
+    trainable_parameters = [parameter for parameter in model.parameters() if parameter.requires_grad]
+    optimizer = torch.optim.AdamW(trainable_parameters, lr=learning_rate, weight_decay=0.0005)
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=epochs)
     history: list[dict[str, float | int]] = []
     best_accuracy = 0.0
@@ -1682,6 +1712,7 @@ def train_mixedcase(
             label_smoothing,
             transferred_from_folded,
             class_balance_strength,
+            freeze_feature_layers_enabled,
         )
         print(
             f"Epoch {epoch}/{epochs} train_acc={train_accuracy:.2f}% "
@@ -1972,6 +2003,11 @@ def main() -> None:
         default=0.0,
         help="Blend inverse-frequency class weights into mixed-case loss from 0.0 to 1.0.",
     )
+    parser.add_argument(
+        "--mixedcase-freeze-feature-layers",
+        action="store_true",
+        help="Train only the final mixed-case classifier layer while keeping learned stroke features fixed.",
+    )
     args = parser.parse_args()
     if args.mixed_case:
         train_mixedcase(
@@ -2000,6 +2036,7 @@ def main() -> None:
             label_smoothing=args.mixedcase_label_smoothing,
             transfer_from_folded=args.mixedcase_transfer_from_folded,
             class_balance_strength=args.mixedcase_class_balance_strength,
+            freeze_feature_layers_enabled=args.mixedcase_freeze_feature_layers,
         )
         return
     train(
