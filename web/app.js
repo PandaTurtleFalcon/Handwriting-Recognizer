@@ -9,6 +9,7 @@ const practiceForm = document.querySelector("#practice-form");
 const practiceLabelsEl = document.querySelector("#practice-labels");
 const practiceCoverageEl = document.querySelector("#practice-coverage");
 const practiceReadinessEl = document.querySelector("#practice-readiness");
+const practiceModeInput = document.querySelector("#practice-mode");
 const practiceLabelInput = document.querySelector("#practice-label-input");
 const practiceTargetEl = document.querySelector("#practice-target");
 const practiceTargetProgressEl = document.querySelector("#practice-target-progress");
@@ -19,7 +20,9 @@ const practiceStatus = document.querySelector("#practice-status");
 
 const lowConfidenceThreshold = 0.8;
 const closeGuessMargin = 0.12;
+const correctionCoverageUrl = "/api/correction-coverage";
 let practiceLabels = ["0"];
+let practiceCoverageMode = text(practiceModeInput?.value || "character");
 let practicePointerDown = false;
 let practiceHasInk = false;
 let latestPracticeCoverage = null;
@@ -235,11 +238,28 @@ function selectNextNeededPracticeLabel(showStatus = true) {
   }
 }
 
+async function setPracticeMode(mode, nextLabel = "") {
+  practiceCoverageMode = text(mode || "character");
+  if (practiceModeInput && practiceModeInput.value !== practiceCoverageMode) {
+    practiceModeInput.value = practiceCoverageMode;
+  }
+  await refreshPracticeCoverage(false);
+  if (nextLabel && practiceLabels.includes(nextLabel)) {
+    setPracticeLabel(nextLabel);
+  } else {
+    selectNextNeededPracticeLabel(false);
+  }
+}
+
 function renderPracticeCoverage(payload) {
   if (!practiceCoverageEl || !payload || !Array.isArray(payload.labels)) {
     return;
   }
   latestPracticeCoverage = payload;
+  practiceCoverageMode = text(payload.mode || practiceCoverageMode || "character");
+  if (practiceModeInput && practiceModeInput.value !== practiceCoverageMode) {
+    practiceModeInput.value = practiceCoverageMode;
+  }
   renderPracticeLabelButtons(practiceLabelValuesFromCoverage(payload));
   practiceCoverageEl.replaceChildren();
   const readyLabels = Number(payload.ready_labels || 0);
@@ -248,7 +268,7 @@ function renderPracticeCoverage(payload) {
   const summary = makeElement(
     "div",
     "practice-coverage-summary",
-    `${readyLabels}/${totalLabels} labels ready, ${notReadyLabels} not ready, target ${payload.target_per_label || 20} each`,
+    `${practiceModeName(practiceCoverageMode)}: ${readyLabels}/${totalLabels} labels ready, ${notReadyLabels} not ready, target ${payload.target_per_label || 20} each`,
   );
   practiceCoverageEl.append(summary);
   const totalNeeded = Number(
@@ -336,7 +356,7 @@ async function refreshPracticeCoverage(selectNext = false) {
     return null;
   }
   try {
-    const response = await fetch("/api/correction-coverage");
+    const response = await fetch(`${correctionCoverageUrl}?mode=${encodeURIComponent(practiceCoverageMode)}`);
     const payload = await response.json();
     if (!response.ok || !payload.ok) {
       throw new Error("coverage unavailable");
@@ -352,7 +372,17 @@ async function refreshPracticeCoverage(selectNext = false) {
   }
 }
 
-function renderReadinessCard(name, report) {
+function practiceModeName(mode) {
+  if (mode === "folded_alnum") {
+    return "Folded";
+  }
+  if (mode === "mixedcase") {
+    return "Mixed case";
+  }
+  return "Character";
+}
+
+function renderReadinessCard(name, report, mode) {
   const readiness = report?.readiness || {};
   const nextNeeded = Array.isArray(report?.next_needed) ? report.next_needed.slice(0, 4) : [];
   const samples = Number(readiness.samples || 0);
@@ -380,7 +410,9 @@ function renderReadinessCard(name, report) {
       const label = text(item.label);
       const button = makeElement("button", "readiness-next-button", `${label}:${Number(item.needed || 0)}`);
       button.type = "button";
-      button.addEventListener("click", () => setPracticeLabel(label));
+      button.addEventListener("click", () => {
+        setPracticeMode(mode, label);
+      });
       nextWrap.append(button);
     });
     card.append(nextWrap);
@@ -395,9 +427,9 @@ function renderCorrectionReadiness(payload) {
   practiceReadinessEl.replaceChildren();
   practiceReadinessEl.append(makeElement("div", "practice-coverage-summary", "Training readiness"));
   const grid = makeElement("div", "readiness-grid");
-  grid.append(renderReadinessCard("Character", payload.character || {}));
-  grid.append(renderReadinessCard("Folded", payload.folded_alnum || {}));
-  grid.append(renderReadinessCard("Mixed case", payload.mixedcase || {}));
+  grid.append(renderReadinessCard("Character", payload.character || {}, "character"));
+  grid.append(renderReadinessCard("Folded", payload.folded_alnum || {}, "folded_alnum"));
+  grid.append(renderReadinessCard("Mixed case", payload.mixedcase || {}, "mixedcase"));
   practiceReadinessEl.append(grid);
 }
 
@@ -558,6 +590,11 @@ function setupPracticeMode() {
     return;
   }
   renderPracticeLabelButtons(practiceLabels);
+  if (practiceModeInput) {
+    practiceModeInput.addEventListener("change", () => {
+      setPracticeMode(practiceModeInput.value);
+    });
+  }
   practiceCanvas.addEventListener("pointerdown", beginPracticeStroke);
   practiceCanvas.addEventListener("pointermove", drawPracticeStroke);
   practiceCanvas.addEventListener("pointerup", endPracticeStroke);

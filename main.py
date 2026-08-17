@@ -920,7 +920,9 @@ class MnistWebHandler(BaseHTTPRequestHandler):
             self._send_json({"ok": True, "model_loaded": self.model is not None, "recognizer": self.recognizer_kind})
             return
         if parsed.path == "/api/correction-coverage":
-            self._send_json(correction_coverage_report())
+            query = parse_qs(parsed.query)
+            mode = query.get("mode", ["character"])[0]
+            self._send_json(correction_coverage_report(str(mode)))
             return
         if parsed.path == "/api/correction-readiness":
             self._send_json(correction_readiness_report())
@@ -1400,14 +1402,36 @@ def build_correction_coverage_report(
     }
 
 
-def correction_coverage_report() -> dict[str, object]:
+def correction_coverage_report(mode: str = "character") -> dict[str, object]:
     """Return current trainable practice/correction coverage by weak label."""
 
-    from scripts.train_from_corrections import exportable_character_correction_counts, load_character_labels
+    from scripts.train_from_corrections import (
+        DEFAULT_MIXEDCASE_PRIORITY_LABELS,
+        DEFAULT_PRIORITY_LABELS,
+        LABELS,
+        MIXEDCASE_LABELS,
+        correction_item_label_counts,
+        exportable_character_correction_counts,
+        filter_priority_labels,
+        load_character_labels,
+        load_correction_cache,
+    )
 
-    labels = load_character_labels()
-    counts = exportable_character_correction_counts(labels)
-    return build_correction_coverage_report(counts)
+    normalized_mode = mode if mode in {"character", "folded_alnum", "mixedcase"} else "character"
+    if normalized_mode == "folded_alnum":
+        folded_corrections = load_correction_cache(LABELS)
+        counts = correction_item_label_counts(LABELS, folded_corrections)
+        labels = list(filter_priority_labels(DEFAULT_PRIORITY_LABELS.upper(), LABELS))
+    elif normalized_mode == "mixedcase":
+        mixed_corrections = load_correction_cache(list(MIXEDCASE_LABELS))
+        counts = correction_item_label_counts(list(MIXEDCASE_LABELS), mixed_corrections)
+        labels = list(filter_priority_labels(DEFAULT_MIXEDCASE_PRIORITY_LABELS, list(MIXEDCASE_LABELS)))
+    else:
+        character_labels = load_character_labels()
+        counts = exportable_character_correction_counts(character_labels)
+        labels = CHARACTER_PRACTICE_PRIORITY_LABELS
+    report = build_correction_coverage_report(counts, labels)
+    return {**report, "mode": normalized_mode}
 
 
 def correction_readiness_report() -> dict[str, object]:

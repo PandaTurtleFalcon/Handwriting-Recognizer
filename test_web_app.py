@@ -7,6 +7,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from PIL import Image
+import torch
 
 import main
 
@@ -669,6 +670,7 @@ class WebAppRenderingTests(unittest.TestCase):
         self.assertIn('src="/app.js"', html)
         self.assertIn(".correction-form", css)
         self.assertIn(".practice-panel", css)
+        self.assertIn(".practice-modes", css)
         self.assertIn(".practice-toggle", css)
         self.assertIn(".practice-target-progress", css)
         self.assertIn(".practice-needed-summary", css)
@@ -687,7 +689,8 @@ class WebAppRenderingTests(unittest.TestCase):
         self.assertIn("grid-template-columns: minmax(52px, 1fr) auto", css)
         self.assertIn('fetch("/api/predict"', js)
         self.assertIn('fetch("/api/correct"', js)
-        self.assertIn('fetch("/api/correction-coverage"', js)
+        self.assertIn('correctionCoverageUrl = "/api/correction-coverage"', js)
+        self.assertIn("fetch(`${correctionCoverageUrl}?mode=", js)
         self.assertIn('fetch("/api/correction-readiness"', js)
         self.assertIn("practiceLabels", js)
         self.assertIn("practiceAutoNextInput", js)
@@ -1506,6 +1509,42 @@ class WebAppRenderingTests(unittest.TestCase):
         self.assertIn("next_needed", report["character"])
         self.assertIn("readiness", report["folded_alnum"])
         self.assertIn("readiness", report["mixedcase"])
+
+    def test_correction_coverage_report_can_target_mixedcase_queue(self) -> None:
+        """Practice coverage should expose the mixed-case queue directly."""
+
+        mixed_targets = torch.tensor([0, 2], dtype=torch.long)
+
+        with patch("scripts.train_from_corrections.MIXEDCASE_LABELS", "sOV"):
+            with patch("scripts.train_from_corrections.DEFAULT_MIXEDCASE_PRIORITY_LABELS", "sO!V"):
+                with patch(
+                    "scripts.train_from_corrections.load_correction_cache",
+                    return_value=(torch.zeros((2, 1, 28, 28)), mixed_targets),
+                ):
+                    report = main.correction_coverage_report("mixedcase")
+
+        self.assertEqual(report["mode"], "mixedcase")
+        self.assertEqual([item["label"] for item in report["labels"]], ["s", "O", "V"])
+        self.assertEqual(report["recommended_label"], "O")
+        self.assertEqual(report["not_ready_label_count"], 3)
+
+    def test_correction_coverage_report_rejects_unknown_modes(self) -> None:
+        """Unknown coverage modes should fall back to the character queue."""
+
+        with patch("scripts.train_from_corrections.load_character_labels", return_value=["O"]):
+            with patch("scripts.train_from_corrections.exportable_character_correction_counts", return_value={}):
+                report = main.correction_coverage_report("surprise")
+
+        self.assertEqual(report["mode"], "character")
+        self.assertEqual(report["labels"][0]["label"], main.CHARACTER_PRACTICE_PRIORITY_LABELS[0])
+
+    def test_static_app_exposes_practice_queue_selector(self) -> None:
+        """The browser UI should let users pick which correction queue to fill."""
+
+        html = (main.WEB_ROOT / "index.html").read_text(encoding="utf-8")
+
+        self.assertIn('id="practice-mode"', html)
+        self.assertIn('value="mixedcase"', html)
 
 
 if __name__ == "__main__":
