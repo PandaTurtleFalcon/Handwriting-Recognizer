@@ -2030,8 +2030,8 @@ def normalize_sequence_correction_label(
 
     if prediction_box_count <= 0:
         return corrected_label
-    compact_label = "".join(character for character in corrected_label if character not in {"\n", "\r"})
-    compact_display = "".join(character for character in display_sequence if character not in {"\n", "\r"})
+    compact_label = "".join(character for character in corrected_label if not character.isspace())
+    compact_display = "".join(character for character in display_sequence if not character.isspace())
     if corrected_label == display_sequence and len(original_label) == prediction_box_count:
         return original_label
     if compact_label == compact_display and len(original_label) == prediction_box_count:

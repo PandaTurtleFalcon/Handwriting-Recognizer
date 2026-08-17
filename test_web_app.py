@@ -978,6 +978,32 @@ class WebAppRenderingTests(unittest.TestCase):
 
         self.assertEqual(record["corrected_label"], "AXCY")
 
+    def test_phrase_sequence_correction_ignores_spaces_for_training_boxes(self) -> None:
+        """Phrase corrections should train glyph boxes while treating spaces as layout."""
+
+        boxes = []
+        for index, label in enumerate("xOO11ehind7o4"):
+            boxes.append(
+                (
+                    b"%7B%22original_label%22%3A%22"
+                    + label.encode("ascii")
+                    + b"%22%2C%22bbox%22%3A%7B%22x%22%3A"
+                    + str(index).encode("ascii")
+                    + b"%7D%7D"
+                )
+            )
+        body = (
+            b"correction_kind=sequence&filename=phrase.png&sequence=xOO11ehind7o4&prediction_index=0"
+            b"&original_label=xOO11ehind7o4&corrected_label=look+behind%0Ayou&confidence=0&bbox=%7B%7D"
+            b"&prediction_boxes=%5B" + b"%2C".join(boxes) + b"%5D"
+        )
+
+        form = main.parse_correction_form(body)
+        record = main.build_correction_record(form)
+
+        self.assertEqual(record["corrected_label"], "lookbehindyou")
+        self.assertEqual(len(record["prediction_boxes"]), 13)
+
     def test_full_result_correction_includes_prediction_boxes(self) -> None:
         """Whole-result corrections should include per-glyph boxes for training."""
 

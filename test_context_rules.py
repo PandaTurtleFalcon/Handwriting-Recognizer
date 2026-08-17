@@ -227,6 +227,14 @@ class ContextRulesTests(unittest.TestCase):
         self.assertEqual(cleanup_context("Y0U").display, "you")
         self.assertEqual(cleanup_context("You").display, "you")
 
+    def test_rough_look_behind_you_rows_clean_independently(self) -> None:
+        """The uploaded rough phrase should clean up when rows are segmented."""
+
+        cleanup = cleanup_context("xOO11eh'nd7o4", ["xOO11eh'nd", "7o4"])
+
+        self.assertEqual(cleanup.display, "look behind\nyou")
+        self.assertEqual(cleanup.rows, ["look behind", "you"])
+
     def test_common_word_cleanup_rejects_partial_rough_variants(self) -> None:
         """Exact hardcase cleanups should not become broad letter rewrites."""
 

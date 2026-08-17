@@ -76,6 +76,49 @@ class TrainFromCorrectionsTests(unittest.TestCase):
             self.assertEqual(len(list((output_root / str(ord("H"))).glob("*.png"))), 1)
             self.assertEqual(len(list((output_root / str(ord("i"))).glob("*.png"))), 1)
 
+    def test_exports_sequence_corrections_with_spaces_as_glyphs(self) -> None:
+        """Phrase spaces should not prevent daily training from using glyph boxes."""
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            upload_dir = root / "uploads"
+            upload_dir.mkdir()
+            image_id = "phrase123"
+            image = Image.new("RGB", (64, 24), "white")
+            draw = ImageDraw.Draw(image)
+            draw.line((8, 4, 8, 20), fill="black", width=2)
+            draw.ellipse((34, 4, 54, 20), outline="black", width=2)
+            image.save(upload_dir / f"{image_id}.png")
+
+            corrections_path = root / "corrections.jsonl"
+            corrections_path.write_text(
+                json.dumps(
+                    {
+                        "correction_kind": "sequence",
+                        "image_id": image_id,
+                        "corrected_label": "l o",
+                        "prediction_boxes": [
+                            {"original_label": "1", "bbox": {"x": 0, "y": 0, "width": 24, "height": 24, "row": 1}},
+                            {"original_label": "0", "bbox": {"x": 30, "y": 0, "width": 30, "height": 24, "row": 1}},
+                        ],
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            output_root = root / "character_ascii"
+            count = export_character_correction_folder(
+                ["l", "o"],
+                output_root=output_root,
+                corrections_path=corrections_path,
+                upload_dir=upload_dir,
+            )
+
+            self.assertEqual(count, 2)
+            self.assertEqual(len(list((output_root / str(ord("l"))).glob("*.png"))), 1)
+            self.assertEqual(len(list((output_root / str(ord("o"))).glob("*.png"))), 1)
+
     def test_parser_help_is_available_without_training(self) -> None:
         """The daily training script should expose safe CLI help."""
 

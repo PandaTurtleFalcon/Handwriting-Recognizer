@@ -457,9 +457,9 @@ def build_character_exemplars(
 
 
 def _compact_correction_label(label: object) -> str:
-    """Return a newline-free user correction label."""
+    """Return a whitespace-free user correction label for glyph alignment."""
 
-    return "".join(character for character in str(label) if character not in {"\n", "\r"})
+    return "".join(character for character in str(label) if not character.isspace())
 
 
 def _safe_correction_crop(image: Image.Image, bbox: object) -> Image.Image | None:

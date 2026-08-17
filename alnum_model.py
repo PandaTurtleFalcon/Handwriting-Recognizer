@@ -363,12 +363,18 @@ def load_correction_cache(
     return torch.stack(images), torch.tensor(targets, dtype=torch.long)
 
 
+def _compact_sequence_training_label(label: object) -> str:
+    """Return a whitespace-free sequence correction for box alignment."""
+
+    return "".join(character for character in str(label) if not character.isspace())
+
+
 def _record_with_legacy_sequence_boxes(record: dict[str, object], image: Image.Image) -> dict[str, object]:
     """Add segmentation boxes for older sequence corrections when possible."""
 
     if record.get("correction_kind") != "sequence" or record.get("prediction_boxes"):
         return record
-    corrected_text = str(record.get("corrected_label", ""))
+    corrected_text = _compact_sequence_training_label(record.get("corrected_label", ""))
     if not corrected_text:
         return record
     regions = segment_digit_regions(image, split_wide=False, min_component_pixels=4, merge_marks=True)
@@ -408,7 +414,7 @@ def _correction_training_items(
 
     if correction_kind != "sequence":
         return []
-    corrected_text = str(record.get("corrected_label", ""))
+    corrected_text = _compact_sequence_training_label(record.get("corrected_label", ""))
     prediction_boxes = record.get("prediction_boxes", [])
     if not isinstance(prediction_boxes, list) or len(corrected_text) != len(prediction_boxes):
         return []

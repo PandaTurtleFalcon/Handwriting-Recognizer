@@ -175,6 +175,41 @@ class CharacterPostprocessingTests(unittest.TestCase):
         self.assertEqual(tuple(images.shape), (1, 1, 32, 32))
         self.assertEqual(targets.tolist(), [1])
 
+    def test_load_correction_memory_exemplars_ignores_sequence_spaces(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            upload_dir = root / "uploads"
+            upload_dir.mkdir()
+            image_id = "phrase123"
+            image = Image.new("L", (80, 40), 255)
+            draw = ImageDraw.Draw(image)
+            draw.line((8, 8, 8, 32), fill=0, width=3)
+            draw.ellipse((42, 8, 66, 32), outline=0, width=3)
+            image.save(upload_dir / f"{image_id}.png")
+            corrections_path = root / "corrections.jsonl"
+            corrections_path.write_text(
+                json.dumps(
+                    {
+                        "correction_kind": "sequence",
+                        "image_id": image_id,
+                        "corrected_label": "l o",
+                        "prediction_boxes": [
+                            {"bbox": {"x": 0, "y": 0, "width": 28, "height": 40, "row": 1}},
+                            {"bbox": {"x": 36, "y": 0, "width": 40, "height": 40, "row": 1}},
+                        ],
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            exemplars = load_correction_memory_exemplars(["l", "o"], corrections_path, upload_dir)
+
+        self.assertIsNotNone(exemplars)
+        assert exemplars is not None
+        _, targets = exemplars
+        self.assertEqual(targets.tolist(), [0, 1])
+
     def test_load_correction_memory_exemplars_recovers_legacy_sequence_boxes(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
