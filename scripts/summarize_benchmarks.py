@@ -77,22 +77,27 @@ def summarize_saved_metrics(project_dir: Path = PROJECT_DIR, target: float = 95.
     ]
 
 
-def summarize_app_hardcases(target: float = 95.0, all_fonts: bool = True) -> list[dict[str, object]]:
+def summarize_app_hardcases(
+    target: float = 95.0,
+    all_fonts: bool = True,
+    script_cases: bool = False,
+) -> list[dict[str, object]]:
     """Return app-level generated hard-case gates for the live recognizer stack."""
 
     from scripts.evaluate_hardcases import evaluate_cases
 
-    report = evaluate_cases(all_fonts=all_fonts)
+    report = evaluate_cases(all_fonts=all_fonts, script_cases=script_cases)
+    prefix = "app_script_hardcase" if script_cases else "app_hardcase"
     return [
         _counted_gate(
-            "app_hardcase_exact",
+            f"{prefix}_exact",
             _float_or_none(report.get("exact_accuracy")),
             target,
             report.get("exact_correct", 0),
             report.get("total", 0),
         ),
         _counted_gate(
-            "app_hardcase_ambiguity",
+            f"{prefix}_ambiguity",
             _float_or_none(report.get("ambiguity_aware_accuracy")),
             target,
             report.get("ambiguity_aware_correct", 0),
@@ -259,6 +264,11 @@ def main() -> None:
         help="Use one font instead of all fonts when --include-app-hardcases is set.",
     )
     parser.add_argument(
+        "--include-script-hardcases",
+        action="store_true",
+        help="Also run rough line-drawn hard cases through the live recognizer.",
+    )
+    parser.add_argument(
         "--include-correction-memory",
         action="store_true",
         help="Also report usable saved-correction memory coverage for priority labels.",
@@ -273,6 +283,8 @@ def main() -> None:
     report = summarize_saved_metrics(target=args.target)
     if args.include_app_hardcases:
         report.extend(summarize_app_hardcases(target=args.target, all_fonts=not args.single_font_hardcases))
+    if args.include_script_hardcases:
+        report.extend(summarize_app_hardcases(target=args.target, all_fonts=False, script_cases=True))
     if args.include_correction_memory:
         report.extend(summarize_correction_memory(target=args.target))
     if args.include_correction_training:

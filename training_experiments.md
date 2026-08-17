@@ -453,6 +453,10 @@ restored, so future improvement loops do not repeat known-bad blends.
   - Code path: `scripts/summarize_benchmarks.py --include-correction-memory` now measures deployed character correction memory against `CHARACTER_PRACTICE_PRIORITY_LABELS`, the same queue used by the character practice endpoint, instead of the union queue that also includes mixed-case-only labels.
   - Verification: `python3 -m pytest -q test_summarize_benchmarks.py test_train_from_corrections.py test_web_app.py` passed (`101` tests), and the expanded benchmark now reports `character_correction_memory_samples: 0.20% (2/1020)` plus `character_correction_memory_ready_labels: 0.00% (0/51)`, matching the live character queue.
 
+- Rough script app hardcase gate:
+  - Code path: `scripts/evaluate_hardcases.py --script-cases` adds deterministic line-drawn hardcases alongside the existing clean-font cases, and `scripts/summarize_benchmarks.py --include-script-hardcases` reports them under `app_script_hardcase_exact` and `app_script_hardcase_ambiguity`.
+  - Result: clean single-font hardcases remain `44/44`, but script hardcases expose a much weaker app-level surface: `app_script_hardcase_exact: 61.36% (54/88)` and `app_script_hardcase_ambiguity: 75.00% (66/88)`. This is now a measurable red gate for screenshot-like handwriting rather than a hidden failure mode.
+
 ## Next Higher-Value Directions
 
 - Add more real user-labeled correction uploads for exact visual twins, then use `scripts/train_from_corrections.py`.

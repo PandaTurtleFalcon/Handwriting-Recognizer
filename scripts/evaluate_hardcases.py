@@ -5,6 +5,8 @@ from __future__ import annotations
 import argparse
 import io
 import json
+import math
+import random
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -167,7 +169,119 @@ def render_case(text: str, font: ImageFont.FreeTypeFont | ImageFont.ImageFont) -
     return buffer.getvalue()
 
 
-def evaluate_cases(cases: list[str] | None = None, all_fonts: bool = False) -> dict[str, object]:
+def _jitter_polyline(points: list[tuple[float, float]], rng: random.Random, jitter: float) -> list[tuple[float, float]]:
+    """Return points with deterministic hand-jitter added."""
+
+    return [(x + rng.uniform(-jitter, jitter), y + rng.uniform(-jitter, jitter)) for x, y in points]
+
+
+def _draw_script_like_character(
+    draw: ImageDraw.ImageDraw,
+    character: str,
+    x: float,
+    baseline: float,
+    scale: float,
+    rng: random.Random,
+) -> float:
+    """Draw a rough handwritten glyph and return its advance width."""
+
+    width = max(2, int(round(scale * 0.09)))
+    jitter = scale * 0.025
+
+    def line(points: list[tuple[float, float]], extra_width: int = 0) -> None:
+        draw.line(_jitter_polyline(points, rng, jitter), fill="black", width=max(1, width + extra_width), joint="curve")
+
+    def ellipse(bounds: tuple[float, float, float, float], extra_width: int = 0) -> None:
+        draw.ellipse(bounds, outline="black", width=max(1, width + extra_width))
+
+    top = baseline - scale
+    mid = baseline - scale * 0.52
+    bottom = baseline
+    advance = scale * 0.62
+    if character == " ":
+        return scale * 0.5
+    if character in {"l", "1", "I"}:
+        line([(x + scale * 0.28, top), (x + scale * 0.30, bottom)])
+        if character in {"1", "I"}:
+            line([(x + scale * 0.15, top + scale * 0.02), (x + scale * 0.46, top + scale * 0.02)])
+        return scale * 0.46
+    if character in {"o", "O", "0"}:
+        ellipse((x + scale * 0.06, top + scale * 0.24, x + scale * 0.58, bottom - scale * 0.05))
+        if character == "0":
+            line([(x + scale * 0.20, bottom - scale * 0.08), (x + scale * 0.50, top + scale * 0.28)])
+        return scale * 0.68
+    if character in {"s", "S", "5"}:
+        line(
+            [
+                (x + scale * 0.58, top + scale * 0.22),
+                (x + scale * 0.18, top + scale * 0.22),
+                (x + scale * 0.18, mid),
+                (x + scale * 0.55, mid),
+                (x + scale * 0.55, bottom - scale * 0.08),
+                (x + scale * 0.12, bottom - scale * 0.08),
+            ]
+        )
+        return scale * 0.66
+    if character in {"u", "U"}:
+        line([(x + scale * 0.12, top + scale * 0.28), (x + scale * 0.12, bottom - scale * 0.14), (x + scale * 0.50, bottom - scale * 0.14), (x + scale * 0.50, top + scale * 0.28)])
+        return scale * 0.66
+    if character in {"v", "V", "y", "Y"}:
+        line([(x + scale * 0.10, top + scale * 0.18), (x + scale * 0.34, bottom - scale * 0.06), (x + scale * 0.60, top + scale * 0.18)])
+        if character in {"y", "Y"}:
+            line([(x + scale * 0.34, bottom - scale * 0.06), (x + scale * 0.28, bottom + scale * 0.32)])
+        return scale * 0.70
+    if character in {"T", "t", "7"}:
+        line([(x + scale * 0.06, top + scale * 0.18), (x + scale * 0.62, top + scale * 0.18)])
+        line([(x + scale * 0.36, top + scale * 0.18), (x + scale * 0.34, bottom)])
+        if character == "7":
+            line([(x + scale * 0.62, top + scale * 0.18), (x + scale * 0.26, bottom)])
+        return scale * 0.70
+    if character in {"(", ")"}:
+        side = -1 if character == "(" else 1
+        points = []
+        for index in range(8):
+            phase = index / 7
+            y = top + scale * phase
+            curve = math.sin(math.pi * phase) * scale * 0.18 * side
+            points.append((x + scale * 0.34 + curve, y))
+        line(points)
+        return scale * 0.45
+    if character in {"!", "i"}:
+        if character == "i":
+            draw.ellipse((x + scale * 0.26, top, x + scale * 0.36, top + scale * 0.10), fill="black")
+        else:
+            draw.ellipse((x + scale * 0.25, bottom + scale * 0.03, x + scale * 0.35, bottom + scale * 0.13), fill="black")
+        line([(x + scale * 0.30, top + scale * 0.22), (x + scale * 0.30, bottom)])
+        return scale * 0.42
+
+    # Unknown letters use the current font renderer as a fallback, but keep
+    # the surrounding jittered spacing so generated cases remain messy.
+    draw.text((x, top), character, fill="black")
+    return advance
+
+
+def render_script_case(text: str, seed: int = 42) -> bytes:
+    """Render a rough deterministic line-drawn handwriting sample."""
+
+    rng = random.Random(seed)
+    scale = 72.0
+    image = Image.new("RGB", (max(160, int(len(text) * scale * 0.78 + 96)), 180), "white")
+    draw = ImageDraw.Draw(image)
+    x = 42.0
+    baseline = 112.0
+    for index, character in enumerate(text):
+        y_shift = rng.uniform(-5.0, 5.0)
+        advance = _draw_script_like_character(draw, character, x, baseline + y_shift, scale, rng)
+        x += advance + rng.uniform(8.0, 18.0)
+        if index < len(text) - 1 and rng.random() < 0.18:
+            x += rng.uniform(10.0, 20.0)
+    crop = image.crop(image.getbbox() or (0, 0, image.width, image.height))
+    buffer = io.BytesIO()
+    crop.save(buffer, format="PNG")
+    return buffer.getvalue()
+
+
+def evaluate_cases(cases: list[str] | None = None, all_fonts: bool = False, script_cases: bool = False) -> dict[str, object]:
     """Run generated hard cases through the app classifier."""
 
     selected_cases = cases or DEFAULT_CASES
@@ -187,6 +301,20 @@ def evaluate_cases(cases: list[str] | None = None, all_fonts: bool = False) -> d
                     exact=prediction == target,
                     ambiguity_aware=sequence_matches_with_ambiguity(target, prediction),
                     font=font_name,
+                )
+            )
+    if script_cases:
+        for index, target in enumerate(selected_cases):
+            payload = render_script_case(target, seed=1000 + index)
+            classified = main.classify_files([(f"{target}-script.png", payload)], model, device, save_sources=False)[0]
+            prediction = str(classified.get("sequence", ""))
+            results.append(
+                HardCaseResult(
+                    target=target,
+                    prediction=prediction,
+                    exact=prediction == target,
+                    ambiguity_aware=sequence_matches_with_ambiguity(target, prediction),
+                    font="script",
                 )
             )
     exact = sum(result.exact for result in results)
@@ -220,9 +348,10 @@ def main_cli() -> None:
     parser = argparse.ArgumentParser(description="Evaluate generated hard-case strings against the web recognizer.")
     parser.add_argument("--case", action="append", default=[], help="Specific case to evaluate; repeatable.")
     parser.add_argument("--all-fonts", action="store_true", help="Evaluate every available configured font.")
+    parser.add_argument("--script-cases", action="store_true", help="Also evaluate rough line-drawn handwriting cases.")
     parser.add_argument("--json", action="store_true", help="Print machine-readable JSON.")
     args = parser.parse_args()
-    report = evaluate_cases(args.case or None, all_fonts=args.all_fonts)
+    report = evaluate_cases(args.case or None, all_fonts=args.all_fonts, script_cases=args.script_cases)
     if args.json:
         print(json.dumps(report, indent=2))
         return

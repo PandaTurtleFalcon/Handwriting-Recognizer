@@ -75,12 +75,31 @@ class BenchmarkSummaryTests(unittest.TestCase):
         ) as evaluate:
             report = summarize_app_hardcases(target=95.0, all_fonts=False)
 
-        evaluate.assert_called_once_with(all_fonts=False)
+        evaluate.assert_called_once_with(all_fonts=False, script_cases=False)
         by_name = {str(item["name"]): item for item in report}
         self.assertTrue(by_name["app_hardcase_exact"]["passed"])
         self.assertTrue(by_name["app_hardcase_ambiguity"]["passed"])
         self.assertEqual(by_name["app_hardcase_exact"]["correct"], 176)
         self.assertEqual(by_name["app_hardcase_exact"]["total"], 176)
+
+    def test_summarizes_script_hardcase_gates_on_demand(self) -> None:
+        with patch(
+            "scripts.evaluate_hardcases.evaluate_cases",
+            return_value={
+                "exact_accuracy": 50.0,
+                "exact_correct": 1,
+                "ambiguity_aware_accuracy": 100.0,
+                "ambiguity_aware_correct": 2,
+                "total": 2,
+            },
+        ) as evaluate:
+            report = summarize_app_hardcases(target=95.0, all_fonts=False, script_cases=True)
+
+        evaluate.assert_called_once_with(all_fonts=False, script_cases=True)
+        by_name = {str(item["name"]): item for item in report}
+        self.assertFalse(by_name["app_script_hardcase_exact"]["passed"])
+        self.assertTrue(by_name["app_script_hardcase_ambiguity"]["passed"])
+        self.assertEqual(by_name["app_script_hardcase_exact"]["correct"], 1)
 
     def test_summarizes_correction_memory_priority_coverage(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
