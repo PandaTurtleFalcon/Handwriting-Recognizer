@@ -26,7 +26,16 @@ from torch import nn
 from torch.utils.data import ConcatDataset, DataLoader, TensorDataset, WeightedRandomSampler
 
 from emnist_experiment import DATA_ROOT as EMNIST_DATA_ROOT
-from emnist_experiment import EMNIST_MEAN, EMNIST_STD, EmnistCNN, EmnistMLP, TinyEmnistCNN, WideEmnistCNN, build_or_load_emnist_cache
+from emnist_experiment import (
+    EMNIST_MEAN,
+    EMNIST_STD,
+    EmnistCNN,
+    EmnistMLP,
+    ResidualEmnistCNN,
+    TinyEmnistCNN,
+    WideEmnistCNN,
+    build_or_load_emnist_cache,
+)
 from extra_alnum_datasets import load_labeled_image_folder
 from mnist_model import get_device, segment_digit_regions
 
@@ -60,6 +69,7 @@ MODEL_CLASSES = {
     "tinycnn": TinyEmnistCNN,
     "cnn": EmnistCNN,
     "widecnn": WideEmnistCNN,
+    "rescnn": ResidualEmnistCNN,
 }
 NORMALIZED_BACKGROUND_FILL = float((0.0 - EMNIST_MEAN) / EMNIST_STD)
 
@@ -1967,7 +1977,7 @@ def main() -> None:
     parser.add_argument("--learning-rate", type=float, default=0.001)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--augment", action="store_true")
-    parser.add_argument("--model", choices=["mlp", "tinycnn", "cnn", "widecnn"], default="cnn")
+    parser.add_argument("--model", choices=["mlp", "tinycnn", "cnn", "widecnn", "rescnn"], default="cnn")
     parser.add_argument("--samples-per-class", type=int, default=None)
     parser.add_argument("--device", choices=["auto", "cpu", "mps"], default="auto")
     parser.add_argument(

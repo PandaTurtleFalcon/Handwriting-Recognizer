@@ -80,6 +80,14 @@ class ExtraAlnumDatasetTests(unittest.TestCase):
         self.assertEqual(MIXEDCASE_LABELS.index("S"), 28)
         self.assertEqual(MIXEDCASE_LABELS.index("s"), 54)
 
+    def test_residual_cnn_model_type_is_available_for_mixedcase_experiments(self) -> None:
+        """The deeper candidate must keep the same input/output contract."""
+
+        model = MODEL_CLASSES["rescnn"](num_classes=len(MIXEDCASE_LABELS))
+        outputs = model(torch.zeros((2, 1, 28, 28), dtype=torch.float32))
+
+        self.assertEqual(tuple(outputs.shape), (2, len(MIXEDCASE_LABELS)))
+
     def test_mixedcase_auxiliary_targets_fold_case_and_type(self) -> None:
         """Auxiliary losses should use stable digit/case/type target mappings."""
 

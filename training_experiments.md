@@ -521,6 +521,12 @@ restored, so future improvement loops do not repeat known-bad blends.
   - Command shape: `python3 scripts/calibrate_character_logits.py --scale 0.2`.
   - Result: the validation-optimal scale `0.8` improved isolated character exact to `92.74%` but broke the rough app gate (`92.05%` exact), so it was rejected. The deployed safe scale `0.2` improves character exact from `92.18%` to `92.25%`, character ambiguity from `98.92%` to `98.96%`, and punctuation exact from `95.44%` to `95.51%` while preserving app hardcases at `100.00% (44/44)` clean and `95.45% (84/88)` rough-script exact. This is a small deployable gain, not a solution to the remaining `95%` character/mixed-case exact gap.
 
+- Residual mixed-case CNN architecture probe:
+  - Code path: added `rescnn`, a deeper residual CNN candidate with the same 28x28 one-channel input contract as the existing EMNIST models, so it can be selected from `alnum_model.py --model rescnn` without changing deployed `cnn` checkpoints.
+  - First command shape: `python3 alnum_model.py --mixed-case --model rescnn --include-chars74k --include-usps --include-nist-sd19 --nist-samples-per-class 800 --include-corrections --samples-per-class 3000 --augment --learning-rate 0.0008 --epochs 8 --seed 2301 --min-accuracy 0 --device mps`.
+  - Framework finding: the initial residual head used adaptive pooling from 7x7 to 4x4, which fails on MPS because that PyTorch kernel currently requires divisible input/output sizes. The model was changed to flatten the 7x7 feature map directly, and the focused architecture test passed.
+  - Result: after the MPS-compatible retry, the fresh residual model reached only `71.66%`, `73.70%`, and `75.44%` exact through epoch 3 (`94.50%` digits, `63.68%` upper, `83.92%` lower at epoch 3). The run was interrupted during epoch 4 because the curve was far below the deployed `80.50%` baseline and not trending fast enough. The backed-up `mixedcase_cnn.pt` and `mixedcase_training_metrics.json` were restored. The `rescnn` option is kept as reusable architecture infrastructure, but this data/learning-rate recipe is not deployable.
+
 ## Next Higher-Value Directions
 
 - Interrupted full calibration/analyzer startup probe:

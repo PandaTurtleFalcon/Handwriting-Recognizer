@@ -168,6 +168,65 @@ class WideEmnistCNN(nn.Module):
         return self.network(images)
 
 
+class ResidualBlock(nn.Module):
+    """Small residual block for deeper 28x28 handwriting experiments."""
+
+    def __init__(self, channels: int, dropout: float) -> None:
+        super().__init__()
+        self.block = nn.Sequential(
+            nn.Conv2d(channels, channels, kernel_size=3, padding=1, bias=False),
+            nn.BatchNorm2d(channels),
+            nn.ReLU(inplace=True),
+            nn.Dropout2d(dropout),
+            nn.Conv2d(channels, channels, kernel_size=3, padding=1, bias=False),
+            nn.BatchNorm2d(channels),
+        )
+        self.activation = nn.ReLU(inplace=True)
+
+    def forward(self, images: torch.Tensor) -> torch.Tensor:
+        return self.activation(images + self.block(images))
+
+
+class ResidualEmnistCNN(nn.Module):
+    """Deeper residual CNN candidate for exact mixed-case separation.
+
+    Mixed-case errors are concentrated in visually similar families like
+    0/O/o and 1/I/l/i, where the existing shallow CNN preserves enough signal
+    for ambiguity-aware scoring but not enough for exact case labels. This
+    variant keeps the same input contract while giving the classifier more
+    capacity to retain thin stroke and proportion cues.
+    """
+
+    def __init__(self, num_classes: int) -> None:
+        super().__init__()
+        self.network = nn.Sequential(
+            nn.Conv2d(1, 48, kernel_size=3, padding=1, bias=False),
+            nn.BatchNorm2d(48),
+            nn.ReLU(inplace=True),
+            ResidualBlock(48, dropout=0.05),
+            nn.MaxPool2d(2),
+            nn.Dropout2d(0.10),
+            nn.Conv2d(48, 96, kernel_size=3, padding=1, bias=False),
+            nn.BatchNorm2d(96),
+            nn.ReLU(inplace=True),
+            ResidualBlock(96, dropout=0.08),
+            nn.MaxPool2d(2),
+            nn.Dropout2d(0.15),
+            nn.Conv2d(96, 128, kernel_size=3, padding=1, bias=False),
+            nn.BatchNorm2d(128),
+            nn.ReLU(inplace=True),
+            ResidualBlock(128, dropout=0.10),
+            nn.Flatten(),
+            nn.Linear(128 * 7 * 7, 640),
+            nn.ReLU(inplace=True),
+            nn.Dropout(0.45),
+            nn.Linear(640, num_classes),
+        )
+
+    def forward(self, images: torch.Tensor) -> torch.Tensor:
+        return self.network(images)
+
+
 def _torchvision_datasets_transforms() -> tuple[object, object]:
     """Import torchvision lazily for EMNIST dataset construction."""
 
@@ -454,7 +513,7 @@ def main() -> None:
     parser.add_argument("--epochs", type=int, default=8)
     parser.add_argument("--batch-size", type=int, default=2048)
     parser.add_argument("--split", choices=["balanced", "letters"], default="balanced")
-    parser.add_argument("--model", choices=["mlp", "tinycnn", "widecnn", "cnn"], default="mlp")
+    parser.add_argument("--model", choices=["mlp", "tinycnn", "widecnn", "cnn", "rescnn"], default="mlp")
     parser.add_argument("--augment", action="store_true")
     parser.add_argument("--learning-rate", type=float, default=0.001)
     parser.add_argument("--seed", type=int, default=42)
