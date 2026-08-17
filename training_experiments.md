@@ -545,6 +545,11 @@ restored, so future improvement loops do not repeat known-bad blends.
   - Command shape: `python3 character_model.py --model widecnn --warm-start --epochs 2 --batch-size 256 --min-accuracy 0 --learning-rate 0.0000008 --label-smoothing 0.012 --weak-labels 'lOI0os1iSzc-|vx' --weak-loss-weight 1.04 --seed 1819 --extra-root data/extra_hasyv2/character_ascii_twin_subset --extra-root data/corrections/character_ascii --extra-root data/generated_punctuation_ascii --device mps`.
   - Result: the focused HASY blend regressed to `92.28%` and `92.30%` validation exact, below the deployed calibrated `93.07%` character gate. The backed-up `character_cnn.pt`, `character_training_metrics.json`, `character_exemplars.pt`, and `character_logit_bias.pt` were restored. Like UJI, even a visually targeted HASY subset appears domain-mismatched for the current validation target.
 
+- Tiny mixed-case calibration app-safe deployment:
+  - Command shape: swept fixed mixed-case train-prior calibration scales `0.05`, `0.10`, `0.15`, `0.20`, and `0.25` by writing a temporary `mixedcase_logit_bias.pt`, running `scripts/summarize_benchmarks.py --include-app-hardcases --single-font-hardcases --include-script-hardcases`, and restoring the original artifact after each scale. A final tiny `0.01` scale was tested the same way.
+  - Rejected scales: `0.05` through `0.25` improved isolated mixed-case exact from `80.50%` up to `81.60%`-`84.69%`, but all broke app exact gates (`90.91%` clean hardcases and `88.64%`-`90.91%` script hardcases), so they remain undeployed.
+  - Result: fixed scale `0.01` gives a small deployable lift: mixed-case exact `80.71%`, case-or-visual `97.05%`, clean app hardcases `100.00% (44/44)`, and script app hardcases `95.45% (84/88)`. The artifact is now kept as `mixedcase_logit_bias.pt`; this is safe forward progress but still far below the `95%` mixed-case exact target.
+
 ## Next Higher-Value Directions
 
 - Interrupted full calibration/analyzer startup probe:
