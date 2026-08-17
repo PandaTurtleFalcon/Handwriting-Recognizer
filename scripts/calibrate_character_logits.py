@@ -8,7 +8,6 @@ import sys
 from pathlib import Path
 
 import torch
-from sklearn.model_selection import train_test_split
 from torch.utils.data import DataLoader, TensorDataset
 
 PROJECT_DIR = Path(__file__).resolve().parents[1]
@@ -21,6 +20,7 @@ from character_model import (  # noqa: E402
     build_or_load_combined_cache,
     labels_match_with_ambiguity,
     load_character_model,
+    stratified_split_indices,
 )
 from mnist_model import get_device  # noqa: E402
 from scripts.analyze_character_confusions import _metric_extra_roots  # noqa: E402
@@ -35,7 +35,7 @@ def _validation_logits(batch_size: int) -> tuple[torch.Tensor, torch.Tensor, tor
     if list(cache_labels) != list(labels):
         raise RuntimeError("Character cache labels do not match deployed checkpoint labels.")
     indices = list(range(len(targets)))
-    train_indices, validation_indices = train_test_split(
+    train_indices, validation_indices = stratified_split_indices(
         indices,
         test_size=0.15,
         random_state=42,

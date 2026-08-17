@@ -21,7 +21,6 @@ import numpy as np
 import torch
 from PIL import Image, ImageOps
 from scipy import ndimage
-from sklearn.model_selection import train_test_split
 from torch import nn
 from torch.utils.data import DataLoader, Dataset, Subset, TensorDataset, WeightedRandomSampler
 from torchvision import transforms
@@ -316,12 +315,48 @@ def character_tensor_from_image(image: Image.Image) -> torch.Tensor:
     return torch.from_numpy(array).unsqueeze(0)
 
 
+def stratified_split_indices(
+    indices: list[int],
+    test_size: float,
+    random_state: int,
+    stratify: object,
+) -> tuple[list[int], list[int]]:
+    """Return deterministic train/validation indices without importing sklearn."""
+
+    labels = [str(label) for label in list(stratify)]
+    if len(indices) != len(labels):
+        raise ValueError("stratify labels must match the index count.")
+    rng = random.Random(random_state)
+    grouped: dict[str, list[int]] = {}
+    for index, label in zip(indices, labels):
+        grouped.setdefault(label, []).append(index)
+
+    train_indices: list[int] = []
+    validation_indices: list[int] = []
+    for label in sorted(grouped):
+        label_indices = list(grouped[label])
+        rng.shuffle(label_indices)
+        if len(label_indices) <= 1:
+            validation_count = 0
+        else:
+            validation_count = min(
+                len(label_indices) - 1,
+                max(1, int(round(len(label_indices) * test_size))),
+            )
+        validation_indices.extend(label_indices[:validation_count])
+        train_indices.extend(label_indices[validation_count:])
+
+    rng.shuffle(train_indices)
+    rng.shuffle(validation_indices)
+    return train_indices, validation_indices
+
+
 def split_dataset(dataset: CharacterDataset, validation_size: float = 0.15) -> tuple[list[int], list[int]]:
     """Create a stratified train/validation split for curated characters."""
 
     labels = [label for _, label in dataset.samples]
     indices = list(range(len(dataset)))
-    train_indices, validation_indices = train_test_split(
+    train_indices, validation_indices = stratified_split_indices(
         indices,
         test_size=validation_size,
         random_state=42,
@@ -600,7 +635,7 @@ def make_loaders(root: Path, batch_size: int, extra_roots: list[Path] | None = N
 
     images, targets, labels = build_or_load_combined_cache(root, extra_roots)
     indices = list(range(len(targets)))
-    train_indices, validation_indices = train_test_split(
+    train_indices, validation_indices = stratified_split_indices(
         indices,
         test_size=0.15,
         random_state=42,

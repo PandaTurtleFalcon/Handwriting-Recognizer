@@ -26,6 +26,7 @@ from character_model import (
     FocalCrossEntropyLoss,
     labels_match_with_ambiguity,
     load_correction_memory_exemplars,
+    stratified_split_indices,
 )
 from alnum_model import attach_mixedcase_logit_bias
 from mnist_model import DigitRegion, segment_digit_regions
@@ -59,6 +60,24 @@ class CharacterPostprocessingTests(unittest.TestCase):
             self.assertEqual(len(images), 3)
             self.assertEqual(targets.tolist().count(0), 2)
             self.assertEqual(targets.tolist().count(1), 1)
+
+    def test_stratified_split_indices_is_deterministic_and_balanced(self) -> None:
+        """The local splitter should replace sklearn's stratified split behavior."""
+
+        indices = list(range(30))
+        labels = ["A"] * 10 + ["B"] * 10 + ["C"] * 10
+
+        first_train, first_validation = stratified_split_indices(indices, 0.2, 42, labels)
+        second_train, second_validation = stratified_split_indices(indices, 0.2, 42, labels)
+
+        self.assertEqual(first_train, second_train)
+        self.assertEqual(first_validation, second_validation)
+        self.assertEqual(len(first_validation), 6)
+        validation_labels = [labels[index] for index in first_validation]
+        self.assertEqual(validation_labels.count("A"), 2)
+        self.assertEqual(validation_labels.count("B"), 2)
+        self.assertEqual(validation_labels.count("C"), 2)
+        self.assertEqual(set(first_train).isdisjoint(first_validation), True)
 
     def test_labels_match_with_visual_ambiguity_groups(self) -> None:
         """Ambiguity-aware scoring should accept known handwriting lookalikes."""

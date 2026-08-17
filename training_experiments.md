@@ -503,6 +503,10 @@ restored, so future improvement loops do not repeat known-bad blends.
   - Command shape: `python3 scripts/calibrate_character_logits.py --batch-size 4096`, `python3 scripts/calibrate_mixedcase_logits.py --batch-size 4096 --max-scale 2 --step 0.05`, plus analyzer `--help` smoke checks.
   - Result: rejected as a poor fast-iteration loop. The calibration jobs ran for several minutes on CPU without producing tracked artifacts, and even analyzer `--help` paid heavy sklearn/torchvision import costs before argparse could print usage. No model artifact was kept. Follow-up code moved heavy analyzer imports inside the actual analysis path so `--help` stays cheap for future bounded experiments.
 
+- UJI character warm-start startup probe:
+  - Command shape: backed up `character_cnn.pt`, `character_exemplars.pt`, `character_training_metrics.json`, and `character_logit_bias.pt`, then tried a one-epoch `character_model.py --model widecnn --warm-start ... --extra-root data/uji_pen_v2/character_ascii` probe.
+  - Result: interrupted before training began because the process was still paying the module-level sklearn/scipy import cost. No character artifacts changed. Follow-up code replaced the character train/validation split with a local deterministic stratified splitter and updated character calibration/analyzer code to use it, removing sklearn from this hot path. `character_model.py --help` still has other heavy imports, so the next speed target is module-level torchvision/scipy import deferral.
+
 - Add more real user-labeled correction uploads for exact visual twins, then use `scripts/train_from_corrections.py`.
 - Try training changes that alter objective/architecture for exact mixed case, not just adding broad or synthetic extra datasets.
 - Keep using `python3 scripts/evaluate_hardcases.py --json` after app-level changes; it catches failures that aggregate model metrics miss.

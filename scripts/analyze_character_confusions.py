@@ -88,9 +88,9 @@ def analyze_confusions(
     from torch.utils.data import DataLoader, TensorDataset
 
     if train_test_split is None:
-        from sklearn.model_selection import train_test_split as sklearn_train_test_split
+        from character_model import stratified_split_indices
 
-        train_test_split = sklearn_train_test_split
+        train_test_split = stratified_split_indices
     if DATASET_ROOT is None:
         from character_model import DATASET_ROOT as character_dataset_root
 
