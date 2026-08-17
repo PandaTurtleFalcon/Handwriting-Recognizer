@@ -587,6 +587,10 @@ restored, so future improvement loops do not repeat known-bad blends.
   - Command shape: in-memory validation probe using cached character tensors, per-label train-split flattened-image centroids plus simple ink centroid/density features, and threshold sweeps over visual families `0Oo`, `1Ili|!/`, `5Ss`, `Cc`, `2Zz`, `Pp`, `Uuv`, `Xx`, `-_`, and `.'``.
   - Result: no threshold combination improved over the current calibrated `93.52%` character exact while preserving ambiguity `>=98.8%` and punctuation exact `>=96.0%`. No runtime resolver artifact or code was kept; raw template distance is too weak for this validation split.
 
+- Mixed-case lowercase recovery warm-start:
+  - Command shape: backed up `mixedcase_cnn.pt`, `mixedcase_training_metrics.json`, and `mixedcase_logit_bias.pt`, then ran one bounded epoch with `python3 alnum_model.py --mixed-case --model cnn --warm-start --epochs 1 --batch-size 256 --samples-per-class 3500 --min-accuracy 0 --learning-rate 0.000005 --seed 3101 --mixedcase-label-smoothing 0.015 --mixedcase-weak-labels 'oscmlui' --mixedcase-weak-loss-weight 1.20 --mixedcase-lower-loss-weight 1.08 --mixedcase-upper-loss-weight 0.98 --mixedcase-class-balance-strength 0.12 --device mps`.
+  - Result: exact regressed to `75.48%` (`99.17%` digits, `60.15%` upper, `88.47%` lower). The backed-up mixed-case checkpoint, metrics, and bias artifact were restored and the full benchmark returned to mixed-case `85.66%` with app gates green. Rebalancing toward lowercase alone sacrifices uppercase too aggressively.
+
 ## Next Higher-Value Directions
 
 - Interrupted full calibration/analyzer startup probe:
