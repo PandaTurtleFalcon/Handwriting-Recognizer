@@ -45,6 +45,8 @@ class BenchmarkSummaryTests(unittest.TestCase):
                         "best_checkpoint": {
                             "validation_accuracy": 92.0,
                             "ambiguity_aware_validation_accuracy": 98.0,
+                            "digit_validation_accuracy": 94.0,
+                            "letter_validation_accuracy": 91.0,
                             "punctuation_validation_accuracy": 95.2,
                             "punctuation_ambiguity_aware_validation_accuracy": 98.6,
                         }
@@ -60,6 +62,8 @@ class BenchmarkSummaryTests(unittest.TestCase):
         self.assertFalse(by_name["mixedcase_exact"]["passed"])
         self.assertTrue(by_name["mixedcase_case_or_visual"]["passed"])
         self.assertFalse(by_name["character_exact"]["passed"])
+        self.assertFalse(by_name["character_digit_exact"]["passed"])
+        self.assertFalse(by_name["character_letter_exact"]["passed"])
         self.assertTrue(by_name["punctuation_exact"]["passed"])
 
     def test_summarizes_matching_character_calibration_metrics(self) -> None:
@@ -89,6 +93,8 @@ class BenchmarkSummaryTests(unittest.TestCase):
                     "best_checkpoint": {
                         "validation_accuracy": 93.0,
                         "ambiguity_aware_validation_accuracy": 99.0,
+                        "digit_validation_accuracy": 95.5,
+                        "letter_validation_accuracy": 92.5,
                         "punctuation_validation_accuracy": 96.0,
                         "punctuation_ambiguity_aware_validation_accuracy": 99.5,
                     },
@@ -100,6 +106,8 @@ class BenchmarkSummaryTests(unittest.TestCase):
 
         by_name = {str(item["name"]): item for item in report}
         self.assertEqual(by_name["character_exact"]["value"], 93.0)
+        self.assertEqual(by_name["character_digit_exact"]["value"], 95.5)
+        self.assertEqual(by_name["character_letter_exact"]["value"], 92.5)
         self.assertEqual(by_name["punctuation_exact"]["value"], 96.0)
 
     def test_summarizes_matching_mixedcase_calibration_metrics(self) -> None:

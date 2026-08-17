@@ -77,6 +77,8 @@ def summarize_saved_metrics(project_dir: Path = PROJECT_DIR, target: float = 95.
         _gate("mixedcase_lower_exact", _float_or_none(mixed_best.get("lower_test_accuracy")), target),
         _gate("character_exact", _float_or_none(character_best.get("validation_accuracy")), target),
         _gate("character_ambiguity", _float_or_none(character_best.get("ambiguity_aware_validation_accuracy")), target),
+        _gate("character_digit_exact", _float_or_none(character_best.get("digit_validation_accuracy")), target),
+        _gate("character_letter_exact", _float_or_none(character_best.get("letter_validation_accuracy")), target),
         _gate("punctuation_exact", _float_or_none(character_best.get("punctuation_validation_accuracy")), target),
         _gate(
             "punctuation_ambiguity",

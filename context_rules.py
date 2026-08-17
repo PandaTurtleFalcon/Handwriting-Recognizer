@@ -25,7 +25,7 @@ LOOK_BEHIND_RAW_VARIANTS = {
     "1OOkb9HiNd",
     "1ookb9HiNd",
 }
-YOU_RAW_VARIANTS = {"7o4", "4oU", "Y0U", "You"}
+YOU_RAW_VARIANTS = {"7o4", "4oU", "Y0U", "YOu", "YOU", "You", "Y04"}
 
 
 @dataclass(frozen=True)

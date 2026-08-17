@@ -226,6 +226,8 @@ class ContextRulesTests(unittest.TestCase):
         self.assertEqual(cleanup_context("7o4").display, "you")
         self.assertEqual(cleanup_context("4oU").display, "you")
         self.assertEqual(cleanup_context("Y0U").display, "you")
+        self.assertEqual(cleanup_context("YOu").display, "you")
+        self.assertEqual(cleanup_context("Y04").display, "you")
         self.assertEqual(cleanup_context("You").display, "you")
 
     def test_rough_look_behind_you_rows_clean_independently(self) -> None:
@@ -291,6 +293,14 @@ class ContextRulesTests(unittest.TestCase):
         """The same screenshot should still clean if row detection glues both rows."""
 
         cleanup = cleanup_context("xOOh:1i7o4", ["xOOh:1i7o4"])
+
+        self.assertEqual(cleanup.display, "look behind\nyou")
+        self.assertEqual(cleanup.rows, ["look behind", "you"])
+
+    def test_common_word_cleanup_splits_glued_reported_upper_you_variant(self) -> None:
+        """The reported screenshot should clean when the lower row reads as YOu."""
+
+        cleanup = cleanup_context("xOOh:1iYOu", ["xOOh:1iYOu"])
 
         self.assertEqual(cleanup.display, "look behind\nyou")
         self.assertEqual(cleanup.rows, ["look behind", "you"])

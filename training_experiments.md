@@ -599,6 +599,11 @@ restored, so future improvement loops do not repeat known-bad blends.
   - Code path: `scripts/summarize_benchmarks.py` now reports `mixedcase_digit_exact`, `mixedcase_upper_exact`, and `mixedcase_lower_exact` so the hourly gate shows separate mixed-case quality instead of only aggregate exact.
   - Result: current artifact reports digit `94.95%`, upper `83.97%`, and lower `72.63%`. A stricter greedy probe from scalar `0.25` with floors `digit>=90`, `upper>=80`, `lower>=80`, and `case_or_visual>=97.3` found no accepted exact-improving steps, so the best `87.44%` artifact was restored.
 
+- Character split-gate visibility and reported phrase guard:
+  - Code path: `scripts/summarize_benchmarks.py` now reports `character_digit_exact` and `character_letter_exact`, and `context_rules.py` accepts conservative whole-word `you` variants `YOu`, `YOU`, and `Y04` for the reported `xOOh:1i`/look-behind-you failure shape.
+  - Verification: `python3 -m pytest -q test_context_rules.py test_summarize_benchmarks.py test_evaluate_hardcases.py` passed (`53` tests), `python3 scripts/evaluate_hardcases.py --case 'look behind you' --script-cases --json` returned `2/2` exact, and the full benchmark reports clean app `100.00% (45/45)` plus script app `95.56% (86/90)`.
+  - Result: this widens coverage for the attached screenshot family, but does not claim model accuracy progress. Current character splits are digit `94.93%` and letter `92.67%`, so exact character recognition remains below the `95%` target.
+
 ## Next Higher-Value Directions
 
 - Interrupted full calibration/analyzer startup probe:
