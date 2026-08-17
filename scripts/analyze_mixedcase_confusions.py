@@ -62,6 +62,46 @@ def _group(label: str) -> str:
     return "lower"
 
 
+def _ambiguity_group_label(expected: str, predicted: str) -> str | None:
+    """Return the visual-twin family that contains both labels, if any."""
+
+    for group in MIXEDCASE_AMBIGUITY_GROUPS:
+        if expected in group and predicted in group:
+            return "".join(sorted(group))
+    return None
+
+
+def mixedcase_error_budget(
+    confusion_counts: Counter[tuple[str, str]],
+    total_errors: int,
+    top: int,
+) -> list[dict[str, object]]:
+    """Rank visual-twin families by their share of exact mixed-case errors."""
+
+    group_counts: Counter[str] = Counter()
+    group_examples: dict[str, Counter[tuple[str, str]]] = defaultdict(Counter)
+    for (expected, predicted), count in confusion_counts.items():
+        group_label = _ambiguity_group_label(expected, predicted)
+        if group_label is None:
+            continue
+        group_counts[group_label] += count
+        group_examples[group_label][(expected, predicted)] += count
+    rows = []
+    for group_label, count in group_counts.most_common(top):
+        rows.append(
+            {
+                "family": group_label,
+                "count": count,
+                "error_percent": 100.0 * count / max(total_errors, 1),
+                "top_pairs": [
+                    {"expected": expected, "predicted": predicted, "count": pair_count}
+                    for (expected, predicted), pair_count in group_examples[group_label].most_common(5)
+                ],
+            }
+        )
+    return rows
+
+
 def analyze_confusions(batch_size: int = 2048, top: int = 25) -> dict[str, object]:
     """Evaluate the mixed-case model and summarize confusion counts."""
 
@@ -162,6 +202,7 @@ def analyze_confusions(batch_size: int = 2048, top: int = 25) -> dict[str, objec
             }
         )
     worst_labels.sort(key=lambda item: (float(item["accuracy"]), str(item["label"])))
+    exact_errors = total - exact
 
     return {
         "total": total,
@@ -184,6 +225,7 @@ def analyze_confusions(batch_size: int = 2048, top: int = 25) -> dict[str, objec
             ]
             for group in ("digit", "upper", "lower")
         },
+        "visual_twin_error_budget": mixedcase_error_budget(confusion_counts, exact_errors, top),
         "worst_labels": worst_labels[:top],
     }
 
@@ -215,6 +257,9 @@ def main() -> None:
     print("top confusions:")
     for item in report["top_confusions"]:
         print(f"  {item['expected']} -> {item['predicted']}: {item['count']}")
+    print("visual-twin error budget:")
+    for item in report["visual_twin_error_budget"]:
+        print(f"  {item['family']}: {item['count']} ({item['error_percent']:.2f}% of exact errors)")
     print("worst labels:")
     for item in report["worst_labels"]:
         print(f"  {item['label']}: {item['accuracy']:.2f}% ({item['correct']}/{item['total']})")

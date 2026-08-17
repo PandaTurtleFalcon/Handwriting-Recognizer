@@ -4,7 +4,7 @@ from unittest.mock import patch
 import torch
 from torch import nn
 
-from scripts.analyze_mixedcase_confusions import analyze_confusions
+from scripts.analyze_mixedcase_confusions import analyze_confusions, mixedcase_error_budget
 
 
 class MixedcaseConfusionAnalysisTests(unittest.TestCase):
@@ -37,9 +37,30 @@ class MixedcaseConfusionAnalysisTests(unittest.TestCase):
         self.assertEqual(report["total"], 4)
         self.assertAlmostEqual(report["exact_accuracy"], 75.0)
         self.assertEqual(report["top_confusions"], [{"expected": "0", "predicted": "O", "count": 1}])
+        self.assertEqual(report["visual_twin_error_budget"][0]["family"], "0Oo")
+        self.assertAlmostEqual(report["visual_twin_error_budget"][0]["error_percent"], 100.0)
         self.assertAlmostEqual(report["group_accuracy"]["digit"], 0.0)
         self.assertAlmostEqual(report["group_accuracy"]["upper"], 100.0)
         self.assertAlmostEqual(report["group_accuracy"]["lower"], 100.0)
+
+    def test_mixedcase_error_budget_ranks_visual_twin_families(self) -> None:
+        """The budget should show which visual families consume exact errors."""
+
+        budget = mixedcase_error_budget(
+            {
+                ("1", "l"): 5,
+                ("I", "l"): 3,
+                ("A", "B"): 10,
+                ("O", "0"): 2,
+            },
+            total_errors=20,
+            top=2,
+        )
+
+        self.assertEqual(budget[0]["family"], "!/1Iil|")
+        self.assertEqual(budget[0]["count"], 8)
+        self.assertAlmostEqual(budget[0]["error_percent"], 40.0)
+        self.assertEqual(budget[1]["family"], "0Oo")
 
 
 if __name__ == "__main__":
