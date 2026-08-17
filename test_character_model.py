@@ -2,6 +2,7 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from character_model import (
     _alnum_should_override,
@@ -17,6 +18,7 @@ from character_model import (
     _postprocess_exclamations,
     _postprocess_lowercase_i,
     _punctuation_shape_label,
+    _record_with_legacy_correction_boxes,
     _split_touching_character_regions,
     build_or_load_combined_cache,
     character_loss_weights,
@@ -119,6 +121,55 @@ class CharacterPostprocessingTests(unittest.TestCase):
         images, targets = exemplars
         self.assertEqual(tuple(images.shape), (1, 1, 32, 32))
         self.assertEqual(targets.tolist(), [1])
+
+    def test_load_correction_memory_exemplars_recovers_legacy_sequence_boxes(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            upload_dir = root / "uploads"
+            upload_dir.mkdir()
+            image_id = "legacy123"
+            image = Image.new("L", (120, 80), 255)
+            draw = ImageDraw.Draw(image)
+            draw.line((25, 15, 25, 65), fill=0, width=5)
+            draw.line((78, 18, 100, 18), fill=0, width=5)
+            draw.line((100, 18, 76, 63), fill=0, width=5)
+            draw.line((76, 63, 103, 63), fill=0, width=5)
+            image.save(upload_dir / f"{image_id}.png")
+            corrections_path = root / "corrections.jsonl"
+            corrections_path.write_text(
+                json.dumps(
+                    {
+                        "correction_kind": "sequence",
+                        "image_id": image_id,
+                        "corrected_label": "17",
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            exemplars = load_correction_memory_exemplars(["1", "7"], corrections_path, upload_dir)
+
+        self.assertIsNotNone(exemplars)
+        assert exemplars is not None
+        images, targets = exemplars
+        self.assertEqual(tuple(images.shape), (2, 1, 32, 32))
+        self.assertEqual(targets.tolist(), [0, 1])
+
+    def test_legacy_sequence_recovery_uses_touching_character_split(self) -> None:
+        image = Image.new("L", (80, 60), 255)
+        joined = DigitRegion(image=image.crop((10, 10, 70, 50)), box=(10, 10, 70, 50), row=1)
+        left = DigitRegion(image=image.crop((10, 10, 35, 50)), box=(10, 10, 35, 50), row=1)
+        right = DigitRegion(image=image.crop((36, 10, 70, 50)), box=(36, 10, 70, 50), row=1)
+        record = {"correction_kind": "sequence", "corrected_label": "AB"}
+
+        with patch("character_model.segment_digit_regions", return_value=[joined]):
+            with patch("character_model._split_touching_character_regions", return_value=[left, right]) as mock_split:
+                recovered = _record_with_legacy_correction_boxes(record, image)
+
+        self.assertEqual(len(recovered["prediction_boxes"]), 2)
+        self.assertEqual(recovered["prediction_boxes"][0]["bbox"]["width"], 25)
+        mock_split.assert_called_once_with([joined])
 
     def test_correction_memory_overrides_only_low_confidence_close_matches(self) -> None:
         class MemoryModel:

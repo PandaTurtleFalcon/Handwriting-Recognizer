@@ -19,7 +19,7 @@ from pathlib import Path
 
 import numpy as np
 import torch
-from PIL import Image
+from PIL import Image, ImageOps
 from scipy import ndimage
 from sklearn.model_selection import train_test_split
 from torch import nn
@@ -484,6 +484,36 @@ def _safe_correction_crop(image: Image.Image, bbox: object) -> Image.Image | Non
     return image.crop((left, top, right, bottom))
 
 
+def _record_with_legacy_correction_boxes(record: dict[str, object], image: Image.Image) -> dict[str, object]:
+    """Recover boxes for older sequence corrections when segmentation is exact."""
+
+    if record.get("correction_kind") != "sequence" or record.get("prediction_boxes"):
+        return record
+    corrected_label = _compact_correction_label(record.get("corrected_label", ""))
+    if not corrected_label:
+        return record
+    regions = segment_digit_regions(image, split_wide=False, min_component_pixels=4, merge_marks=True)
+    regions = _split_touching_character_regions(regions)
+    if len(regions) != len(corrected_label):
+        return record
+    prediction_boxes = []
+    for region in regions:
+        x0, y0, x1, y1 = region.box
+        prediction_boxes.append(
+            {
+                "original_label": "",
+                "bbox": {
+                    "x": x0,
+                    "y": y0,
+                    "width": x1 - x0,
+                    "height": y1 - y0,
+                    "row": region.row,
+                },
+            }
+        )
+    return {**record, "prediction_boxes": prediction_boxes}
+
+
 def _correction_memory_items(
     labels: list[str],
     corrections_path: Path = CORRECTIONS_PATH,
@@ -510,13 +540,15 @@ def _correction_memory_items(
             continue
         corrected_label = _compact_correction_label(record.get("corrected_label", ""))
         try:
-            image = Image.open(image_path).convert("L")
+            image = Image.open(image_path)
         except OSError:
             continue
         with image:
+            source_image = ImageOps.exif_transpose(image).convert("L")
+            record = _record_with_legacy_correction_boxes(record, source_image)
             if record.get("correction_kind") == "character":
                 if len(corrected_label) == 1 and corrected_label in known_labels:
-                    crop = _safe_correction_crop(image, record.get("bbox", {}))
+                    crop = _safe_correction_crop(source_image, record.get("bbox", {}))
                     if crop is not None:
                         items.append((corrected_label, crop.copy()))
                 continue
@@ -528,7 +560,7 @@ def _correction_memory_items(
             for label, box_record in zip(corrected_label, boxes):
                 if label not in known_labels or not isinstance(box_record, dict):
                     continue
-                crop = _safe_correction_crop(image, box_record.get("bbox", {}))
+                crop = _safe_correction_crop(source_image, box_record.get("bbox", {}))
                 if crop is not None:
                     items.append((label, crop.copy()))
     return items
