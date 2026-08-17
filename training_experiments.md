@@ -496,6 +496,18 @@ restored, so future improvement loops do not repeat known-bad blends.
   - Training command shape: `python3 alnum_model.py --mixed-case --model cnn --warm-start --mixedcase-freeze-feature-layers --samples-per-class 3500 --include-nist-sd19 --nist-samples-per-class 800 --include-corrections --epochs 5 --learning-rate 0.00008 --seed 2324 --min-accuracy 0 --mixedcase-label-smoothing 0.02 --mixedcase-type-loss-weight 0.08`.
   - Result: frozen-head tuning peaked at only `77.89%` exact (`98.56%` digits, `71.01%` upper, `85.85%` lower), below the current `80.50%` checkpoint. The backed-up `mixedcase_cnn.pt` and `mixedcase_training_metrics.json` were restored. The freeze option is kept for future lower-risk head-only experiments, but this setting is not deployable.
 
+- Mixed-case inference-time test-time augmentation probe:
+  - Command shape: temporary Python evaluator averaged deployed `mixedcase_cnn.pt` logits over identity, one-pixel shifts, diagonal shifts, and small scale variants on the held-out MNIST + EMNIST mixed-case test caches.
+  - Result: the best variant was diagonal shifts at `80.66%` exact, only `+0.16` over the current `80.50%`, while visual-ambiguity accuracy fell from `90.34%` to `90.23%`. Scale variants regressed to `76.59%`. No serving code or model artifact was changed because the gain was too small and not clearly safer for app behavior.
+
+- Mixed-case helper with narrow two-family weak-label weighting:
+  - Command shape: `python3 alnum_model.py --mixed-case --model cnn --warm-start --include-nist-sd19 --nist-samples-per-class 800 --include-corrections --samples-per-class 3500 --learning-rate 0.00002 --epochs 3 --seed 2201 --min-accuracy 0 --mixedcase-label-smoothing 0.02 --mixedcase-weak-labels '10OolIi' --mixedcase-weak-loss-weight 1.10`
+  - Result: exact stayed below baseline at `78.48%`, `78.69%`, and `78.68%`; uppercase exact remained around `69%`. The backed-up `mixedcase_cnn.pt` and `mixedcase_training_metrics.json` were restored. Even narrow weighting of the two biggest visual-twin families is not enough with this objective/data blend.
+
+- Mixed-case helper seed-46 continuation of current best recipe:
+  - Command shape: `python3 alnum_model.py --mixed-case --model cnn --warm-start --include-nist-sd19 --nist-samples-per-class 800 --include-corrections --samples-per-class 3500 --learning-rate 0.00012 --epochs 6 --seed 46 --min-accuracy 0`
+  - Result: exact peaked at only `79.38%` on epoch 4 (`98.64%` digits, `70.55%` upper, `85.84%` lower), below the deployed `80.50%` checkpoint. The backed-up `mixedcase_cnn.pt` and `mixedcase_training_metrics.json` were restored. A simple seed sweep of the current recipe is not a promising path.
+
 - Safe character logit-bias calibration:
   - Code path: added optional `character_logit_bias.pt` loading in `character_model.py` plus `scripts/calibrate_character_logits.py`. The calibration artifact is label-checked and kept separate from `character_cnn.pt`, and `scripts/summarize_benchmarks.py` reports the calibrated character metrics when the artifact matches the deployed labels.
   - Command shape: `python3 scripts/calibrate_character_logits.py --scale 0.2`.
