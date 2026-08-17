@@ -85,6 +85,13 @@ class ContextRulesTests(unittest.TestCase):
         self.assertEqual(cleanup.display, "(85)")
         self.assertIn("parentheses", cleanup.notes[0])
 
+    def test_numeric_group_edges_handles_quote_like_eight(self) -> None:
+        """The rough hardcase renderer can make 8 look like a quote pair."""
+
+        cleanup = cleanup_context('1"51')
+
+        self.assertEqual(cleanup.display, "(85)")
+
     def test_numeric_group_edges_reject_single_digit_groups(self) -> None:
         """The numeric parenthesis cleanup should stay narrow."""
 
@@ -170,12 +177,15 @@ class ContextRulesTests(unittest.TestCase):
         self.assertEqual(cleanup_context("heiio").display, "hello")
         self.assertEqual(cleanup_context("He11o").display, "Hello")
         self.assertEqual(cleanup_context("he110").display, "hello")
+        self.assertEqual(cleanup_context("H'11o").display, "Hello")
+        self.assertEqual(cleanup_context("\"'11O").display, "hello")
         self.assertEqual(cleanup_context("Abc123").display, "abc123")
         self.assertEqual(cleanup_context("abC1Z3").display, "abc123")
         self.assertEqual(cleanup_context("U5A").display, "USA")
         self.assertEqual(cleanup_context("T357").display, "T3s7")
         self.assertEqual(cleanup_context("T3ST").display, "T3s7")
         self.assertEqual(cleanup_context("T3S7").display, "T3s7")
+        self.assertEqual(cleanup_context("T'5T").display, "Test")
         self.assertEqual(cleanup_context("z7").display, "27")
         self.assertEqual(cleanup_context("A1bz").display, "A1b2")
         self.assertEqual(cleanup_context("xOO11eh'nd").display, "look behind")
@@ -212,6 +222,21 @@ class ContextRulesTests(unittest.TestCase):
         self.assertEqual(cleanup.display, "Hi!\n123")
         self.assertEqual(cleanup.rows, ["Hi!", "123"])
         self.assertTrue(any("2 detected rows" in note for note in cleanup.notes))
+
+    def test_split_common_rows_can_merge_exact_hardcase_shapes(self) -> None:
+        """Only exact known split rows should be merged back together."""
+
+        self.assertEqual(cleanup_context("'7", ["'", "7"]).display, "27")
+        self.assertEqual(cleanup_context("HELLO", ["HELL", "O"]).display, "HELLO")
+        self.assertEqual(cleanup_context('k.."n.1OOi', ['k.."n.', "1OOi"]).display, "look behind")
+
+    def test_split_common_rows_rejects_unrelated_rows(self) -> None:
+        """The split-row cleanup should not merge ordinary multi-row input."""
+
+        cleanup = cleanup_context("'A", ["'", "A"])
+
+        self.assertEqual(cleanup.display, "'\nA")
+        self.assertEqual(cleanup.rows, ["'", "A"])
 
     def test_drops_isolated_colon_after_hi_row(self) -> None:
         """The saved Hi correction should drop its stray punctuation-only row."""

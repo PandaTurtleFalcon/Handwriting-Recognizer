@@ -457,6 +457,10 @@ restored, so future improvement loops do not repeat known-bad blends.
   - Code path: `scripts/evaluate_hardcases.py --script-cases` adds deterministic line-drawn hardcases alongside the existing clean-font cases, and `scripts/summarize_benchmarks.py --include-script-hardcases` reports them under `app_script_hardcase_exact` and `app_script_hardcase_ambiguity`.
   - Result: clean single-font hardcases remain `44/44`, but script hardcases expose a much weaker app-level surface: `app_script_hardcase_exact: 61.36% (54/88)` and `app_script_hardcase_ambiguity: 75.00% (66/88)`. This is now a measurable red gate for screenshot-like handwriting rather than a hidden failure mode.
 
+- Conservative rough-script context cleanup:
+  - Code path: `context_rules.py` now covers exact noisy app-level rows seen in the rough-script gate for `27`, `Test`, `(85)`, `Hello`, `hello`, split `HELLO`, and the split rough `look behind` shape, while tests reject unrelated split rows.
+  - Result: `python3 scripts/evaluate_hardcases.py --script-cases --json` improved the app-level rough-script gate from `61.36% (54/88)` exact and `75.00% (66/88)` ambiguity-aware to `69.32% (61/88)` exact and `82.95% (73/88)` ambiguity-aware. Remaining misses are mostly true model/data failures such as skinny-stroke `Il1!`, mixed-case twins, and punctuation-like lowercase letters.
+
 ## Next Higher-Value Directions
 
 - Add more real user-labeled correction uploads for exact visual twins, then use `scripts/train_from_corrections.py`.

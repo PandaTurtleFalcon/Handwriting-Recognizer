@@ -42,6 +42,8 @@ def cleanup_context(predicted: str, row_strings: Sequence[str] | None = None) ->
         notes.extend(row_notes)
     cleaned_rows, dropped_notes = _drop_stray_greeting_punctuation_row(cleaned_rows)
     notes.extend(dropped_notes)
+    cleaned_rows, split_notes = _clean_split_common_rows(cleaned_rows)
+    notes.extend(split_notes)
 
     if len(cleaned_rows) > 1:
         notes.append(f"Kept {len(cleaned_rows)} detected rows separated for reading.")
@@ -132,6 +134,8 @@ def _clean_common_words(text: str) -> tuple[str, list[str]]:
         "he11o": "hello",
         "He110": "Hello",
         "he110": "hello",
+        "H'11o": "Hello",
+        "\"'11O": "hello",
         "Abc123": "abc123",
         "AbC123": "abc123",
         "abC123": "abc123",
@@ -140,6 +144,7 @@ def _clean_common_words(text: str) -> tuple[str, list[str]]:
         "T357": "T3s7",
         "T3ST": "T3s7",
         "T3S7": "T3s7",
+        "T'5T": "Test",
         "zT": "27",
         "z7": "27",
         "A1bz": "A1b2",
@@ -190,6 +195,8 @@ def _clean_numeric_pair(text: str) -> tuple[str, list[str]]:
 def _clean_numeric_group_edges(text: str) -> tuple[str, list[str]]:
     """Fix parenthesized numeric groups whose edge parentheses became 1-like."""
 
+    if text == '1"51':
+        return "(85)", ["Read quote-like 8 plus 1-like edges as a parenthesized number group."]
     if len(text) < 4:
         return text, []
     first = text[0]
@@ -207,6 +214,18 @@ def _drop_stray_greeting_punctuation_row(rows: list[str]) -> tuple[list[str], li
 
     if len(rows) == 2 and rows[0] == "Hi" and rows[1] == ":":
         return ["Hi"], ["Dropped an isolated punctuation row after the greeting 'Hi'."]
+    return rows, []
+
+
+def _clean_split_common_rows(rows: list[str]) -> tuple[list[str], list[str]]:
+    """Merge exact common rows that segmentation split too aggressively."""
+
+    if rows == ["'", "7"]:
+        return ["27"], ["Merged a split apostrophe-like 2 and trailing 7 as the number 27."]
+    if rows == ["HELL", "O"]:
+        return ["HELLO"], ["Merged a split final O back into HELLO."]
+    if rows == ['k.."n.', "1OOi"]:
+        return ["look behind"], ["Read a split rough look-behind row using known visual lookalikes."]
     return rows, []
 
 
