@@ -527,6 +527,19 @@ restored, so future improvement loops do not repeat known-bad blends.
   - Framework finding: the initial residual head used adaptive pooling from 7x7 to 4x4, which fails on MPS because that PyTorch kernel currently requires divisible input/output sizes. The model was changed to flatten the 7x7 feature map directly, and the focused architecture test passed.
   - Result: after the MPS-compatible retry, the fresh residual model reached only `71.66%`, `73.70%`, and `75.44%` exact through epoch 3 (`94.50%` digits, `63.68%` upper, `83.92%` lower at epoch 3). The run was interrupted during epoch 4 because the curve was far below the deployed `80.50%` baseline and not trending fast enough. The backed-up `mixedcase_cnn.pt` and `mixedcase_training_metrics.json` were restored. The `rescnn` option is kept as reusable architecture infrastructure, but this data/learning-rate recipe is not deployable.
 
+- Character calibration metadata refresh:
+  - Command shape: `python3 scripts/calibrate_character_logits.py --scale 0.2 --batch-size 4096`.
+  - Result: the deployed conservative bias scale still writes safely, but the current validation cache/split now verifies higher than the stale saved artifact: base exact `92.98%`, calibrated exact `93.07%`, character ambiguity `99.05%`, punctuation exact `95.71%`, and punctuation ambiguity `99.09%`. The refreshed `character_logit_bias.pt` is deployable and makes `scripts/summarize_benchmarks.py` report the current measured character gate. This is still below the `95%` character exact target.
+
+- Mixed-case calibration app-gate rejection:
+  - Command shape: `python3 scripts/calibrate_mixedcase_logits.py --batch-size 4096 --max-scale 1.2 --step 0.05 --write`, followed by full benchmark summary with clean and script app hardcases, then artifact restore.
+  - Result: isolated mixed-case exact improved from `80.50%` to `87.23%`, but the calibration broke app-level behavior: clean app hardcase exact fell to `88.64% (39/44)` and script hardcase exact fell to `87.50% (77/88)`. The mixed-case calibration artifact was restored/removed and remains undeployed. The isolated metric gain is not worth losing the already-passing app gates.
+
+- Targeted UJI visual-twin mixed-case subset:
+  - Data path: created a local ignored subset at `data/uji_pen_v2/twin_subset_ascii` from `data/uji_pen_v2/character_ascii`, containing only `1/I/l/i`, `0/O/o`, `9/q/g`, `5/S/s`, `2/Z/z`, `U/u/V/v`, `M/N/m/n`, and `C/c` folders. Each included label has `120` UJI samples.
+  - Command shape: `python3 alnum_model.py --mixed-case --model cnn --warm-start --include-nist-sd19 --nist-samples-per-class 800 --include-corrections --samples-per-class 3500 --learning-rate 0.00001 --epochs 1 --seed 2702 --min-accuracy 0 --mixedcase-label-smoothing 0.02 --mixedcase-type-loss-weight 0.03 --mixedcase-extra-root data/uji_pen_v2/twin_subset_ascii --device mps`.
+  - Result: despite targeting the two biggest visual-twin error families, the one-epoch warm-start probe regressed to `77.37%` exact (`98.01%` digits, `66.54%` upper, `86.46%` lower), below the deployed `80.50%` checkpoint. The backed-up `mixedcase_cnn.pt` and `mixedcase_training_metrics.json` were restored. Even focused UJI samples appear distribution-mismatched for the EMNIST mixed-case test gate without a better weighting or domain-adaptation strategy.
+
 ## Next Higher-Value Directions
 
 - Interrupted full calibration/analyzer startup probe:
