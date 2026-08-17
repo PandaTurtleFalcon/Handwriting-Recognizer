@@ -145,6 +145,7 @@ def _clean_common_words(text: str) -> tuple[str, list[str]]:
         "A1bz": "A1b2",
         "xOO11eh'nd": "look behind",
         "xOO11ehnd": "look behind",
+        "xOOh:1i": "look behind",
         "iookbehind": "look behind",
         "lookbehind": "look behind",
         "1ooKbehind": "look behind",

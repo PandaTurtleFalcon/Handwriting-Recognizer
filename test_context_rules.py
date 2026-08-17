@@ -179,6 +179,7 @@ class ContextRulesTests(unittest.TestCase):
         self.assertEqual(cleanup_context("z7").display, "27")
         self.assertEqual(cleanup_context("A1bz").display, "A1b2")
         self.assertEqual(cleanup_context("xOO11eh'nd").display, "look behind")
+        self.assertEqual(cleanup_context("xOOh:1i").display, "look behind")
         self.assertEqual(cleanup_context("iookbehind").display, "look behind")
         self.assertEqual(cleanup_context("1ooKbehind").display, "look behind")
         self.assertEqual(cleanup_context("100Kbehind").display, "look behind")
@@ -191,6 +192,14 @@ class ContextRulesTests(unittest.TestCase):
         """The saved look-behind-you screenshot should clean row by row."""
 
         cleanup = cleanup_context("xOO11eh'nd7o4", ["xOO11eh'nd", "7o4"])
+
+        self.assertEqual(cleanup.display, "look behind\nyou")
+        self.assertEqual(cleanup.rows, ["look behind", "you"])
+
+    def test_common_word_cleanup_handles_reported_look_behind_variant(self) -> None:
+        """The reported xOOh:1i row should clean to look behind."""
+
+        cleanup = cleanup_context("xOOh:1i7o4", ["xOOh:1i", "7o4"])
 
         self.assertEqual(cleanup.display, "look behind\nyou")
         self.assertEqual(cleanup.rows, ["look behind", "you"])
