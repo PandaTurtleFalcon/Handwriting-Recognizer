@@ -508,6 +508,14 @@ restored, so future improvement loops do not repeat known-bad blends.
   - Command shape: `python3 alnum_model.py --mixed-case --model cnn --warm-start --include-nist-sd19 --nist-samples-per-class 800 --include-corrections --samples-per-class 3500 --learning-rate 0.00012 --epochs 6 --seed 46 --min-accuracy 0`
   - Result: exact peaked at only `79.38%` on epoch 4 (`98.64%` digits, `70.55%` upper, `85.84%` lower), below the deployed `80.50%` checkpoint. The backed-up `mixedcase_cnn.pt` and `mixedcase_training_metrics.json` were restored. A simple seed sweep of the current recipe is not a promising path.
 
+- Mixed-case visual-twin family resolver probes:
+  - Command shape: temporary in-memory probes trained tiny per-family resolvers on the deployed model's candidate logits, simple glyph geometry, and then penultimate CNN features for visual-twin families (`1/I/l/i`, `0/O/o`, `9/q/g`, `5/S/s`, etc.).
+  - Result: geometry/logit heads reached at best `81.11%` exact, and feature heads reached at best `81.17%` exact, but both reduced visual-ambiguity accuracy and hurt the uppercase split. No serving code or artifact was kept. The small gain confirms the current representation contains some recoverable signal, but not enough to approach the `95%` exact target with a shallow post-processor.
+
+- Mixed-case classifier-only narrow retune:
+  - Command shape: `python3 alnum_model.py --mixed-case --model cnn --warm-start --include-nist-sd19 --nist-samples-per-class 800 --include-corrections --samples-per-class 3500 --learning-rate 0.00005 --epochs 2 --seed 2202 --min-accuracy 0 --mixedcase-freeze-feature-layers --mixedcase-label-smoothing 0.02 --mixedcase-weak-labels '10OolIi' --mixedcase-weak-loss-weight 1.10`
+  - Result: exact regressed to `75.38%` and `75.79%`, despite preserving high digit exact. The backed-up `mixedcase_cnn.pt` and `mixedcase_training_metrics.json` were restored. Head-only tuning on the current CNN features is too blunt for the visual-twin exact gap.
+
 - Safe character logit-bias calibration:
   - Code path: added optional `character_logit_bias.pt` loading in `character_model.py` plus `scripts/calibrate_character_logits.py`. The calibration artifact is label-checked and kept separate from `character_cnn.pt`, and `scripts/summarize_benchmarks.py` reports the calibrated character metrics when the artifact matches the deployed labels.
   - Command shape: `python3 scripts/calibrate_character_logits.py --scale 0.2`.
