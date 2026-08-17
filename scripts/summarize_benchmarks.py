@@ -55,11 +55,14 @@ def summarize_saved_metrics(project_dir: Path = PROJECT_DIR, target: float = 95.
     folded_metrics = _read_json(project_dir / "alnum_training_metrics.json")
     mixed_metrics = _read_json(project_dir / "mixedcase_training_metrics.json")
     character_metrics = _read_json(project_dir / "character_training_metrics.json")
+    character_calibration = _read_character_calibration(project_dir)
 
     digit_best = _best_checkpoint(digit_metrics)
     folded_best = folded_metrics.get("best_checkpoint", {})
     mixed_best = mixed_metrics.get("best_checkpoint", {})
     character_best = character_metrics.get("best_checkpoint", {})
+    if character_calibration is not None:
+        character_best = character_calibration
 
     return [
         _gate("digit_specialist_exact", _float_or_none(digit_best.get("test_accuracy")), target),
@@ -75,6 +78,30 @@ def summarize_saved_metrics(project_dir: Path = PROJECT_DIR, target: float = 95.
             target,
         ),
     ]
+
+
+def _read_character_calibration(project_dir: Path) -> dict[str, object] | None:
+    """Return calibrated character metrics when the optional artifact matches."""
+
+    import torch
+
+    bias_path = project_dir / "character_logit_bias.pt"
+    labels_path = project_dir / "character_labels.json"
+    if not bias_path.exists() or not labels_path.exists():
+        return None
+    labels = _read_json(labels_path)
+    if not isinstance(labels, list):
+        return None
+    try:
+        calibration = torch.load(bias_path, map_location="cpu", weights_only=True)
+    except (OSError, RuntimeError, TypeError, ValueError):
+        return None
+    if list(calibration.get("labels", [])) != list(labels):
+        return None
+    best = calibration.get("best_checkpoint")
+    if not isinstance(best, dict):
+        return None
+    return best
 
 
 def summarize_app_hardcases(

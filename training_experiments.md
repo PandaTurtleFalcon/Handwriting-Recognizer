@@ -488,6 +488,11 @@ restored, so future improvement loops do not repeat known-bad blends.
   - Training command shape: `python3 alnum_model.py --mixed-case --model cnn --warm-start --mixedcase-freeze-feature-layers --samples-per-class 3500 --include-nist-sd19 --nist-samples-per-class 800 --include-corrections --epochs 5 --learning-rate 0.00008 --seed 2324 --min-accuracy 0 --mixedcase-label-smoothing 0.02 --mixedcase-type-loss-weight 0.08`.
   - Result: frozen-head tuning peaked at only `77.89%` exact (`98.56%` digits, `71.01%` upper, `85.85%` lower), below the current `80.50%` checkpoint. The backed-up `mixedcase_cnn.pt` and `mixedcase_training_metrics.json` were restored. The freeze option is kept for future lower-risk head-only experiments, but this setting is not deployable.
 
+- Safe character logit-bias calibration:
+  - Code path: added optional `character_logit_bias.pt` loading in `character_model.py` plus `scripts/calibrate_character_logits.py`. The calibration artifact is label-checked and kept separate from `character_cnn.pt`, and `scripts/summarize_benchmarks.py` reports the calibrated character metrics when the artifact matches the deployed labels.
+  - Command shape: `python3 scripts/calibrate_character_logits.py --scale 0.2`.
+  - Result: the validation-optimal scale `0.8` improved isolated character exact to `92.74%` but broke the rough app gate (`92.05%` exact), so it was rejected. The deployed safe scale `0.2` improves character exact from `92.18%` to `92.25%`, character ambiguity from `98.92%` to `98.96%`, and punctuation exact from `95.44%` to `95.51%` while preserving app hardcases at `100.00% (44/44)` clean and `95.45% (84/88)` rough-script exact. This is a small deployable gain, not a solution to the remaining `95%` character/mixed-case exact gap.
+
 ## Next Higher-Value Directions
 
 - Add more real user-labeled correction uploads for exact visual twins, then use `scripts/train_from_corrections.py`.

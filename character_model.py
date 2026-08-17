@@ -42,6 +42,7 @@ WEIGHTS_PATH = PROJECT_DIR / "character_cnn.pt"
 METRICS_PATH = PROJECT_DIR / "character_training_metrics.json"
 LABELS_PATH = PROJECT_DIR / "character_labels.json"
 EXEMPLARS_PATH = PROJECT_DIR / "character_exemplars.pt"
+LOGIT_BIAS_PATH = PROJECT_DIR / "character_logit_bias.pt"
 CORRECTIONS_PATH = PROJECT_DIR / "data" / "corrections" / "corrections.jsonl"
 CORRECTION_UPLOAD_DIR = PROJECT_DIR / "data" / "corrections" / "uploads"
 
@@ -950,7 +951,11 @@ def train_character_model(
     return history
 
 
-def load_character_model(weights_path: Path = WEIGHTS_PATH, device: torch.device | None = None) -> tuple[nn.Module, list[str]]:
+def load_character_model(
+    weights_path: Path = WEIGHTS_PATH,
+    device: torch.device | None = None,
+    logit_bias_path: Path | None = LOGIT_BIAS_PATH,
+) -> tuple[nn.Module, list[str]]:
     """Load the curated character classifier and optional exemplar bank."""
 
     selected_device = device or get_device()
@@ -960,6 +965,8 @@ def load_character_model(weights_path: Path = WEIGHTS_PATH, device: torch.device
     model_class = CHARACTER_MODEL_TYPES.get(model_type, CharacterCNN)
     model = model_class(num_classes=len(labels)).to(selected_device)
     model.load_state_dict(checkpoint["model_state_dict"])
+    if logit_bias_path is not None:
+        attach_character_logit_bias(model, labels, selected_device, logit_bias_path)
     if EXEMPLARS_PATH.exists():
         exemplars = torch.load(EXEMPLARS_PATH, map_location="cpu", weights_only=True)
         if list(exemplars.get("labels", [])) == labels:
@@ -973,6 +980,38 @@ def load_character_model(weights_path: Path = WEIGHTS_PATH, device: torch.device
         model.correction_memory_signature = _correction_memory_signature()
     model.eval()
     return model, labels
+
+
+def attach_character_logit_bias(
+    model: nn.Module,
+    labels: list[str],
+    device: torch.device,
+    bias_path: Path = LOGIT_BIAS_PATH,
+) -> bool:
+    """Attach optional post-training logit bias calibration to a model.
+
+    The calibration is intentionally kept outside ``character_cnn.pt`` so a
+    failed or stale bias file can be removed without rewriting model weights.
+    The file must contain matching labels plus one bias per output class.
+    """
+
+    if not bias_path.exists():
+        return False
+    calibration = torch.load(bias_path, map_location=device, weights_only=True)
+    if list(calibration.get("labels", [])) != list(labels):
+        return False
+    bias = calibration.get("bias")
+    if not isinstance(bias, torch.Tensor) or tuple(bias.shape) != (len(labels),):
+        return False
+    bias = bias.to(device=device, dtype=torch.float32)
+    original_forward = model.forward
+
+    def biased_forward(images: torch.Tensor) -> torch.Tensor:
+        return original_forward(images) + bias.to(device=images.device, dtype=torch.float32)
+
+    model.forward = biased_forward  # type: ignore[method-assign]
+    model.character_logit_bias = bias.detach().cpu()
+    return True
 
 
 def load_letter_model(

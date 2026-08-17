@@ -20,6 +20,7 @@ from character_model import (
     _punctuation_shape_label,
     _record_with_legacy_correction_boxes,
     _split_touching_character_regions,
+    attach_character_logit_bias,
     build_or_load_combined_cache,
     character_loss_weights,
     FocalCrossEntropyLoss,
@@ -68,6 +69,40 @@ class CharacterPostprocessingTests(unittest.TestCase):
         self.assertTrue(labels_match_with_ambiguity("_", "-"))
         self.assertTrue(labels_match_with_ambiguity(".", "'"))
         self.assertTrue(labels_match_with_ambiguity(":", "i"))
+
+    def test_character_logit_bias_attaches_to_matching_model(self) -> None:
+        """A matching calibration artifact should shift model logits."""
+
+        model = torch.nn.Linear(2, 2, bias=False)
+        torch.nn.init.zeros_(model.weight)
+        labels = ["A", "B"]
+        with tempfile.TemporaryDirectory() as directory:
+            bias_path = Path(directory) / "bias.pt"
+            torch.save({"labels": labels, "bias": torch.tensor([0.25, -0.25])}, bias_path)
+
+            attached = attach_character_logit_bias(model, labels, torch.device("cpu"), bias_path)
+            output = model(torch.ones((1, 2)))
+
+        self.assertTrue(attached)
+        self.assertTrue(hasattr(model, "character_logit_bias"))
+        self.assertTrue(torch.allclose(output, torch.tensor([[0.25, -0.25]])))
+
+    def test_character_logit_bias_rejects_mismatched_labels(self) -> None:
+        """A stale calibration artifact must not alter model outputs."""
+
+        model = torch.nn.Linear(2, 2, bias=False)
+        torch.nn.init.zeros_(model.weight)
+        labels = ["A", "B"]
+        with tempfile.TemporaryDirectory() as directory:
+            bias_path = Path(directory) / "bias.pt"
+            torch.save({"labels": ["A", "C"], "bias": torch.tensor([0.25, -0.25])}, bias_path)
+
+            attached = attach_character_logit_bias(model, labels, torch.device("cpu"), bias_path)
+            output = model(torch.ones((1, 2)))
+
+        self.assertFalse(attached)
+        self.assertFalse(hasattr(model, "character_logit_bias"))
+        self.assertTrue(torch.allclose(output, torch.zeros((1, 2))))
         self.assertTrue(labels_match_with_ambiguity(";", "!"))
         self.assertTrue(labels_match_with_ambiguity("q", "9"))
         self.assertTrue(labels_match_with_ambiguity("T", "7"))
