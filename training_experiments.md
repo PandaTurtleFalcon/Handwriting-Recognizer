@@ -579,6 +579,10 @@ restored, so future improvement loops do not repeat known-bad blends.
   - Command shape: wrote scalar `0.25` with `python3 scripts/calibrate_mixedcase_logits.py --batch-size 4096 --scale 0.25 --write --require-app-gates`, then tuned with `python3 scripts/calibrate_mixedcase_logits.py --batch-size 4096 --greedy-labels '10OolIiSs5qg92ZzUuVvCc' --greedy-rounds 3 --greedy-deltas=-0.04,-0.02,0.02,0.04 --min-lower 79.7 --write --require-app-gates`.
   - Result: deployed mixed-case exact improved from `80.71%` to `85.08%`, case-or-visual improved to `97.42%`, and app gates stayed green at clean `100.00% (45/45)` and script `95.56% (86/90)`. A looser greedy probe reached `85.26%` exact but pushed lowercase split accuracy down to `79.00%`, so the healthier `85.08%` artifact with lowercase `79.70%` was kept instead.
 
+- Wider character greedy-bias pass:
+  - Command shape: `python3 scripts/calibrate_character_logits.py --batch-size 4096 --greedy-labels 'OlIS0oic1zsvx|-._/' --greedy-rounds 4 --greedy-deltas=-0.08,-0.04,-0.02,0.02,0.04,0.08 --min-ambiguity 98.85 --min-punctuation 96.0 --require-app-gates`.
+  - Result: only two tiny steps were accepted (`O -0.02`, `l -0.02`), improving character exact from `93.50%` to `93.52%` while preserving character ambiguity `99.05%`, punctuation exact `96.34%`, clean app `100.00% (45/45)`, and script app `95.56% (86/90)`. This is deployable, but the tiny gain confirms global per-label bias is mostly exhausted; next character work should use a gated visual-family resolver with crop geometry/logit margins.
+
 ## Next Higher-Value Directions
 
 - Interrupted full calibration/analyzer startup probe:
