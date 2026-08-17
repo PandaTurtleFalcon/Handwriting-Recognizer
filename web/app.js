@@ -8,6 +8,7 @@ const practiceCanvas = document.querySelector("#practice-canvas");
 const practiceForm = document.querySelector("#practice-form");
 const practiceLabelsEl = document.querySelector("#practice-labels");
 const practiceCoverageEl = document.querySelector("#practice-coverage");
+const practiceBatchEl = document.querySelector("#practice-batch");
 const practiceReadinessEl = document.querySelector("#practice-readiness");
 const practiceModeInput = document.querySelector("#practice-mode");
 const practiceLabelInput = document.querySelector("#practice-label-input");
@@ -26,6 +27,7 @@ let practiceCoverageMode = text(practiceModeInput?.value || "character");
 let practicePointerDown = false;
 let practiceHasInk = false;
 let latestPracticeCoverage = null;
+let practiceBatchLabels = [];
 
 function text(value) {
   return value === undefined || value === null ? "" : String(value);
@@ -150,6 +152,9 @@ function setPracticeLabel(label) {
   practiceLabelsEl.querySelectorAll("button").forEach((button) => {
     button.classList.toggle("selected", button.dataset.label === label);
   });
+  practiceBatchEl?.querySelectorAll("button[data-label]").forEach((button) => {
+    button.classList.toggle("selected", button.dataset.label === label);
+  });
   renderSelectedPracticeProgress();
 }
 
@@ -238,6 +243,40 @@ function selectNextNeededPracticeLabel(showStatus = true) {
   }
 }
 
+function recommendedBatchLabels(payload) {
+  const source = Array.isArray(payload?.recommended_batch_labels)
+    ? payload.recommended_batch_labels
+    : Array.isArray(payload?.focus_labels)
+      ? payload.focus_labels
+      : [];
+  return source.map((label) => text(label)).filter((label) => label.length === 1);
+}
+
+function nextBatchPracticeLabel() {
+  if (practiceBatchLabels.length === 0) {
+    return nextNeededPracticeLabel();
+  }
+  const currentLabel = text(practiceLabelInput.value);
+  const currentIndex = practiceBatchLabels.indexOf(currentLabel);
+  for (let offset = 1; offset <= practiceBatchLabels.length; offset += 1) {
+    const index = ((currentIndex >= 0 ? currentIndex : -1) + offset) % practiceBatchLabels.length;
+    const label = practiceBatchLabels[index];
+    const coverage = selectedPracticeCoverage(label);
+    if (!coverage || Number(coverage.needed || 0) > 0) {
+      return label;
+    }
+  }
+  return nextNeededPracticeLabel();
+}
+
+function selectNextBatchPracticeLabel(showStatus = true) {
+  const label = nextBatchPracticeLabel();
+  setPracticeLabel(label);
+  if (showStatus) {
+    practiceStatus.textContent = `Batch next: ${label}`;
+  }
+}
+
 async function setPracticeMode(mode, nextLabel = "") {
   practiceCoverageMode = text(mode || "character");
   if (practiceModeInput && practiceModeInput.value !== practiceCoverageMode) {
@@ -256,6 +295,7 @@ function renderPracticeCoverage(payload) {
     return;
   }
   latestPracticeCoverage = payload;
+  practiceBatchLabels = recommendedBatchLabels(payload);
   practiceCoverageMode = text(payload.mode || practiceCoverageMode || "character");
   if (practiceModeInput && practiceModeInput.value !== practiceCoverageMode) {
     practiceModeInput.value = practiceCoverageMode;
@@ -337,6 +377,7 @@ function renderPracticeCoverage(payload) {
     });
     practiceCoverageEl.append(focus);
   }
+  renderPracticeBatch(payload);
   const grid = makeElement("div", "practice-coverage-grid");
   payload.labels.forEach((item) => {
     const count = Number(item.count || 0);
@@ -349,6 +390,36 @@ function renderPracticeCoverage(payload) {
     grid.append(chip);
   });
   practiceCoverageEl.append(grid);
+}
+
+function renderPracticeBatch(payload) {
+  if (!practiceBatchEl) {
+    return;
+  }
+  practiceBatchEl.replaceChildren();
+  const labels = recommendedBatchLabels(payload);
+  if (labels.length === 0) {
+    return;
+  }
+  const heading = makeElement("strong", "", "Batch");
+  practiceBatchEl.append(heading);
+  labels.forEach((label) => {
+    const coverage = selectedPracticeCoverage(label);
+    const needed = Number(coverage?.needed || 0);
+    const count = Number(coverage?.count || 0);
+    const target = Number(coverage?.target || payload?.target_per_label || 20);
+    const button = makeElement("button", "practice-batch-button", needed > 0 ? `${label}:${needed}` : `${label}:ready`);
+    button.type = "button";
+    button.dataset.label = label;
+    button.title = `${count}/${target} saved`;
+    button.addEventListener("click", () => setPracticeLabel(label));
+    practiceBatchEl.append(button);
+  });
+  const nextButton = makeElement("button", "practice-batch-next", "Next batch label");
+  nextButton.type = "button";
+  nextButton.addEventListener("click", () => selectNextBatchPracticeLabel());
+  practiceBatchEl.append(nextButton);
+  setPracticeLabel(text(practiceLabelInput.value));
 }
 
 async function refreshPracticeCoverage(selectNext = false) {
@@ -550,7 +621,10 @@ async function submitPracticeSample() {
     }
     const autoNext = Boolean(practiceAutoNextInput?.checked);
     clearPracticeCanvas(false);
-    await refreshPracticeCoverage(autoNext);
+    await refreshPracticeCoverage(false);
+    if (autoNext) {
+      selectNextBatchPracticeLabel(false);
+    }
     await refreshCorrectionReadiness();
     const nextLabel = text(practiceLabelInput.value).trim();
     practiceStatus.textContent = autoNext ? `Saved ${label}. Next: ${nextLabel || "none"}.` : repeatPracticeStatus(label);

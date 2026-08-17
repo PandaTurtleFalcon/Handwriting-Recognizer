@@ -307,6 +307,50 @@ h2 {
   outline: 2px solid rgba(67, 56, 202, 0.18);
 }
 
+.practice-batch {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  min-height: 44px;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #f8faff;
+  color: var(--muted);
+  font-weight: 900;
+}
+
+.practice-batch-button,
+.practice-batch-next {
+  min-height: 34px;
+  padding: 4px 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #ffffff;
+  color: var(--ink);
+  cursor: pointer;
+  font-weight: 900;
+}
+
+.practice-batch-button.selected {
+  border-color: var(--accent);
+  background: #eef3ff;
+  color: var(--accent);
+}
+
+.practice-batch-next {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.practice-batch-button:hover,
+.practice-batch-button:focus,
+.practice-batch-next:hover,
+.practice-batch-next:focus {
+  outline: 2px solid rgba(67, 56, 202, 0.18);
+}
+
 .practice-coverage-grid {
   display: flex;
   flex-wrap: wrap;
