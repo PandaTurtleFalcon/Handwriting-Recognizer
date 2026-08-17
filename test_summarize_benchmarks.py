@@ -6,7 +6,12 @@ from unittest.mock import patch
 
 import torch
 
-from scripts.summarize_benchmarks import summarize_app_hardcases, summarize_correction_memory, summarize_saved_metrics
+from scripts.summarize_benchmarks import (
+    summarize_app_hardcases,
+    summarize_correction_memory,
+    summarize_correction_training,
+    summarize_saved_metrics,
+)
 
 
 class BenchmarkSummaryTests(unittest.TestCase):
@@ -99,6 +104,50 @@ class BenchmarkSummaryTests(unittest.TestCase):
         self.assertEqual(by_name["character_correction_memory_ready_labels"]["correct"], 1)
         self.assertEqual(by_name["character_correction_memory_ready_labels"]["total"], 2)
         self.assertFalse(by_name["character_correction_memory_ready_labels"]["passed"])
+
+    def test_correction_memory_missing_labels_keeps_stable_row_names(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            report = summarize_correction_memory(target=95.0, project_dir=Path(temp_dir))
+
+        self.assertEqual(
+            [item["name"] for item in report],
+            ["character_correction_memory_samples", "character_correction_memory_ready_labels"],
+        )
+
+    def test_summarizes_correction_training_priority_coverage(self) -> None:
+        folded_targets = torch.tensor([0, 0, 1], dtype=torch.long)
+        mixed_targets = torch.tensor([0, 2], dtype=torch.long)
+
+        def fake_load_correction_cache(labels):
+            if labels == ["A", "B"]:
+                return torch.zeros((3, 1, 32, 32)), folded_targets
+            if labels == ["s", "O", "V"]:
+                return torch.zeros((2, 1, 32, 32)), mixed_targets
+            return None
+
+        with patch("scripts.train_from_corrections.LABELS", ["A", "B"]):
+            with patch("scripts.train_from_corrections.MIXEDCASE_LABELS", "sOV"):
+                with patch("scripts.train_from_corrections.DEFAULT_PRIORITY_LABELS", "ab!"):
+                    with patch("scripts.train_from_corrections.DEFAULT_MIXEDCASE_PRIORITY_LABELS", "sO!V"):
+                        with patch("main.PRACTICE_TARGET_PER_LABEL", 2):
+                            with patch(
+                                "scripts.train_from_corrections.load_correction_cache",
+                                side_effect=fake_load_correction_cache,
+                            ):
+                                report = summarize_correction_training(target=95.0)
+
+        by_name = {str(item["name"]): item for item in report}
+        self.assertIn("folded_alnum_correction_training_samples", by_name)
+        self.assertIn("mixedcase_correction_training_samples", by_name)
+        self.assertNotIn("character_correction_memory_samples", by_name)
+        self.assertEqual(by_name["folded_alnum_correction_training_samples"]["priority_labels"], ["A", "B"])
+        self.assertEqual(by_name["mixedcase_correction_training_samples"]["priority_labels"], ["s", "O", "V"])
+        self.assertEqual(by_name["mixedcase_correction_training_samples"]["by_label"], {"s": 1, "V": 1})
+        self.assertEqual(by_name["mixedcase_correction_training_samples"]["not_ready_label_list"], ["O", "s", "V"])
+        self.assertEqual(by_name["mixedcase_correction_training_samples"]["correct"], 2)
+        self.assertEqual(by_name["mixedcase_correction_training_samples"]["total"], 6)
+        self.assertEqual(by_name["mixedcase_correction_training_ready_labels"]["correct"], 0)
+        self.assertEqual(by_name["mixedcase_correction_training_ready_labels"]["total"], 3)
 
 
 if __name__ == "__main__":

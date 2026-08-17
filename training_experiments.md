@@ -441,6 +441,10 @@ restored, so future improvement loops do not repeat known-bad blends.
   - Code path: `main.py` now keeps a character-first practice queue for the browser's character correction coverage (`O, l, o, I, ...`) and a mixed-case queue for daily mixed-case fine-tuning (`s, O, V, 1, ...`). Coverage rows and next-needed entries also carry evidence strings explaining the measured confusion each label targets.
   - Verification: `python3 -m pytest -q test_web_app.py test_train_from_corrections.py` passed (`93` tests), `scripts/train_from_corrections.py --dry-run --json` reports character `recommended_label=O` and mixedcase `recommended_label=s`, and `scripts/summarize_benchmarks.py --include-correction-memory --include-app-hardcases --single-font-hardcases` still reports the same model/app benchmark gates.
 
+- Correction-training benchmark visibility:
+  - Code path: `scripts/summarize_benchmarks.py --include-correction-training` now reports queued correction-training coverage separately from deployed character correction memory. The rows are `folded_alnum_correction_training_samples`, `folded_alnum_correction_training_ready_labels`, `mixedcase_correction_training_samples`, and `mixedcase_correction_training_ready_labels`, with priority labels filtered to each recognizer's trainable label set.
+  - Verification: `python3 -m pytest -q test_summarize_benchmarks.py test_train_from_corrections.py` passed (`18` tests), and `python3 scripts/summarize_benchmarks.py --include-correction-memory --include-correction-training --include-app-hardcases --single-font-hardcases` reports folded correction-training coverage at `0.38% (2/520)` and mixed-case correction-training coverage at `0.24% (2/840)`. These rows intentionally fail until enough user-labeled priority samples are collected.
+
 ## Next Higher-Value Directions
 
 - Add more real user-labeled correction uploads for exact visual twins, then use `scripts/train_from_corrections.py`.

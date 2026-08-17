@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+from collections import Counter
 from pathlib import Path
 from typing import Any
 
@@ -109,8 +110,8 @@ def summarize_correction_memory(target: float = 95.0, project_dir: Path = PROJEC
     labels = _read_json(project_dir / "character_labels.json")
     if not isinstance(labels, list):
         return [
-            _counted_gate("correction_memory_samples", None, target, 0, 0),
-            _counted_gate("correction_memory_ready_labels", None, target, 0, 0),
+            _counted_gate("character_correction_memory_samples", None, target, 0, 0),
+            _counted_gate("character_correction_memory_ready_labels", None, target, 0, 0),
         ]
     loaded = load_correction_memory_exemplars([str(label) for label in labels])
     counts: dict[str, int] = {}
@@ -139,6 +140,85 @@ def summarize_correction_memory(target: float = 95.0, project_dir: Path = PROJEC
         _counted_gate("character_correction_memory_ready_labels", ready_percent, target, ready_labels, len(priority_labels)),
     ]
     return [{**row, **metadata} for row in rows]
+
+
+def _correction_training_rows(
+    prefix: str,
+    counts: dict[str, int],
+    priority_labels: str,
+    target: float,
+    target_per_label: int,
+) -> list[dict[str, object]]:
+    """Return flat benchmark rows for queued correction-training coverage."""
+
+    from scripts.train_from_corrections import correction_readiness_summary, not_ready_label_list
+
+    readiness = correction_readiness_summary(Counter(counts), priority_labels, target_per_label=target_per_label)
+    label_list = list(dict.fromkeys(priority_labels))
+    not_ready = not_ready_label_list(Counter(counts), priority_labels, target_per_label=target_per_label)
+    metadata = {
+        "by_label": {label: int(counts[label]) for label in label_list if int(counts.get(label, 0)) > 0},
+        "priority_labels": label_list,
+        "not_ready_label_list": not_ready,
+        "not_ready_label_count": len(not_ready),
+        "samples_per_label_target": target_per_label,
+    }
+    rows = [
+        _counted_gate(
+            f"{prefix}_correction_training_samples",
+            _float_or_none(readiness.get("coverage_percent")),
+            target,
+            readiness.get("samples", 0),
+            readiness.get("target_samples", 0),
+        ),
+        _counted_gate(
+            f"{prefix}_correction_training_ready_labels",
+            100.0 * int(readiness.get("ready_labels", 0)) / max(int(readiness.get("total_labels", 0)), 1),
+            target,
+            readiness.get("ready_labels", 0),
+            readiness.get("total_labels", 0),
+        ),
+    ]
+    return [{**row, **metadata} for row in rows]
+
+
+def summarize_correction_training(target: float = 95.0) -> list[dict[str, object]]:
+    """Return queued correction-training coverage for folded and mixed-case models."""
+
+    from scripts.train_from_corrections import (
+        DEFAULT_MIXEDCASE_PRIORITY_LABELS,
+        DEFAULT_PRIORITY_LABELS,
+        LABELS,
+        MIXEDCASE_LABELS,
+        correction_item_label_counts,
+        filter_priority_labels,
+        load_correction_cache,
+    )
+    from main import PRACTICE_TARGET_PER_LABEL
+
+    folded_corrections = load_correction_cache(LABELS)
+    mixed_corrections = load_correction_cache(list(MIXEDCASE_LABELS))
+    folded_counts = correction_item_label_counts(LABELS, folded_corrections)
+    mixed_counts = correction_item_label_counts(list(MIXEDCASE_LABELS), mixed_corrections)
+    folded_priority_labels = filter_priority_labels(DEFAULT_PRIORITY_LABELS.upper(), LABELS)
+    mixed_priority_labels = filter_priority_labels(DEFAULT_MIXEDCASE_PRIORITY_LABELS, list(MIXEDCASE_LABELS))
+    rows = _correction_training_rows(
+        "folded_alnum",
+        dict(folded_counts),
+        folded_priority_labels,
+        target,
+        PRACTICE_TARGET_PER_LABEL,
+    )
+    rows.extend(
+        _correction_training_rows(
+            "mixedcase",
+            dict(mixed_counts),
+            mixed_priority_labels,
+            target,
+            PRACTICE_TARGET_PER_LABEL,
+        )
+    )
+    return rows
 
 
 def _float_or_none(value: object) -> float | None:
@@ -183,6 +263,11 @@ def main() -> None:
         action="store_true",
         help="Also report usable saved-correction memory coverage for priority labels.",
     )
+    parser.add_argument(
+        "--include-correction-training",
+        action="store_true",
+        help="Also report queued correction-training coverage for folded and mixed-case priority labels.",
+    )
     parser.add_argument("--json", action="store_true")
     args = parser.parse_args()
     report = summarize_saved_metrics(target=args.target)
@@ -190,6 +275,8 @@ def main() -> None:
         report.extend(summarize_app_hardcases(target=args.target, all_fonts=not args.single_font_hardcases))
     if args.include_correction_memory:
         report.extend(summarize_correction_memory(target=args.target))
+    if args.include_correction_training:
+        report.extend(summarize_correction_training(target=args.target))
     if args.json:
         print(json.dumps(report, indent=2))
         return
