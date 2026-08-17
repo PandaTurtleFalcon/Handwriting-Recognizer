@@ -254,6 +254,14 @@ class ContextRulesTests(unittest.TestCase):
         self.assertEqual(cleanup.display, "look behind\nyou")
         self.assertEqual(cleanup.rows, ["look behind", "you"])
 
+    def test_common_word_cleanup_splits_glued_reported_look_behind_variant(self) -> None:
+        """The same screenshot should still clean if row detection glues both rows."""
+
+        cleanup = cleanup_context("xOOh:1i7o4", ["xOOh:1i7o4"])
+
+        self.assertEqual(cleanup.display, "look behind\nyou")
+        self.assertEqual(cleanup.rows, ["look behind", "you"])
+
     def test_row_strings_stay_separated_in_display(self) -> None:
         """Multi-row uploads should not collapse into one ambiguous string."""
 

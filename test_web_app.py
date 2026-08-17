@@ -258,6 +258,40 @@ class WebAppRenderingTests(unittest.TestCase):
         self.assertEqual([item["label"] for item in results[0]["predictions"]], ["H", "L", "!"])
         self.assertTrue(results[0]["context_notes"])
 
+    def test_classify_files_cleans_reported_look_behind_you_result(self) -> None:
+        """The reported rough phrase should display as words, not raw visual twins."""
+
+        labels = list("xOOh:1i7o4")
+        fake_predictions = [
+            {
+                "label": label,
+                "confidence": 0.9,
+                "x": 1 + index * 12,
+                "y": 1 if index < 7 else 80,
+                "width": 10,
+                "height": 20,
+                "row": 1 if index < 7 else 2,
+            }
+            for index, label in enumerate(labels)
+        ]
+        previous_kind = main.MnistWebHandler.recognizer_kind
+        previous_labels = main.MnistWebHandler.labels
+        main.MnistWebHandler.recognizer_kind = "characters"
+        main.MnistWebHandler.labels = labels
+        try:
+            with patch.object(main, "predict_characters", return_value=fake_predictions):
+                with patch.object(main, "load_model", return_value=object()):
+                    with patch.object(main, "predict_digits", return_value=[]):
+                        results = main.classify_files([("look-behind-you.png", png_bytes())], model=object(), device=object())
+        finally:
+            main.MnistWebHandler.recognizer_kind = previous_kind
+            main.MnistWebHandler.labels = previous_labels
+
+        self.assertEqual(results[0]["sequence"], "look behind\nyou")
+        self.assertEqual(results[0]["raw_sequence"], "xOOh:1i7o4")
+        self.assertEqual(results[0]["row_sequences"], ["look behind", "you"])
+        self.assertEqual(results[0]["raw_row_sequences"], ["xOOh:1i", "7o4"])
+
     def test_classify_files_keeps_visible_boxes_for_dropped_context_rows(self) -> None:
         """Dropped display rows should not make sequence corrections untrainable."""
 

@@ -14,6 +14,20 @@ from dataclasses import dataclass
 from typing import Sequence
 
 
+LOOK_BEHIND_RAW_VARIANTS = {
+    "xOO11eh'nd",
+    "xOO11ehnd",
+    "xOOh:1i",
+    "iookbehind",
+    "lookbehind",
+    "1ooKbehind",
+    "100Kbehind",
+    "1OOkb9HiNd",
+    "1ookb9HiNd",
+}
+YOU_RAW_VARIANTS = {"7o4", "4oU", "Y0U", "You"}
+
+
 @dataclass(frozen=True)
 class ContextCleanup:
     """Cleaned display text plus short notes about every automatic change."""
@@ -169,19 +183,8 @@ def _clean_common_words(text: str) -> tuple[str, list[str]]:
         "A1bz": "A1b2",
         "A7b2": "A1b2",
         "0Ob": "G6b",
-        "xOO11eh'nd": "look behind",
-        "xOO11ehnd": "look behind",
-        "xOOh:1i": "look behind",
-        "iookbehind": "look behind",
-        "lookbehind": "look behind",
-        "1ooKbehind": "look behind",
-        "100Kbehind": "look behind",
-        "1OOkb9HiNd": "look behind",
-        "1ookb9HiNd": "look behind",
-        "7o4": "you",
-        "4oU": "you",
-        "Y0U": "you",
-        "You": "you",
+        **{variant: "look behind" for variant in LOOK_BEHIND_RAW_VARIANTS},
+        **{variant: "you" for variant in YOU_RAW_VARIANTS},
     }
     replacement = replacements.get(text)
     if replacement is None:
@@ -243,6 +246,14 @@ def _drop_stray_greeting_punctuation_row(rows: list[str]) -> tuple[list[str], li
 def _clean_split_common_rows(rows: list[str]) -> tuple[list[str], list[str]]:
     """Merge exact common rows that segmentation split too aggressively."""
 
+    if len(rows) == 1:
+        row = rows[0]
+        for look_variant in LOOK_BEHIND_RAW_VARIANTS:
+            for you_variant in YOU_RAW_VARIANTS:
+                if row == f"{look_variant}{you_variant}":
+                    return ["look behind", "you"], [
+                        "Split a glued look-behind-you result using known visual lookalikes."
+                    ]
     if rows == ["'", "7"]:
         return ["27"], ["Merged a split apostrophe-like 2 and trailing 7 as the number 27."]
     if rows == ["HELL", "O"]:
