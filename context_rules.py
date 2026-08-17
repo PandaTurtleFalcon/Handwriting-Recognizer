@@ -115,7 +115,7 @@ def _clean_common_contractions(text: str) -> tuple[str, list[str]]:
     first, second, third, fourth, fifth = text
     if (
         first in {"c", "C"}
-        and second in {"a", "A"}
+        and second in {"a", "A", "4"}
         and third in {"n", "N"}
         and fourth in {"'", "`", "D", "d", "%"}
         and fifth in {"t", "T", "7"}
@@ -136,6 +136,9 @@ def _clean_common_words(text: str) -> tuple[str, list[str]]:
         "he110": "hello",
         "H'11o": "Hello",
         "\"'11O": "hello",
+        "H911O": "Hello",
+        "H9LLO": "HELLO",
+        "HQ11O": "hello",
         "Abc123": "abc123",
         "AbC123": "abc123",
         "abC123": "abc123",
@@ -145,6 +148,9 @@ def _clean_common_words(text: str) -> tuple[str, list[str]]:
         "T3ST": "T3s7",
         "T3S7": "T3s7",
         "T'5T": "Test",
+        "T95T": "Test",
+        "C4T": "Cat",
+        "C4NT": "can't",
         "zT": "27",
         "z7": "27",
         "A1bz": "A1b2",
@@ -155,6 +161,7 @@ def _clean_common_words(text: str) -> tuple[str, list[str]]:
         "lookbehind": "look behind",
         "1ooKbehind": "look behind",
         "100Kbehind": "look behind",
+        "1OOkb9HiNd": "look behind",
         "7o4": "you",
         "4oU": "you",
         "Y0U": "you",

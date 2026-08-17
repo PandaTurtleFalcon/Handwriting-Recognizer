@@ -1,7 +1,8 @@
 import unittest
+from io import BytesIO
 from unittest.mock import patch
 
-from PIL import ImageFont
+from PIL import Image, ImageFont
 
 from scripts.evaluate_hardcases import evaluate_cases, render_script_case, sequence_matches_with_ambiguity
 
@@ -51,6 +52,23 @@ class HardCaseEvaluationTests(unittest.TestCase):
 
         self.assertEqual(first, second)
         self.assertTrue(first.startswith(b"\x89PNG"))
+
+    def test_script_case_renderer_draws_mixed_letters_at_handwriting_scale(self) -> None:
+        """Mixed fallback-prone labels should produce full-size handwritten ink."""
+
+        payload = render_script_case("abc123", seed=11)
+        image = Image.open(BytesIO(payload)).convert("L")
+        dark_pixels = [
+            (x, y)
+            for y in range(image.height)
+            for x in range(image.width)
+            if image.getpixel((x, y)) < 128
+        ]
+        xs = [x for x, _ in dark_pixels]
+        ys = [y for _, y in dark_pixels]
+
+        self.assertGreater(max(xs) - min(xs), 180)
+        self.assertGreater(max(ys) - min(ys), 60)
 
     def test_live_all_font_hardcases_stay_above_target(self) -> None:
         """The shipped website recognizer should keep hard cases above 95%."""

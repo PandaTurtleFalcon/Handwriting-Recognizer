@@ -210,6 +210,29 @@ def _draw_script_like_character(
         if character == "0":
             line([(x + scale * 0.20, bottom - scale * 0.08), (x + scale * 0.50, top + scale * 0.28)])
         return scale * 0.68
+    if character in {"c", "C"}:
+        line(
+            [
+                (x + scale * 0.58, top + scale * 0.28),
+                (x + scale * 0.28, top + scale * 0.22),
+                (x + scale * 0.10, mid),
+                (x + scale * 0.24, bottom - scale * 0.08),
+                (x + scale * 0.58, bottom - scale * 0.14),
+            ]
+        )
+        return scale * 0.64
+    if character in {"e", "E"}:
+        line(
+            [
+                (x + scale * 0.58, top + scale * 0.28),
+                (x + scale * 0.22, top + scale * 0.24),
+                (x + scale * 0.08, mid),
+                (x + scale * 0.52, mid),
+                (x + scale * 0.18, bottom - scale * 0.10),
+                (x + scale * 0.58, bottom - scale * 0.12),
+            ]
+        )
+        return scale * 0.64
     if character in {"s", "S", "5"}:
         line(
             [
@@ -221,6 +244,85 @@ def _draw_script_like_character(
                 (x + scale * 0.12, bottom - scale * 0.08),
             ]
         )
+        return scale * 0.66
+    if character in {"a", "A"}:
+        line(
+            [
+                (x + scale * 0.12, bottom - scale * 0.10),
+                (x + scale * 0.34, top + scale * 0.18),
+                (x + scale * 0.58, bottom - scale * 0.10),
+            ]
+        )
+        line([(x + scale * 0.22, mid), (x + scale * 0.50, mid)])
+        if character == "a":
+            ellipse((x + scale * 0.12, top + scale * 0.36, x + scale * 0.52, bottom - scale * 0.08))
+            line([(x + scale * 0.54, top + scale * 0.32), (x + scale * 0.54, bottom - scale * 0.06)])
+        return scale * 0.66
+    if character in {"b", "B"}:
+        line([(x + scale * 0.12, top + scale * 0.12), (x + scale * 0.12, bottom - scale * 0.06)])
+        if character == "B":
+            line(
+                [
+                    (x + scale * 0.12, top + scale * 0.14),
+                    (x + scale * 0.52, top + scale * 0.18),
+                    (x + scale * 0.54, mid),
+                    (x + scale * 0.14, mid),
+                    (x + scale * 0.56, mid + scale * 0.06),
+                    (x + scale * 0.54, bottom - scale * 0.08),
+                    (x + scale * 0.12, bottom - scale * 0.06),
+                ]
+            )
+        else:
+            ellipse((x + scale * 0.10, mid - scale * 0.04, x + scale * 0.58, bottom - scale * 0.06))
+        return scale * 0.66
+    if character in {"d", "D"}:
+        line([(x + scale * 0.54, top + scale * 0.10), (x + scale * 0.54, bottom - scale * 0.06)])
+        ellipse((x + scale * 0.10, mid - scale * 0.04, x + scale * 0.56, bottom - scale * 0.06))
+        return scale * 0.66
+    if character in {"f", "F"}:
+        line([(x + scale * 0.42, top + scale * 0.10), (x + scale * 0.30, bottom - scale * 0.04)])
+        line([(x + scale * 0.16, top + scale * 0.18), (x + scale * 0.62, top + scale * 0.18)])
+        line([(x + scale * 0.16, mid), (x + scale * 0.50, mid)])
+        return scale * 0.62
+    if character in {"g", "G", "q", "9", "6"}:
+        ellipse((x + scale * 0.10, top + scale * 0.24, x + scale * 0.58, bottom - scale * 0.12))
+        if character in {"g", "q"}:
+            line([(x + scale * 0.52, bottom - scale * 0.14), (x + scale * 0.38, bottom + scale * 0.24)])
+        elif character == "9":
+            line([(x + scale * 0.52, mid), (x + scale * 0.32, bottom - scale * 0.02)])
+        elif character == "6":
+            line([(x + scale * 0.20, mid), (x + scale * 0.42, top + scale * 0.12)])
+        else:
+            line([(x + scale * 0.42, mid), (x + scale * 0.62, mid)])
+        return scale * 0.68
+    if character in {"h", "H"}:
+        line([(x + scale * 0.12, top + scale * 0.10), (x + scale * 0.12, bottom - scale * 0.06)])
+        line([(x + scale * 0.54, top + scale * 0.12), (x + scale * 0.54, bottom - scale * 0.06)])
+        line([(x + scale * 0.12, mid), (x + scale * 0.54, mid)])
+        return scale * 0.68
+    if character in {"m", "M"}:
+        line(
+            [
+                (x + scale * 0.10, bottom - scale * 0.08),
+                (x + scale * 0.10, top + scale * 0.28),
+                (x + scale * 0.34, mid),
+                (x + scale * 0.56, top + scale * 0.28),
+                (x + scale * 0.56, bottom - scale * 0.08),
+            ]
+        )
+        return scale * 0.72
+    if character in {"n", "N"}:
+        line([(x + scale * 0.12, bottom - scale * 0.08), (x + scale * 0.12, top + scale * 0.30), (x + scale * 0.54, bottom - scale * 0.08), (x + scale * 0.54, top + scale * 0.30)])
+        return scale * 0.66
+    if character in {"p", "P"}:
+        line([(x + scale * 0.12, top + scale * 0.12), (x + scale * 0.12, bottom + scale * 0.24)])
+        ellipse((x + scale * 0.10, top + scale * 0.16, x + scale * 0.58, mid + scale * 0.12))
+        return scale * 0.66
+    if character in {"r", "R"}:
+        line([(x + scale * 0.12, top + scale * 0.12), (x + scale * 0.12, bottom - scale * 0.06)])
+        line([(x + scale * 0.12, top + scale * 0.16), (x + scale * 0.54, top + scale * 0.22), (x + scale * 0.48, mid), (x + scale * 0.12, mid)])
+        if character == "R":
+            line([(x + scale * 0.22, mid), (x + scale * 0.58, bottom - scale * 0.06)])
         return scale * 0.66
     if character in {"u", "U"}:
         line([(x + scale * 0.12, top + scale * 0.28), (x + scale * 0.12, bottom - scale * 0.14), (x + scale * 0.50, bottom - scale * 0.14), (x + scale * 0.50, top + scale * 0.28)])
@@ -236,6 +338,34 @@ def _draw_script_like_character(
         if character == "7":
             line([(x + scale * 0.62, top + scale * 0.18), (x + scale * 0.26, bottom)])
         return scale * 0.70
+    if character in {"2", "3", "8"}:
+        if character == "2":
+            line(
+                [
+                    (x + scale * 0.12, top + scale * 0.24),
+                    (x + scale * 0.54, top + scale * 0.22),
+                    (x + scale * 0.52, mid),
+                    (x + scale * 0.14, bottom - scale * 0.08),
+                    (x + scale * 0.60, bottom - scale * 0.08),
+                ]
+            )
+        elif character == "3":
+            line(
+                [
+                    (x + scale * 0.12, top + scale * 0.22),
+                    (x + scale * 0.54, top + scale * 0.24),
+                    (x + scale * 0.42, mid),
+                    (x + scale * 0.58, bottom - scale * 0.12),
+                    (x + scale * 0.12, bottom - scale * 0.08),
+                ]
+            )
+        else:
+            ellipse((x + scale * 0.12, top + scale * 0.16, x + scale * 0.56, mid + scale * 0.04))
+            ellipse((x + scale * 0.10, mid - scale * 0.02, x + scale * 0.58, bottom - scale * 0.06))
+        return scale * 0.66
+    if character in {"Z", "z"}:
+        line([(x + scale * 0.10, top + scale * 0.20), (x + scale * 0.58, top + scale * 0.20), (x + scale * 0.12, bottom - scale * 0.08), (x + scale * 0.60, bottom - scale * 0.08)])
+        return scale * 0.66
     if character in {"(", ")"}:
         side = -1 if character == "(" else 1
         points = []

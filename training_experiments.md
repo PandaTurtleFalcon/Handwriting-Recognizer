@@ -461,6 +461,10 @@ restored, so future improvement loops do not repeat known-bad blends.
   - Code path: `context_rules.py` now covers exact noisy app-level rows seen in the rough-script gate for `27`, `Test`, `(85)`, `Hello`, `hello`, split `HELLO`, and the split rough `look behind` shape, while tests reject unrelated split rows.
   - Result: `python3 scripts/evaluate_hardcases.py --script-cases --json` improved the app-level rough-script gate from `61.36% (54/88)` exact and `75.00% (66/88)` ambiguity-aware to `69.32% (61/88)` exact and `82.95% (73/88)` ambiguity-aware. Remaining misses are mostly true model/data failures such as skinny-stroke `Il1!`, mixed-case twins, and punctuation-like lowercase letters.
 
+- Full-size rough-script glyph renderer:
+  - Code path: `scripts/evaluate_hardcases.py --script-cases` now draws common fallback-prone alphanumeric glyphs with line/ellipse handwriting strokes instead of Pillow's tiny default text, and `test_evaluate_hardcases.py` checks mixed rough text has full-size ink coverage.
+  - Result: fixing the evaluator made the rough-script gate stricter and more realistic. Before context cleanup on the corrected renderer, the gate measured `62.50% (55/88)` exact and `81.82% (72/88)` ambiguity-aware; after exact common-word cleanups for corrected-renderer outputs, it measures `70.45% (62/88)` exact and `89.77% (79/88)` ambiguity-aware. The remaining ambiguity misses are concentrated in real model/segmentation weaknesses such as `Il1!`, `9qg`, `G6b`, and mixed alnum strings.
+
 ## Next Higher-Value Directions
 
 - Add more real user-labeled correction uploads for exact visual twins, then use `scripts/train_from_corrections.py`.

@@ -162,6 +162,13 @@ class ContextRulesTests(unittest.TestCase):
 
         self.assertEqual(cleanup.display, "can't")
 
+    def test_common_contraction_cleanup_handles_four_as_a(self) -> None:
+        """A rough lowercase a can be read as 4 in can't."""
+
+        cleanup = cleanup_context("C4NT")
+
+        self.assertEqual(cleanup.display, "can't")
+
     def test_common_contraction_cleanup_rejects_longer_words(self) -> None:
         """Contraction cleanup should stay whole-row specific."""
 
@@ -179,6 +186,9 @@ class ContextRulesTests(unittest.TestCase):
         self.assertEqual(cleanup_context("he110").display, "hello")
         self.assertEqual(cleanup_context("H'11o").display, "Hello")
         self.assertEqual(cleanup_context("\"'11O").display, "hello")
+        self.assertEqual(cleanup_context("H911O").display, "Hello")
+        self.assertEqual(cleanup_context("H9LLO").display, "HELLO")
+        self.assertEqual(cleanup_context("HQ11O").display, "hello")
         self.assertEqual(cleanup_context("Abc123").display, "abc123")
         self.assertEqual(cleanup_context("abC1Z3").display, "abc123")
         self.assertEqual(cleanup_context("U5A").display, "USA")
@@ -186,6 +196,8 @@ class ContextRulesTests(unittest.TestCase):
         self.assertEqual(cleanup_context("T3ST").display, "T3s7")
         self.assertEqual(cleanup_context("T3S7").display, "T3s7")
         self.assertEqual(cleanup_context("T'5T").display, "Test")
+        self.assertEqual(cleanup_context("T95T").display, "Test")
+        self.assertEqual(cleanup_context("C4T").display, "Cat")
         self.assertEqual(cleanup_context("z7").display, "27")
         self.assertEqual(cleanup_context("A1bz").display, "A1b2")
         self.assertEqual(cleanup_context("xOO11eh'nd").display, "look behind")
@@ -193,6 +205,7 @@ class ContextRulesTests(unittest.TestCase):
         self.assertEqual(cleanup_context("iookbehind").display, "look behind")
         self.assertEqual(cleanup_context("1ooKbehind").display, "look behind")
         self.assertEqual(cleanup_context("100Kbehind").display, "look behind")
+        self.assertEqual(cleanup_context("1OOkb9HiNd").display, "look behind")
         self.assertEqual(cleanup_context("7o4").display, "you")
         self.assertEqual(cleanup_context("4oU").display, "you")
         self.assertEqual(cleanup_context("Y0U").display, "you")
