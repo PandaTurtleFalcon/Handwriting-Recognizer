@@ -70,6 +70,26 @@ class HardCaseEvaluationTests(unittest.TestCase):
         self.assertGreater(max(xs) - min(xs), 180)
         self.assertGreater(max(ys) - min(ys), 60)
 
+    def test_script_case_renderer_separates_upper_and_lowercase_height(self) -> None:
+        """Case-pair hardcases should not render both glyphs identically."""
+
+        upper = Image.open(BytesIO(render_script_case("C", seed=12))).convert("L")
+        lower = Image.open(BytesIO(render_script_case("c", seed=12))).convert("L")
+        upper_ys = [
+            y
+            for y in range(upper.height)
+            for x in range(upper.width)
+            if upper.getpixel((x, y)) < 128
+        ]
+        lower_ys = [
+            y
+            for y in range(lower.height)
+            for x in range(lower.width)
+            if lower.getpixel((x, y)) < 128
+        ]
+
+        self.assertGreater((max(upper_ys) - min(upper_ys)) - (max(lower_ys) - min(lower_ys)), 12)
+
     def test_live_all_font_hardcases_stay_above_target(self) -> None:
         """The shipped website recognizer should keep hard cases above 95%."""
 

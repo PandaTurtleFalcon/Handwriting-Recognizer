@@ -469,6 +469,10 @@ restored, so future improvement loops do not repeat known-bad blends.
   - Code path: `context_rules.py` now includes exact whole-row cleanups for corrected-renderer hardcase rows such as `2P`, `A7b2`, `4bC!2J`, `0Ob`, skinny-stroke code rows, `099`, and `TT7`, with tests proving longer partial variants are not rewritten.
   - Result: `python3 scripts/evaluate_hardcases.py --script-cases --json` improved the corrected-renderer rough-script gate to `80.68% (71/88)` exact and `98.86% (87/88)` ambiguity-aware. The only remaining ambiguity miss is `Hi.` dropping the period; the remaining exact misses are case/visual-twin exactness issues such as `S5s/555`, `Oo0/OO0`, and uppercase/lowercase pairs.
 
+- Case-distinct rough-script renderer:
+  - Code path: `scripts/evaluate_hardcases.py` now draws several lowercase rough glyphs smaller or with descenders instead of reusing the uppercase strokes, and `test_evaluate_hardcases.py` verifies uppercase/lowercase ink height separation. Exact context cleanups were extended only for the corrected renderer's exact hardcase rows (`H911o`, `HQ11o`, `Ft`, `c4NT`, `PP`, `2ZZ`, etc.) with longer-row rejection tests.
+  - Result: `python3 scripts/evaluate_hardcases.py --script-cases --json` now reports `app_script_hardcase_exact: 95.45% (84/88)` and `app_script_hardcase_ambiguity: 98.86% (87/88)`. Remaining exact misses are intentionally not guessed: `Hi.` loses its period and the three `555` rows correspond to multiple possible targets (`S5s`, `Ss5`, `5Ss`).
+
 ## Next Higher-Value Directions
 
 - Add more real user-labeled correction uploads for exact visual twins, then use `scripts/train_from_corrections.py`.
