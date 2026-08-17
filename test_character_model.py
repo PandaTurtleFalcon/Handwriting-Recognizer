@@ -27,6 +27,7 @@ from character_model import (
     labels_match_with_ambiguity,
     load_correction_memory_exemplars,
 )
+from alnum_model import attach_mixedcase_logit_bias
 from mnist_model import DigitRegion, segment_digit_regions
 from PIL import Image, ImageDraw
 import torch
@@ -107,6 +108,23 @@ class CharacterPostprocessingTests(unittest.TestCase):
         self.assertTrue(labels_match_with_ambiguity("q", "9"))
         self.assertTrue(labels_match_with_ambiguity("T", "7"))
         self.assertFalse(labels_match_with_ambiguity("A", "B"))
+
+    def test_mixedcase_logit_bias_attaches_to_matching_model(self) -> None:
+        """A matching mixed-case calibration artifact should shift model logits."""
+
+        model = torch.nn.Linear(2, 2, bias=False)
+        torch.nn.init.zeros_(model.weight)
+        labels = ["A", "a"]
+        with tempfile.TemporaryDirectory() as directory:
+            bias_path = Path(directory) / "mixedcase_bias.pt"
+            torch.save({"labels": labels, "bias": torch.tensor([-0.1, 0.3])}, bias_path)
+
+            attached = attach_mixedcase_logit_bias(model, labels, torch.device("cpu"), bias_path)
+            output = model(torch.ones((1, 2)))
+
+        self.assertTrue(attached)
+        self.assertTrue(hasattr(model, "mixedcase_logit_bias"))
+        self.assertTrue(torch.allclose(output, torch.tensor([[-0.1, 0.3]])))
 
     def test_character_loss_weights_can_emphasize_punctuation(self) -> None:
         weights = character_loss_weights(["A", "7", "!", "."], punctuation_weight=2.5)

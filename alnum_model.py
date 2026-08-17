@@ -50,6 +50,7 @@ METRICS_PATH = PROJECT_DIR / "alnum_training_metrics.json"
 LABELS = [str(index) for index in range(10)] + [chr(ord("A") + index) for index in range(26)]
 MIXEDCASE_WEIGHTS_PATH = PROJECT_DIR / "mixedcase_cnn.pt"
 MIXEDCASE_METRICS_PATH = PROJECT_DIR / "mixedcase_training_metrics.json"
+MIXEDCASE_LOGIT_BIAS_PATH = PROJECT_DIR / "mixedcase_logit_bias.pt"
 MIXEDCASE_LABELS = (
     [str(index) for index in range(10)]
     + [chr(ord("A") + index) for index in range(26)]
@@ -1331,6 +1332,7 @@ def load_alnum_model(
 def load_mixedcase_model(
     weights_path: Path = MIXEDCASE_WEIGHTS_PATH,
     device: torch.device | None = None,
+    logit_bias_path: Path | None = MIXEDCASE_LOGIT_BIAS_PATH,
 ) -> tuple[nn.Module, list[str]] | tuple[None, None]:
     """Load the trained mixed-case recognizer if its checkpoint exists."""
 
@@ -1344,7 +1346,39 @@ def load_mixedcase_model(
     model = model_class(num_classes=len(labels)).to(selected_device)
     model.load_state_dict(checkpoint["model_state_dict"])
     model.eval()
+    if logit_bias_path is not None:
+        attach_mixedcase_logit_bias(model, labels, selected_device, logit_bias_path)
     return model, labels
+
+
+def attach_mixedcase_logit_bias(
+    model: nn.Module,
+    labels: list[str],
+    device: torch.device,
+    bias_path: Path = MIXEDCASE_LOGIT_BIAS_PATH,
+) -> bool:
+    """Attach a matching mixed-case logit-bias artifact to a loaded model."""
+
+    if not bias_path.exists() or getattr(model, "mixedcase_logit_bias", None) is not None:
+        return False
+    try:
+        artifact = torch.load(bias_path, map_location=device, weights_only=True)
+    except (OSError, RuntimeError, ValueError):
+        return False
+    if list(artifact.get("labels", [])) != list(labels):
+        return False
+    bias = artifact.get("bias")
+    if not isinstance(bias, torch.Tensor) or bias.numel() != len(labels):
+        return False
+    bias = bias.to(device=device, dtype=torch.float32).reshape(1, -1)
+    original_forward = model.forward
+
+    def forward_with_bias(inputs: torch.Tensor) -> torch.Tensor:
+        return original_forward(inputs) + bias.to(device=inputs.device, dtype=inputs.dtype)
+
+    model.forward = forward_with_bias  # type: ignore[method-assign]
+    model.mixedcase_logit_bias = bias  # type: ignore[attr-defined]
+    return True
 
 
 def initialize_mixedcase_from_folded_checkpoint(

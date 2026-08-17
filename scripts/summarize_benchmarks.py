@@ -55,12 +55,15 @@ def summarize_saved_metrics(project_dir: Path = PROJECT_DIR, target: float = 95.
     folded_metrics = _read_json(project_dir / "alnum_training_metrics.json")
     mixed_metrics = _read_json(project_dir / "mixedcase_training_metrics.json")
     character_metrics = _read_json(project_dir / "character_training_metrics.json")
+    mixed_calibration = _read_mixedcase_calibration(project_dir)
     character_calibration = _read_character_calibration(project_dir)
 
     digit_best = _best_checkpoint(digit_metrics)
     folded_best = folded_metrics.get("best_checkpoint", {})
     mixed_best = mixed_metrics.get("best_checkpoint", {})
     character_best = character_metrics.get("best_checkpoint", {})
+    if mixed_calibration is not None:
+        mixed_best = mixed_calibration
     if character_calibration is not None:
         character_best = character_calibration
 
@@ -78,6 +81,26 @@ def summarize_saved_metrics(project_dir: Path = PROJECT_DIR, target: float = 95.
             target,
         ),
     ]
+
+
+def _read_mixedcase_calibration(project_dir: Path) -> dict[str, object] | None:
+    """Return calibrated mixed-case metrics when the optional artifact matches."""
+
+    import torch
+
+    bias_path = project_dir / "mixedcase_logit_bias.pt"
+    if not bias_path.exists():
+        return None
+    try:
+        from alnum_model import MIXEDCASE_LABELS
+
+        calibration = torch.load(bias_path, map_location="cpu", weights_only=True)
+    except (ImportError, OSError, RuntimeError, ValueError):
+        return None
+    if list(calibration.get("labels", [])) != list(MIXEDCASE_LABELS):
+        return None
+    best = calibration.get("best_checkpoint")
+    return best if isinstance(best, dict) else None
 
 
 def _read_character_calibration(project_dir: Path) -> dict[str, object] | None:

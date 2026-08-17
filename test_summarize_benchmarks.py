@@ -102,6 +102,45 @@ class BenchmarkSummaryTests(unittest.TestCase):
         self.assertEqual(by_name["character_exact"]["value"], 93.0)
         self.assertEqual(by_name["punctuation_exact"]["value"], 96.0)
 
+    def test_summarizes_matching_mixedcase_calibration_metrics(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            (root / "training_metrics.json").write_text(json.dumps({"best_checkpoint": {"test_accuracy": 99.0}}))
+            (root / "alnum_training_metrics.json").write_text(json.dumps({"best_checkpoint": {"test_accuracy": 96.0}}))
+            (root / "mixedcase_training_metrics.json").write_text(
+                json.dumps({"best_checkpoint": {"test_accuracy": 80.0, "case_or_ambiguity_aware_test_accuracy": 97.0}})
+            )
+            (root / "character_training_metrics.json").write_text(
+                json.dumps(
+                    {
+                        "best_checkpoint": {
+                            "validation_accuracy": 91.0,
+                            "ambiguity_aware_validation_accuracy": 98.0,
+                            "punctuation_validation_accuracy": 95.0,
+                            "punctuation_ambiguity_aware_validation_accuracy": 99.0,
+                        }
+                    }
+                )
+            )
+            from alnum_model import MIXEDCASE_LABELS
+
+            torch.save(
+                {
+                    "labels": list(MIXEDCASE_LABELS),
+                    "best_checkpoint": {
+                        "test_accuracy": 87.2,
+                        "case_or_ambiguity_aware_test_accuracy": 97.6,
+                    },
+                },
+                root / "mixedcase_logit_bias.pt",
+            )
+
+            report = summarize_saved_metrics(root, target=95.0)
+
+        by_name = {str(item["name"]): item for item in report}
+        self.assertEqual(by_name["mixedcase_exact"]["value"], 87.2)
+        self.assertEqual(by_name["mixedcase_case_or_visual"]["value"], 97.6)
+
     def test_summarizes_app_hardcase_gates_on_demand(self) -> None:
         with patch(
             "scripts.evaluate_hardcases.evaluate_cases",
