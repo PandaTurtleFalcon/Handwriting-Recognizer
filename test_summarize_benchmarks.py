@@ -87,7 +87,7 @@ class BenchmarkSummaryTests(unittest.TestCase):
             root = Path(temp_dir)
             (root / "character_labels.json").write_text(json.dumps(["s", "O", "V"]), encoding="utf-8")
 
-            with patch("main.PRACTICE_PRIORITY_LABELS", ["s", "O"]):
+            with patch("main.CHARACTER_PRACTICE_PRIORITY_LABELS", ["s", "O"]):
                 with patch("main.PRACTICE_TARGET_PER_LABEL", 2):
                     with patch(
                         "character_model.load_correction_memory_exemplars",

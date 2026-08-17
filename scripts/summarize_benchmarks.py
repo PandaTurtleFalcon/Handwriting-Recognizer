@@ -105,7 +105,7 @@ def summarize_correction_memory(target: float = 95.0, project_dir: Path = PROJEC
     """Return deployed character correction-memory coverage for priority labels."""
 
     from character_model import load_correction_memory_exemplars
-    from main import PRACTICE_PRIORITY_LABELS, PRACTICE_TARGET_PER_LABEL
+    from main import CHARACTER_PRACTICE_PRIORITY_LABELS, PRACTICE_TARGET_PER_LABEL
 
     labels = _read_json(project_dir / "character_labels.json")
     if not isinstance(labels, list):
@@ -121,7 +121,7 @@ def summarize_correction_memory(target: float = 95.0, project_dir: Path = PROJEC
             label = str(labels[int(target_index)])
             counts[label] = counts.get(label, 0) + 1
 
-    priority_labels = list(dict.fromkeys(PRACTICE_PRIORITY_LABELS))
+    priority_labels = list(dict.fromkeys(CHARACTER_PRACTICE_PRIORITY_LABELS))
     target_samples = len(priority_labels) * PRACTICE_TARGET_PER_LABEL
     samples = sum(counts.get(label, 0) for label in priority_labels)
     ready_labels = sum(1 for label in priority_labels if counts.get(label, 0) >= PRACTICE_TARGET_PER_LABEL)

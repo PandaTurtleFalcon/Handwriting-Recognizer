@@ -449,6 +449,10 @@ restored, so future improvement loops do not repeat known-bad blends.
   - Code path: `/api/correction-coverage?mode=character|folded_alnum|mixedcase` now returns the selected recognizer's trainable priority queue, and the browser practice panel includes a Queue selector plus readiness-card shortcuts that switch into the matching queue. This lets user-labeled practice samples directly target the mixed-case blocker instead of only following the character-first queue.
   - Verification: `python3 -m pytest -q test_web_app.py test_summarize_benchmarks.py test_train_from_corrections.py` passed (`101` tests), live `/api/correction-coverage?mode=mixedcase` reports `recommended_label=s`, `total_labels=42`, and `samples=2/840`, matching the mixed-case correction-training gate.
 
+- Character correction-memory queue alignment:
+  - Code path: `scripts/summarize_benchmarks.py --include-correction-memory` now measures deployed character correction memory against `CHARACTER_PRACTICE_PRIORITY_LABELS`, the same queue used by the character practice endpoint, instead of the union queue that also includes mixed-case-only labels.
+  - Verification: `python3 -m pytest -q test_summarize_benchmarks.py test_train_from_corrections.py test_web_app.py` passed (`101` tests), and the expanded benchmark now reports `character_correction_memory_samples: 0.20% (2/1020)` plus `character_correction_memory_ready_labels: 0.00% (0/51)`, matching the live character queue.
+
 ## Next Higher-Value Directions
 
 - Add more real user-labeled correction uploads for exact visual twins, then use `scripts/train_from_corrections.py`.
