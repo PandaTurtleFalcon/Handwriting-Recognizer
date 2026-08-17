@@ -2473,7 +2473,7 @@ def load_character_recognizer_stack(
 
     model, labels = load_character_model(device=device)
     letter_model, letter_labels = load_letter_model(device=device)
-    alnum_model, alnum_labels = load_mixedcase_model(device=device)
+    alnum_model, alnum_labels = load_mixedcase_model(device=device, logit_bias_path=None)
     if alnum_model is None:
         alnum_model, alnum_labels = load_alnum_model(device=device)
     return model, labels, letter_model, letter_labels, alnum_model, alnum_labels

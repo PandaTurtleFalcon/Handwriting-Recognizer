@@ -5,6 +5,9 @@ from io import StringIO
 from pathlib import Path
 from unittest.mock import patch
 
+import torch
+
+from scripts.calibrate_mixedcase_logits import calibrate_mixedcase_greedy_bias
 from scripts.calibrate_mixedcase_logits import main
 
 
@@ -137,6 +140,47 @@ class MixedcaseCalibrationCliTests(unittest.TestCase):
             self.assertTrue(report["wrote"])
             self.assertTrue(report["app_gates"]["passed"])
             self.assertEqual(output_path.read_bytes(), b"candidate")
+
+    def test_greedy_bias_tunes_requested_labels(self) -> None:
+        """Greedy mode should write a better per-label mixed-case bias."""
+
+        logits = torch.tensor(
+            [
+                [0.10, 0.20, 0.00],
+                [0.00, 0.40, 0.10],
+                [0.00, 0.30, 0.20],
+            ],
+            dtype=torch.float32,
+        )
+        targets = torch.tensor([0, 1, 1], dtype=torch.long)
+        train_targets = torch.tensor([0, 1, 2], dtype=torch.long)
+        labels = ["0", "A", "a"]
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            output_path = Path(temp_dir) / "mixedcase_logit_bias.pt"
+            with (
+                patch("scripts.calibrate_mixedcase_logits._mixedcase_logits", return_value=(logits, targets, train_targets, labels)),
+                patch("scripts.calibrate_mixedcase_logits.MIXEDCASE_LABELS", labels),
+            ):
+                report = calibrate_mixedcase_greedy_bias(
+                    output_path=output_path,
+                    batch_size=3,
+                    labels_to_tune="0",
+                    deltas=(0.2,),
+                    rounds=2,
+                    min_improvement=0.01,
+                    min_case_or_visual=0.0,
+                    min_digit=0.0,
+                    min_upper=0.0,
+                    min_lower=0.0,
+                    write=True,
+                )
+
+            self.assertTrue(report["wrote"])
+            self.assertGreater(report["calibrated_accuracy"], report["base_accuracy"])
+            artifact = torch.load(output_path, map_location="cpu", weights_only=True)
+            self.assertEqual(artifact["tuned_labels"], ["0"])
+            self.assertEqual(len(artifact["steps"]), 1)
 
 
 if __name__ == "__main__":

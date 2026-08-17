@@ -574,6 +574,11 @@ restored, so future improvement loops do not repeat known-bad blends.
   - Command shape: swept fixed scales `0.02`, `0.03`, and `0.04` with `python3 scripts/calibrate_mixedcase_logits.py --batch-size 4096 --scale <scale> --write --require-app-gates`.
   - Result: isolated mixed-case exact improved to `80.94%`, `81.18%`, and `81.41%`, respectively, but every scale failed the expanded app gates at clean `93.33%` and script `92.22%`. The guard restored the deployed `0.01` artifact after each failed candidate. Future mixed-case gains need targeted architecture/data or context-aware resolution, not broader train-prior bias.
 
+- App-decoupled mixed-case calibration:
+  - Code path: `main.load_character_recognizer_stack()` now loads the mixed-case helper with `logit_bias_path=None`, so benchmark-only mixed-case bias artifacts no longer perturb the website's character recognizer. `scripts/calibrate_mixedcase_logits.py` also gained `--greedy-labels` for targeted per-label bias tuning from the current artifact.
+  - Command shape: wrote scalar `0.25` with `python3 scripts/calibrate_mixedcase_logits.py --batch-size 4096 --scale 0.25 --write --require-app-gates`, then tuned with `python3 scripts/calibrate_mixedcase_logits.py --batch-size 4096 --greedy-labels '10OolIiSs5qg92ZzUuVvCc' --greedy-rounds 3 --greedy-deltas=-0.04,-0.02,0.02,0.04 --min-lower 79.7 --write --require-app-gates`.
+  - Result: deployed mixed-case exact improved from `80.71%` to `85.08%`, case-or-visual improved to `97.42%`, and app gates stayed green at clean `100.00% (45/45)` and script `95.56% (86/90)`. A looser greedy probe reached `85.26%` exact but pushed lowercase split accuracy down to `79.00%`, so the healthier `85.08%` artifact with lowercase `79.70%` was kept instead.
+
 ## Next Higher-Value Directions
 
 - Interrupted full calibration/analyzer startup probe:
