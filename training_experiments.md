@@ -550,6 +550,11 @@ restored, so future improvement loops do not repeat known-bad blends.
   - Rejected scales: `0.05` through `0.25` improved isolated mixed-case exact from `80.50%` up to `81.60%`-`84.69%`, but all broke app exact gates (`90.91%` clean hardcases and `88.64%`-`90.91%` script hardcases), so they remain undeployed.
   - Result: fixed scale `0.01` gives a small deployable lift: mixed-case exact `80.71%`, case-or-visual `97.05%`, clean app hardcases `100.00% (44/44)`, and script app hardcases `95.45% (84/88)`. The artifact is now kept as `mixedcase_logit_bias.pt`; this is safe forward progress but still far below the `95%` mixed-case exact target.
 
+- Character calibration app-gate guard:
+  - Code path: added `scripts/calibrate_character_logits.py --require-app-gates`, which writes a candidate bias, evaluates clean and script app hardcases, and restores the previous artifact unless both exact gates meet `--app-gate-target`.
+  - Verification command shape: `python3 scripts/calibrate_character_logits.py --batch-size 4096 --scale 0.8 --require-app-gates`, then checked the `character_logit_bias.pt` SHA before/after and reran `scripts/summarize_benchmarks.py --include-app-hardcases --single-font-hardcases --include-script-hardcases`.
+  - Result: the validation-best `0.8` scale still improved isolated character exact to `93.49%`, but script app exact was only `92.05%`, so the guard rejected it, restored the exact prior artifact hash, and kept deployed gates at character exact `93.07%`, clean app `100.00% (44/44)`, and script app `95.45% (84/88)`.
+
 ## Next Higher-Value Directions
 
 - Interrupted full calibration/analyzer startup probe:

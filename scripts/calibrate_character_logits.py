@@ -6,6 +6,8 @@ import argparse
 import json
 import sys
 from pathlib import Path
+import shutil
+import tempfile
 
 import torch
 from torch.utils.data import DataLoader, TensorDataset
@@ -154,6 +156,31 @@ def calibrate_character_logits(
     }
 
 
+def _restore_artifact(output_path: Path, backup_path: Path | None) -> None:
+    """Restore or remove a calibration artifact after a rejected probe."""
+
+    if backup_path is not None and backup_path.exists():
+        shutil.copy2(backup_path, output_path)
+    elif output_path.exists():
+        output_path.unlink()
+
+
+def _app_gate_report(target: float) -> dict[str, object]:
+    """Evaluate the clean and script app hardcases for a candidate artifact."""
+
+    from scripts.evaluate_hardcases import evaluate_cases
+
+    clean = evaluate_cases(all_fonts=False, script_cases=False)
+    script = evaluate_cases(all_fonts=False, script_cases=True)
+    clean_exact = float(clean.get("exact_accuracy", 0.0))
+    script_exact = float(script.get("exact_accuracy", 0.0))
+    return {
+        "clean_exact": clean_exact,
+        "script_exact": script_exact,
+        "passed": clean_exact >= target and script_exact >= target,
+    }
+
+
 def main() -> None:
     """CLI entrypoint."""
 
@@ -165,7 +192,19 @@ def main() -> None:
     parser.add_argument("--min-improvement", type=float, default=0.01)
     parser.add_argument("--scale", type=float, default=None, help="Write this fixed scale instead of the validation optimum.")
     parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument(
+        "--require-app-gates",
+        action="store_true",
+        help="Restore the previous artifact unless clean and script app exact gates pass.",
+    )
+    parser.add_argument("--app-gate-target", type=float, default=95.0)
     args = parser.parse_args()
+    backup_path: Path | None = None
+    if args.require_app_gates and not args.dry_run and args.output_path.exists():
+        backup_file = tempfile.NamedTemporaryFile(prefix="character-logit-bias-", suffix=".pt", delete=False)
+        backup_file.close()
+        backup_path = Path(backup_file.name)
+        shutil.copy2(args.output_path, backup_path)
     report = calibrate_character_logits(
         output_path=args.output_path,
         batch_size=args.batch_size,
@@ -175,6 +214,17 @@ def main() -> None:
         fixed_scale=args.scale,
         write=not args.dry_run,
     )
+    if args.require_app_gates and not args.dry_run and report.get("wrote"):
+        try:
+            app_gates = _app_gate_report(args.app_gate_target)
+        except Exception:
+            _restore_artifact(args.output_path, backup_path)
+            raise
+        report["app_gates"] = app_gates
+        if not app_gates["passed"]:
+            _restore_artifact(args.output_path, backup_path)
+            report["wrote"] = False
+            report["restored_after_app_gate_failure"] = True
     print(json.dumps(report, indent=2))
 
 
