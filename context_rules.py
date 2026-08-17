@@ -164,6 +164,7 @@ def _clean_common_words(text: str) -> tuple[str, list[str]]:
         "T357": "T3s7",
         "T3ST": "T3s7",
         "T3S7": "T3s7",
+        "T3sT": "T3s7",
         "T'5T": "Test",
         "T95T": "Test",
         "C4T": "Cat",

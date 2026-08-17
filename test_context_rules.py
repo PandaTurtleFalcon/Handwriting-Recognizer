@@ -198,6 +198,7 @@ class ContextRulesTests(unittest.TestCase):
         self.assertEqual(cleanup_context("T357").display, "T3s7")
         self.assertEqual(cleanup_context("T3ST").display, "T3s7")
         self.assertEqual(cleanup_context("T3S7").display, "T3s7")
+        self.assertEqual(cleanup_context("T3sT").display, "T3s7")
         self.assertEqual(cleanup_context("T'5T").display, "Test")
         self.assertEqual(cleanup_context("T95T").display, "Test")
         self.assertEqual(cleanup_context("C4T").display, "Cat")

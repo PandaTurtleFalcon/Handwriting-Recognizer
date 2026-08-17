@@ -4,10 +4,10 @@ from __future__ import annotations
 
 import argparse
 import json
-import sys
-from pathlib import Path
 import shutil
+import sys
 import tempfile
+from pathlib import Path
 
 import torch
 from torch.utils.data import DataLoader, TensorDataset
@@ -156,6 +156,99 @@ def calibrate_character_logits(
     }
 
 
+def _load_existing_bias(output_path: Path, labels: list[str]) -> torch.Tensor:
+    """Return an existing matching bias artifact or a zero bias."""
+
+    if not output_path.exists():
+        return torch.zeros(len(labels), dtype=torch.float32)
+    try:
+        artifact = torch.load(output_path, map_location="cpu", weights_only=True)
+    except (OSError, RuntimeError, ValueError):
+        return torch.zeros(len(labels), dtype=torch.float32)
+    if list(artifact.get("labels", [])) != list(labels):
+        return torch.zeros(len(labels), dtype=torch.float32)
+    bias = artifact.get("bias")
+    if not isinstance(bias, torch.Tensor) or bias.numel() != len(labels):
+        return torch.zeros(len(labels), dtype=torch.float32)
+    return bias.detach().cpu().float().reshape(-1)
+
+
+def calibrate_character_greedy_bias(
+    output_path: Path = LOGIT_BIAS_PATH,
+    batch_size: int = 2048,
+    labels_to_tune: str = "",
+    deltas: tuple[float, ...] = (-0.12, -0.08, -0.04, 0.04, 0.08, 0.12),
+    rounds: int = 6,
+    min_improvement: float = 0.01,
+    min_ambiguity: float = 98.8,
+    min_punctuation: float = 95.0,
+    write: bool = True,
+) -> dict[str, object]:
+    """Greedily tune tiny per-label bias changes from the current artifact."""
+
+    logits, targets, _train_targets, labels = _validation_logits(batch_size)
+    starting_bias = _load_existing_bias(output_path, labels)
+    base_breakdown = _breakdown((logits + starting_bias).argmax(dim=1), targets, labels)
+    best_bias = starting_bias.clone()
+    best_breakdown = base_breakdown
+    tuned_indices = [labels.index(label) for label in dict.fromkeys(labels_to_tune) if label in labels]
+    steps: list[dict[str, object]] = []
+    for round_index in range(max(0, rounds)):
+        improved_this_round = False
+        for label_index in tuned_indices:
+            for delta in deltas:
+                candidate_bias = best_bias.clone()
+                candidate_bias[label_index] += float(delta)
+                candidate_breakdown = _breakdown((logits + candidate_bias).argmax(dim=1), targets, labels)
+                if (
+                    candidate_breakdown["punctuation_validation_accuracy"] < min_punctuation
+                    or candidate_breakdown["ambiguity_aware_validation_accuracy"] < min_ambiguity
+                ):
+                    continue
+                if candidate_breakdown["validation_accuracy"] <= best_breakdown["validation_accuracy"]:
+                    continue
+                best_bias = candidate_bias
+                best_breakdown = candidate_breakdown
+                improved_this_round = True
+                steps.append(
+                    {
+                        "round": round_index + 1,
+                        "label": labels[label_index],
+                        "delta": float(delta),
+                        "validation_accuracy": candidate_breakdown["validation_accuracy"],
+                    }
+                )
+        if not improved_this_round:
+            break
+    improvement = best_breakdown["validation_accuracy"] - base_breakdown["validation_accuracy"]
+    improved = improvement >= min_improvement
+    if write and improved:
+        torch.save(
+            {
+                "labels": labels,
+                "bias": best_bias,
+                "scale": "greedy-per-label",
+                "base_accuracy": base_breakdown["validation_accuracy"],
+                "calibrated_accuracy": best_breakdown["validation_accuracy"],
+                "best_checkpoint": best_breakdown,
+                "source": "greedy_per_label_validation_probe",
+                "tuned_labels": [labels[index] for index in tuned_indices],
+                "steps": steps,
+            },
+            output_path,
+        )
+    return {
+        "base_accuracy": base_breakdown["validation_accuracy"],
+        "calibrated_accuracy": best_breakdown["validation_accuracy"],
+        "best_scale": "greedy-per-label",
+        "improvement": improvement,
+        "best_checkpoint": best_breakdown,
+        "steps": steps,
+        "wrote": bool(write and improved),
+        "output_path": str(output_path),
+    }
+
+
 def _restore_artifact(output_path: Path, backup_path: Path | None) -> None:
     """Restore or remove a calibration artifact after a rejected probe."""
 
@@ -191,6 +284,11 @@ def main() -> None:
     parser.add_argument("--step", type=float, default=0.05)
     parser.add_argument("--min-improvement", type=float, default=0.01)
     parser.add_argument("--scale", type=float, default=None, help="Write this fixed scale instead of the validation optimum.")
+    parser.add_argument("--greedy-labels", default="", help="Greedily tune per-label bias for this label string.")
+    parser.add_argument("--greedy-rounds", type=int, default=6)
+    parser.add_argument("--greedy-deltas", default="-0.12,-0.08,-0.04,0.04,0.08,0.12")
+    parser.add_argument("--min-ambiguity", type=float, default=98.8)
+    parser.add_argument("--min-punctuation", type=float, default=95.0)
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument(
         "--require-app-gates",
@@ -205,15 +303,29 @@ def main() -> None:
         backup_file.close()
         backup_path = Path(backup_file.name)
         shutil.copy2(args.output_path, backup_path)
-    report = calibrate_character_logits(
-        output_path=args.output_path,
-        batch_size=args.batch_size,
-        max_scale=args.max_scale,
-        step=args.step,
-        min_improvement=args.min_improvement,
-        fixed_scale=args.scale,
-        write=not args.dry_run,
-    )
+    if args.greedy_labels:
+        deltas = tuple(float(part) for part in args.greedy_deltas.split(",") if part.strip())
+        report = calibrate_character_greedy_bias(
+            output_path=args.output_path,
+            batch_size=args.batch_size,
+            labels_to_tune=args.greedy_labels,
+            deltas=deltas,
+            rounds=args.greedy_rounds,
+            min_improvement=args.min_improvement,
+            min_ambiguity=args.min_ambiguity,
+            min_punctuation=args.min_punctuation,
+            write=not args.dry_run,
+        )
+    else:
+        report = calibrate_character_logits(
+            output_path=args.output_path,
+            batch_size=args.batch_size,
+            max_scale=args.max_scale,
+            step=args.step,
+            min_improvement=args.min_improvement,
+            fixed_scale=args.scale,
+            write=not args.dry_run,
+        )
     if args.require_app_gates and not args.dry_run and report.get("wrote"):
         try:
             app_gates = _app_gate_report(args.app_gate_target)

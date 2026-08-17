@@ -5,6 +5,9 @@ from io import StringIO
 from pathlib import Path
 from unittest.mock import patch
 
+import torch
+
+from scripts.calibrate_character_logits import calibrate_character_greedy_bias
 from scripts.calibrate_character_logits import main
 
 
@@ -98,6 +101,42 @@ class CharacterCalibrationCliTests(unittest.TestCase):
             self.assertTrue(report["wrote"])
             self.assertTrue(report["app_gates"]["passed"])
             self.assertEqual(output_path.read_bytes(), b"candidate")
+
+    def test_greedy_bias_tunes_requested_labels(self) -> None:
+        """Greedy mode should write a better per-label bias when one exists."""
+
+        logits = torch.tensor(
+            [
+                [0.10, 0.20, 0.00],
+                [0.00, 0.40, 0.10],
+                [0.00, 0.30, 0.20],
+            ],
+            dtype=torch.float32,
+        )
+        targets = torch.tensor([0, 1, 1], dtype=torch.long)
+        train_targets = torch.tensor([0, 1, 2], dtype=torch.long)
+        labels = ["A", "B", "."]
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            output_path = Path(temp_dir) / "character_logit_bias.pt"
+            with patch("scripts.calibrate_character_logits._validation_logits", return_value=(logits, targets, train_targets, labels)):
+                report = calibrate_character_greedy_bias(
+                    output_path=output_path,
+                    batch_size=3,
+                    labels_to_tune="A",
+                    deltas=(0.2,),
+                    rounds=2,
+                    min_improvement=0.01,
+                    min_ambiguity=0.0,
+                    min_punctuation=0.0,
+                    write=True,
+                )
+
+            self.assertTrue(report["wrote"])
+            self.assertGreater(report["calibrated_accuracy"], report["base_accuracy"])
+            artifact = torch.load(output_path, map_location="cpu", weights_only=True)
+            self.assertEqual(artifact["tuned_labels"], ["A"])
+            self.assertEqual(len(artifact["steps"]), 1)
 
 
 if __name__ == "__main__":

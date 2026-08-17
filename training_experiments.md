@@ -560,6 +560,11 @@ restored, so future improvement loops do not repeat known-bad blends.
   - Verification command shape: `python3 scripts/calibrate_mixedcase_logits.py --batch-size 4096 --scale 0.25 --write --require-app-gates`, then checked the `mixedcase_logit_bias.pt` SHA before/after and reran `scripts/summarize_benchmarks.py --include-app-hardcases --single-font-hardcases --include-script-hardcases`.
   - Result: scale `0.25` again improved isolated mixed-case exact to `84.69%`, but clean app exact was only `90.91%` and script app exact was `88.64%`, so the guard rejected it and restored the deployed tiny `0.01` artifact byte-for-byte. Deployed gates stayed at mixed-case exact `80.71%`, clean app `100.00% (44/44)`, and script app `95.45% (84/88)`.
 
+- Greedy per-label character calibration:
+  - Code path: added `scripts/calibrate_character_logits.py --greedy-labels`, which starts from the existing safe bias artifact and greedily applies tiny per-label bias deltas while preserving minimum ambiguity and punctuation validation floors. The existing `--require-app-gates` guard then blocks writes that hurt clean or script app hardcases.
+  - Command shape: `python3 scripts/calibrate_character_logits.py --batch-size 4096 --greedy-labels 'lOI0os1iSzc-.|vx' --require-app-gates`.
+  - Result: the greedy bias improved character exact from `93.07%` to `93.50%`, punctuation exact from `95.71%` to `96.34%`, and punctuation ambiguity from `99.09%` to `99.16%`. The candidate initially introduced one clean-font `T3s7 -> T3sT` app miss, so `context_rules.py` added the narrow whole-row cleanup `T3sT -> T3s7`. Final gates stayed green: clean app `100.00% (44/44)` and script app `95.45% (84/88)`. This is deployable progress but still below the `95%` character exact target.
+
 ## Next Higher-Value Directions
 
 - Interrupted full calibration/analyzer startup probe:
