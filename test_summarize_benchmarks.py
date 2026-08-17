@@ -4,7 +4,9 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from scripts.summarize_benchmarks import summarize_app_hardcases, summarize_saved_metrics
+import torch
+
+from scripts.summarize_benchmarks import summarize_app_hardcases, summarize_correction_memory, summarize_saved_metrics
 
 
 class BenchmarkSummaryTests(unittest.TestCase):
@@ -74,6 +76,29 @@ class BenchmarkSummaryTests(unittest.TestCase):
         self.assertTrue(by_name["app_hardcase_ambiguity"]["passed"])
         self.assertEqual(by_name["app_hardcase_exact"]["correct"], 176)
         self.assertEqual(by_name["app_hardcase_exact"]["total"], 176)
+
+    def test_summarizes_correction_memory_priority_coverage(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            (root / "character_labels.json").write_text(json.dumps(["s", "O", "V"]), encoding="utf-8")
+
+            with patch("main.PRACTICE_PRIORITY_LABELS", ["s", "O"]):
+                with patch("main.PRACTICE_TARGET_PER_LABEL", 2):
+                    with patch(
+                        "character_model.load_correction_memory_exemplars",
+                        return_value=(torch.zeros((3, 1, 32, 32)), torch.tensor([0, 0, 1])),
+                    ):
+                        report = summarize_correction_memory(target=95.0, project_dir=root)
+
+        by_name = {str(item["name"]): item for item in report}
+        self.assertEqual(by_name["character_correction_memory_samples"]["correct"], 3)
+        self.assertEqual(by_name["character_correction_memory_samples"]["total"], 4)
+        self.assertAlmostEqual(by_name["character_correction_memory_samples"]["value"], 75.0)
+        self.assertEqual(by_name["character_correction_memory_samples"]["by_label"], {"s": 2, "O": 1})
+        self.assertEqual(by_name["character_correction_memory_samples"]["not_ready_label_list"], ["O"])
+        self.assertEqual(by_name["character_correction_memory_ready_labels"]["correct"], 1)
+        self.assertEqual(by_name["character_correction_memory_ready_labels"]["total"], 2)
+        self.assertFalse(by_name["character_correction_memory_ready_labels"]["passed"])
 
 
 if __name__ == "__main__":

@@ -433,6 +433,10 @@ restored, so future improvement loops do not repeat known-bad blends.
   - Code path: `character_model.py` now recovers boxes for older sequence correction records with saved uploads when the live character segmentation path, including touching-character splitting, exactly matches the corrected text. This expands the live correction-memory bank from only the saved `a` crop to `1`, `5`, and `a`, while still ignoring mismatched legacy rows such as the old `Hi` sample that segments into three pieces.
   - Verification: `python3 -m pytest -q test_character_model.py test_evaluate_corrections.py test_web_app.py test_extra_alnum_datasets.py` passed (`131` tests), full `python3 -m pytest -q` passed (`196` tests, `1` skipped), `python3 scripts/evaluate_corrections.py --json` stayed at `3/3`, `python3 scripts/evaluate_hardcases.py --json` stayed at `44/44`, and `python3 scripts/summarize_benchmarks.py --include-app-hardcases --single-font-hardcases` confirmed saved model gates were unchanged.
 
+- Correction-memory benchmark visibility:
+  - Code path: `scripts/summarize_benchmarks.py --include-correction-memory` now reports deployed character correction-memory coverage for the priority exact-failure labels, including sample coverage, ready-label coverage, sparse `by_label` counts, and the not-ready label list while preserving the benchmark JSON's flat list-of-rows shape.
+  - Verification: `python3 -m pytest -q test_summarize_benchmarks.py` passed (`3` tests), and `python3 scripts/summarize_benchmarks.py --include-correction-memory --include-app-hardcases --single-font-hardcases` reports `character_correction_memory_samples: 0.19% (2/1040)` and `character_correction_memory_ready_labels: 0.00% (0/52)`, confirming the deployed correction-memory bank is still far below the coverage needed to attack exact-recognition blockers.
+
 ## Next Higher-Value Directions
 
 - Add more real user-labeled correction uploads for exact visual twins, then use `scripts/train_from_corrections.py`.

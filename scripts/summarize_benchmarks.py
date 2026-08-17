@@ -100,6 +100,47 @@ def summarize_app_hardcases(target: float = 95.0, all_fonts: bool = True) -> lis
     ]
 
 
+def summarize_correction_memory(target: float = 95.0, project_dir: Path = PROJECT_DIR) -> list[dict[str, object]]:
+    """Return deployed character correction-memory coverage for priority labels."""
+
+    from character_model import load_correction_memory_exemplars
+    from main import PRACTICE_PRIORITY_LABELS, PRACTICE_TARGET_PER_LABEL
+
+    labels = _read_json(project_dir / "character_labels.json")
+    if not isinstance(labels, list):
+        return [
+            _counted_gate("correction_memory_samples", None, target, 0, 0),
+            _counted_gate("correction_memory_ready_labels", None, target, 0, 0),
+        ]
+    loaded = load_correction_memory_exemplars([str(label) for label in labels])
+    counts: dict[str, int] = {}
+    if loaded is not None:
+        _images, targets = loaded
+        for target_index in targets.tolist():
+            label = str(labels[int(target_index)])
+            counts[label] = counts.get(label, 0) + 1
+
+    priority_labels = list(dict.fromkeys(PRACTICE_PRIORITY_LABELS))
+    target_samples = len(priority_labels) * PRACTICE_TARGET_PER_LABEL
+    samples = sum(counts.get(label, 0) for label in priority_labels)
+    ready_labels = sum(1 for label in priority_labels if counts.get(label, 0) >= PRACTICE_TARGET_PER_LABEL)
+    not_ready_labels = [label for label in priority_labels if counts.get(label, 0) < PRACTICE_TARGET_PER_LABEL]
+    sample_percent = 100.0 * samples / target_samples if target_samples else 100.0
+    ready_percent = 100.0 * ready_labels / len(priority_labels) if priority_labels else 100.0
+    metadata = {
+        "by_label": {label: counts[label] for label in priority_labels if label in counts},
+        "priority_labels": priority_labels,
+        "not_ready_label_list": not_ready_labels,
+        "not_ready_label_count": len(not_ready_labels),
+        "samples_per_label_target": PRACTICE_TARGET_PER_LABEL,
+    }
+    rows = [
+        _counted_gate("character_correction_memory_samples", sample_percent, target, samples, target_samples),
+        _counted_gate("character_correction_memory_ready_labels", ready_percent, target, ready_labels, len(priority_labels)),
+    ]
+    return [{**row, **metadata} for row in rows]
+
+
 def _float_or_none(value: object) -> float | None:
     """Convert metric values to float when possible."""
 
@@ -137,11 +178,18 @@ def main() -> None:
         action="store_true",
         help="Use one font instead of all fonts when --include-app-hardcases is set.",
     )
+    parser.add_argument(
+        "--include-correction-memory",
+        action="store_true",
+        help="Also report usable saved-correction memory coverage for priority labels.",
+    )
     parser.add_argument("--json", action="store_true")
     args = parser.parse_args()
     report = summarize_saved_metrics(target=args.target)
     if args.include_app_hardcases:
         report.extend(summarize_app_hardcases(target=args.target, all_fonts=not args.single_font_hardcases))
+    if args.include_correction_memory:
+        report.extend(summarize_correction_memory(target=args.target))
     if args.json:
         print(json.dumps(report, indent=2))
         return
