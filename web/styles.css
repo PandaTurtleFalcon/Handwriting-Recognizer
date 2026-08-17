@@ -564,6 +564,12 @@ h2 {
   background: #f7f8fa;
 }
 
+.raw-output .row-chip {
+  border-color: #cbd6e4;
+  color: #5d6b80;
+  background: #fbfdff;
+}
+
 .full-correction {
   display: grid;
   grid-template-columns: minmax(180px, 1fr) auto;

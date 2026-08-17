@@ -128,36 +128,40 @@ CHARACTER_PRACTICE_PRIORITY_LABELS = [
     "K",
 ]
 MIXEDCASE_PRACTICE_PRIORITY_LABELS = [
-    "s",
-    "O",
-    "V",
     "1",
-    "c",
-    "I",
-    "F",
-    "o",
-    "m",
-    "0",
     "l",
-    "U",
-    "k",
+    "I",
     "i",
-    "u",
-    "g",
+    "0",
+    "O",
+    "o",
+    "9",
     "q",
-    "M",
-    "C",
-    "P",
+    "g",
+    "5",
     "S",
-    "v",
-    "z",
-    "x",
-    "p",
+    "s",
     "2",
     "Z",
-    "9",
+    "z",
+    "U",
+    "u",
+    "V",
+    "v",
+    "M",
+    "m",
+    "N",
+    "n",
+    "C",
+    "c",
+    "P",
+    "p",
+    "F",
     "f",
-    "5",
+    "k",
+    "K",
+    "X",
+    "x",
     "W",
     "w",
     "Y",
@@ -168,38 +172,28 @@ MIXEDCASE_PRACTICE_PRIORITY_LABELS = [
     "7",
     "J",
     "j",
-    "K",
-    "X",
-    "-",
-    "_",
-    ".",
-    "'",
-    "|",
-    "/",
-    ":",
-    ";",
-    "!",
-    "+",
 ]
 PRACTICE_PRIORITY_LABELS = list(dict.fromkeys(CHARACTER_PRACTICE_PRIORITY_LABELS + MIXEDCASE_PRACTICE_PRIORITY_LABELS))
 PRACTICE_PRIORITY_EVIDENCE = {
-    "s": "worst mixed-case exact label and s/S confusion",
+    "s": "top mixed-case 5/S/s visual twin family",
     "O": "worst character label and O/0/o confusion",
-    "V": "worst mixed-case uppercase label and V/v confusion",
-    "1": "top mixed-case 1/l/I/i confusion",
-    "c": "worst mixed-case lowercase label and c/C confusion",
-    "I": "worst character label and I/l/1 confusion",
+    "V": "top mixed-case U/u/V/v visual twin family",
+    "1": "largest mixed-case 1/l/I/i/!/| visual twin family",
+    "c": "top mixed-case C/c visual twin family",
+    "I": "largest mixed-case 1/l/I/i/!/| visual twin family",
     "F": "top mixed-case F/f confusion",
     "o": "worst character label and o/O/0 confusion",
-    "m": "worst mixed-case lowercase label and m/M confusion",
+    "m": "top mixed-case M/N/m/n visual twin family",
     "0": "worst character digit and 0/O/o confusion",
-    "l": "worst character label and l/1/I/i confusion",
-    "U": "top mixed-case U/u confusion",
-    "i": "worst character label and i/l/| confusion",
-    "u": "top mixed-case u/U confusion",
-    "g": "top mixed-case 9/q/g confusion",
-    "q": "top mixed-case 9/q confusion",
-    "M": "top mixed-case M/m confusion",
+    "l": "largest mixed-case 1/l/I/i/!/| visual twin family",
+    "U": "top mixed-case U/u/V/v visual twin family",
+    "i": "largest mixed-case 1/l/I/i/!/| visual twin family",
+    "u": "top mixed-case U/u/V/v visual twin family",
+    "g": "top mixed-case 9/q/g visual twin family",
+    "q": "top mixed-case 9/q/g visual twin family",
+    "M": "top mixed-case M/N/m/n visual twin family",
+    "N": "top mixed-case M/N/m/n visual twin family",
+    "n": "top mixed-case M/N/m/n visual twin family",
     "C": "top mixed-case C/c confusion",
     "P": "top mixed-case P/p confusion",
     "S": "top mixed-case S/s and 5/S confusion",
@@ -2247,6 +2241,7 @@ def render_result(result: dict[str, object]) -> str:
   </div>
   {row_html}
   {context_html}
+  {render_raw_sequence_note(result)}
   {full_correction_html}
   {overlay_html}
   <div class="digits">{''.join(digit_cards)}</div>
@@ -2371,6 +2366,27 @@ def render_context_notes(notes: object) -> str:
         return ""
     items = "".join(f"<code>{html.escape(str(note))}</code>" for note in notes)
     return f'<div class="row-output">{items}</div>'
+
+
+def render_raw_sequence_note(result: dict[str, object]) -> str:
+    """Show the raw model text when context cleanup changed the displayed answer."""
+
+    sequence = str(result.get("sequence", ""))
+    raw_sequence = str(result.get("raw_sequence", ""))
+    raw_rows = result.get("raw_row_sequences", [])
+    cleaned_rows = result.get("row_sequences", [])
+    if not raw_sequence or raw_sequence == sequence:
+        return ""
+    raw_display = " / ".join(str(row) for row in raw_rows) if isinstance(raw_rows, list) and raw_rows else raw_sequence
+    cleaned_display = " / ".join(str(row) for row in cleaned_rows) if isinstance(cleaned_rows, list) and cleaned_rows else sequence
+    if raw_display == cleaned_display:
+        return ""
+    return (
+        '<div class="row-output raw-output">'
+        f"<code>model read: {html.escape(raw_display)}</code>"
+        f"<code>shown as: {html.escape(cleaned_display)}</code>"
+        "</div>"
+    )
 
 
 def render_overlays(result: dict[str, object], predictions: object) -> str:

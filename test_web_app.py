@@ -645,6 +645,29 @@ class WebAppRenderingTests(unittest.TestCase):
 
         self.assertIn("skinny stroke", html)
 
+    def test_render_result_shows_raw_sequence_when_context_changes_display(self) -> None:
+        """Cleaned common-word results should still expose the raw model read."""
+
+        html = main.render_result(
+            {
+                "filename": "look-behind.png",
+                "sequence": "look behind\nyou",
+                "raw_sequence": "xOOh:1i7o4",
+                "row_sequences": ["look behind", "you"],
+                "raw_row_sequences": ["xOOh:1i", "7o4"],
+                "context_notes": ["Read a whole-row common word using known visual lookalikes."],
+                "preview": "data:image/png;base64,",
+                "image_width": 100,
+                "image_height": 100,
+                "predictions": [
+                    {"label": "x", "confidence": 0.9, "x": 1, "y": 1, "width": 20, "height": 20, "row": 1}
+                ],
+            }
+        )
+
+        self.assertIn("model read: xOOh:1i / 7o4", html)
+        self.assertIn("shown as: look behind / you", html)
+
     def test_result_cards_limit_top_guesses_to_three(self) -> None:
         """The result card should stay compact when many alternatives exist."""
 
@@ -1572,7 +1595,7 @@ class WebAppRenderingTests(unittest.TestCase):
         """Practice collection should attack the measured exact-recognition gaps first."""
 
         self.assertEqual(main.CHARACTER_PRACTICE_PRIORITY_LABELS[:12], ["O", "l", "o", "I", "0", "1", "i", "s", "c", "z", "v", "-"])
-        self.assertEqual(main.MIXEDCASE_PRACTICE_PRIORITY_LABELS[:10], ["s", "O", "V", "1", "c", "I", "F", "o", "m", "0"])
+        self.assertEqual(main.MIXEDCASE_PRACTICE_PRIORITY_LABELS[:12], ["1", "l", "I", "i", "0", "O", "o", "9", "q", "g", "5", "S"])
         self.assertEqual(main.PRACTICE_PRIORITY_LABELS[:4], ["O", "l", "o", "I"])
 
     def test_correction_readiness_report_exposes_training_gates(self) -> None:

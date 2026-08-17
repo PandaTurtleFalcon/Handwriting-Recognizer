@@ -709,6 +709,20 @@ function renderRows(result, panel) {
     notes.forEach((note) => noteWrap.append(makeElement("code", "row-chip", note)));
     panel.append(noteWrap);
   }
+  const rawSequence = text(result.raw_sequence);
+  const displaySequence = text(result.sequence);
+  if (rawSequence && rawSequence !== displaySequence) {
+    const rawRows = Array.isArray(result.raw_row_sequences) && result.raw_row_sequences.length > 0
+      ? result.raw_row_sequences.map((row) => text(row)).join(" / ")
+      : rawSequence;
+    const cleanedRows = rows.length > 0 ? rows.map((row) => text(row)).join(" / ") : displaySequence;
+    if (rawRows !== cleanedRows) {
+      const rawWrap = makeElement("div", "context-output raw-output");
+      rawWrap.append(makeElement("code", "row-chip", `model read: ${rawRows}`));
+      rawWrap.append(makeElement("code", "row-chip", `shown as: ${cleanedRows}`));
+      panel.append(rawWrap);
+    }
+  }
 }
 
 function renderFullCorrection(result, panel) {
