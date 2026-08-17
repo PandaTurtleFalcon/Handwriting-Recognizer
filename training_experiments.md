@@ -540,6 +540,11 @@ restored, so future improvement loops do not repeat known-bad blends.
   - Command shape: `python3 alnum_model.py --mixed-case --model cnn --warm-start --include-nist-sd19 --nist-samples-per-class 800 --include-corrections --samples-per-class 3500 --learning-rate 0.00001 --epochs 1 --seed 2702 --min-accuracy 0 --mixedcase-label-smoothing 0.02 --mixedcase-type-loss-weight 0.03 --mixedcase-extra-root data/uji_pen_v2/twin_subset_ascii --device mps`.
   - Result: despite targeting the two biggest visual-twin error families, the one-epoch warm-start probe regressed to `77.37%` exact (`98.01%` digits, `66.54%` upper, `86.46%` lower), below the deployed `80.50%` checkpoint. The backed-up `mixedcase_cnn.pt` and `mixedcase_training_metrics.json` were restored. Even focused UJI samples appear distribution-mismatched for the EMNIST mixed-case test gate without a better weighting or domain-adaptation strategy.
 
+- Targeted HASY visual-twin character subset:
+  - Data path: created a local ignored subset at `data/extra_hasyv2/character_ascii_twin_subset` from `data/extra_hasyv2/character_ascii`, containing the current worst character labels `l/O/I/0/o/s/1/i/S/z/c/-/|/v/x`. HASY did not provide `.` samples in that root, so the existing generated punctuation root remained in the command for punctuation coverage.
+  - Command shape: `python3 character_model.py --model widecnn --warm-start --epochs 2 --batch-size 256 --min-accuracy 0 --learning-rate 0.0000008 --label-smoothing 0.012 --weak-labels 'lOI0os1iSzc-|vx' --weak-loss-weight 1.04 --seed 1819 --extra-root data/extra_hasyv2/character_ascii_twin_subset --extra-root data/corrections/character_ascii --extra-root data/generated_punctuation_ascii --device mps`.
+  - Result: the focused HASY blend regressed to `92.28%` and `92.30%` validation exact, below the deployed calibrated `93.07%` character gate. The backed-up `character_cnn.pt`, `character_training_metrics.json`, `character_exemplars.pt`, and `character_logit_bias.pt` were restored. Like UJI, even a visually targeted HASY subset appears domain-mismatched for the current validation target.
+
 ## Next Higher-Value Directions
 
 - Interrupted full calibration/analyzer startup probe:

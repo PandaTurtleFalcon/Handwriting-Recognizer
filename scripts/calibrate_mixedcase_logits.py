@@ -166,6 +166,7 @@ def main() -> None:
     parser.add_argument("--min-improvement", type=float, default=0.01)
     parser.add_argument("--scale", type=float, default=None, help="Write this fixed scale instead of the sweep optimum.")
     parser.add_argument("--write", action="store_true", help="Write the artifact only after separately checking app gates.")
+    parser.add_argument("--dry-run", action="store_true", help="Evaluate calibration without writing an artifact.")
     args = parser.parse_args()
     report = calibrate_mixedcase_logits(
         output_path=args.output_path,
@@ -174,7 +175,7 @@ def main() -> None:
         step=args.step,
         min_improvement=args.min_improvement,
         fixed_scale=args.scale,
-        write=args.write,
+        write=args.write and not args.dry_run,
     )
     print(json.dumps(report, indent=2))
 
