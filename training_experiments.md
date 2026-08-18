@@ -706,6 +706,10 @@ restored, so future improvement loops do not repeat known-bad blends.
   - Command shape: `python3 scripts/calibrate_character_logits.py --batch-size 4096 --greedy-labels 'SOlI0ociCvsuUPpXxzZ|/;._-' --greedy-rounds 8 --greedy-deltas=-0.12,-0.1,-0.08,-0.06,-0.04,-0.03,-0.02,-0.01,0.01,0.02,0.03,0.04,0.06,0.08,0.1,0.12 --objective letter_validation_accuracy --min-validation 94.09 --min-ambiguity 99.09 --min-digit 95.20 --min-letter 93.39 --min-punctuation 96.30 --min-improvement 0.005 --include-pair-rules --require-app-gates`.
   - Result: accepted two tiny bias steps (`c -0.10`, `z -0.01`), improving character exact from `94.09%` to `94.11%` and character-letter exact from `93.39%` to `93.42%`. Digit exact stayed `95.29%`, punctuation stayed above target at `96.34%`, clean app stayed `100.00% (45/45)`, and script app stayed `96.67% (87/90)`.
 
+- Character pair-rule continuation after stacked bias:
+  - Command shape: `python3 scripts/calibrate_character_logits.py --pair-rules --batch-size 4096 --greedy-rounds 10 ... --min-improvement 0.005 --objective letter_validation_accuracy --min-validation 94.10 --min-ambiguity 99.09 --min-digit 95.20 --min-letter 93.41 --min-punctuation 96.30 --require-app-gates`, using the existing visual-twin family list plus punctuation families.
+  - Result: accepted one additional rule (`1 -> l` at threshold `-0.02`), improving character-letter exact from `93.42%` to `93.43%`. Character exact stayed `94.11%`, digit exact remains passing at `95.23%`, punctuation remains passing at `96.34%`, clean app stayed `100.00% (45/45)`, and script app stayed `96.67% (87/90)`.
+
 ## Next Higher-Value Directions
 
 - Interrupted full calibration/analyzer startup probe:
