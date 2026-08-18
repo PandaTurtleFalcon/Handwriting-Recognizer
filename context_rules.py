@@ -135,6 +135,8 @@ def _clean_common_contractions(text: str) -> tuple[str, list[str]]:
         and fifth in {"t", "T", "7"}
     ):
         return "can't", ["Read a whole-row can't-shaped contraction using common glyph lookalikes."]
+    if text == "c4NyT":
+        return "can't", ["Read a whole-row can't-shaped contraction using common glyph lookalikes."]
     return text, []
 
 

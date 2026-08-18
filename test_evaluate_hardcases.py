@@ -76,6 +76,21 @@ class HardCaseEvaluationTests(unittest.TestCase):
         self.assertGreater(max(xs) - min(xs), 180)
         self.assertGreater(max(ys) - min(ys), 60)
 
+    def test_script_case_renderer_draws_detectable_period(self) -> None:
+        """Script punctuation should be large enough for segmentation."""
+
+        payload = render_script_case("Hi.", seed=1004)
+        image = Image.open(BytesIO(payload)).convert("L")
+        dark_pixels = [
+            (x, y)
+            for y in range(image.height)
+            for x in range(image.width)
+            if image.getpixel((x, y)) < 128
+        ]
+        lower_right_pixels = [(x, y) for x, y in dark_pixels if x > 145 and y > 105]
+
+        self.assertGreaterEqual(len(lower_right_pixels), 30)
+
     def test_script_case_renderer_separates_upper_and_lowercase_height(self) -> None:
         """Case-pair hardcases should not render both glyphs identically."""
 

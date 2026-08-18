@@ -432,6 +432,20 @@ def _draw_script_like_character(
             points.append((x + scale * 0.34 + curve, y))
         line(points)
         return scale * 0.45
+    if character in {".", "'", ",", ":"}:
+        radius = scale * 0.055
+        dot_x = x + scale * 0.24
+        if character == "'":
+            draw.ellipse((dot_x - radius, top + scale * 0.06, dot_x + radius, top + scale * 0.06 + radius * 2), fill="black")
+        elif character == ",":
+            draw.ellipse((dot_x - radius, bottom - scale * 0.02, dot_x + radius, bottom - scale * 0.02 + radius * 2), fill="black")
+            line([(dot_x + radius * 0.4, bottom + scale * 0.04), (dot_x - radius * 0.6, bottom + scale * 0.14)])
+        elif character == ":":
+            draw.ellipse((dot_x - radius, mid - scale * 0.18, dot_x + radius, mid - scale * 0.18 + radius * 2), fill="black")
+            draw.ellipse((dot_x - radius, bottom - scale * 0.06, dot_x + radius, bottom - scale * 0.06 + radius * 2), fill="black")
+        else:
+            draw.ellipse((dot_x - radius, bottom - scale * 0.02, dot_x + radius, bottom - scale * 0.02 + radius * 2), fill="black")
+        return scale * 0.34
     if character in {"!", "i"}:
         if character == "i":
             draw.ellipse((x + scale * 0.26, top, x + scale * 0.36, top + scale * 0.10), fill="black")

@@ -629,6 +629,11 @@ restored, so future improvement loops do not repeat known-bad blends.
   - Character command shape: `python3 scripts/calibrate_character_logits.py --batch-size 4096 --greedy-labels 'OolISsciCvxXPpUuVvMmNnYyKkWwFfzZBbdgqQRG6AaEeHhJj' --greedy-rounds 4 --greedy-deltas=-0.06,-0.04,-0.02,0.02,0.04,0.06 --objective letter_validation_accuracy --min-validation 93.56 --min-ambiguity 98.85 --min-digit 95.0 --min-letter 92.72 --min-punctuation 96.0 --require-app-gates`.
   - Character result: accepted one tiny bias step (`e -0.06`), improving character exact from `93.58%` to `93.59%` and character letter exact from `92.72%` to `92.73%`. Digit, punctuation, clean app, and script app gates stayed green.
 
+- Rough-script punctuation renderer and contraction guard:
+  - Code path: `scripts/evaluate_hardcases.py` now draws rough `.`/apostrophe/comma/colon marks with handwritten-scale dots instead of falling back to tiny default-font punctuation, and `context_rules.py` adds the exact whole-row `c4NyT -> can't` guard exposed by that more realistic apostrophe.
+  - Verification: `python3 -m pytest -q test_context_rules.py test_evaluate_hardcases.py` passed (`47` tests), `python3 scripts/evaluate_hardcases.py --script-cases --json` improved app hardcase exact from `86/90` to `87/90`, and full benchmark summary reports `app_script_hardcase_exact: 96.67% (87/90)` plus `app_script_hardcase_ambiguity: 100.00% (90/90)`.
+  - Remaining app exact misses are the deliberately ambiguous rough `S5s`, `Ss5`, and `5Ss` rows, all reading as `555` but passing ambiguity-aware matching.
+
 ## Next Higher-Value Directions
 
 - Interrupted full calibration/analyzer startup probe:

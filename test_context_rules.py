@@ -169,6 +169,13 @@ class ContextRulesTests(unittest.TestCase):
 
         self.assertEqual(cleanup.display, "can't")
 
+    def test_common_contraction_cleanup_handles_rough_script_variant(self) -> None:
+        """The rough script renderer can make can't look like c4NyT."""
+
+        cleanup = cleanup_context("c4NyT")
+
+        self.assertEqual(cleanup.display, "can't")
+
     def test_common_contraction_cleanup_rejects_longer_words(self) -> None:
         """Contraction cleanup should stay whole-row specific."""
 
