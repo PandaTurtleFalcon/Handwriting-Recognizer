@@ -306,6 +306,49 @@ class MixedcaseCalibrationCliTests(unittest.TestCase):
             self.assertEqual(report["calibrated_objective"], report["base_objective"])
             self.assertFalse(output_path.exists())
 
+    def test_greedy_bias_can_include_pair_rules_in_scoring(self) -> None:
+        """Greedy-bias probes should be able to score the deployed pair-rule output."""
+
+        logits = torch.tensor(
+            [
+                [0.40, 0.30, 0.00],
+                [0.50, 0.45, 0.00],
+                [0.00, 0.00, 0.20],
+            ],
+            dtype=torch.float32,
+        )
+        targets = torch.tensor([1, 1, 2], dtype=torch.long)
+        train_targets = torch.tensor([0, 1, 2], dtype=torch.long)
+        labels = ["0", "O", "a"]
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            output_path = Path(temp_dir) / "mixedcase_logit_bias.pt"
+            pair_rules_path = Path(temp_dir) / "mixedcase_pair_rules.json"
+            pair_rules_path.write_text(
+                json.dumps(
+                    {
+                        "labels": labels,
+                        "rules": [{"from": "0", "to": "O", "threshold": -0.2}],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            with (
+                patch("scripts.calibrate_mixedcase_logits._mixedcase_logits", return_value=(logits, targets, train_targets, labels)),
+                patch("scripts.calibrate_mixedcase_logits.MIXEDCASE_LABELS", labels),
+                patch("scripts.calibrate_mixedcase_logits.MIXEDCASE_PAIR_RULES_PATH", pair_rules_path),
+            ):
+                report = calibrate_mixedcase_greedy_bias(
+                    output_path=output_path,
+                    batch_size=3,
+                    labels_to_tune="",
+                    include_pair_rules=True,
+                    write=False,
+                )
+
+            self.assertTrue(report["includes_pair_rules"])
+            self.assertEqual(report["base_accuracy"], 100.0)
+
     def test_greedy_bias_rejects_unknown_objective(self) -> None:
         """Invalid objective names should fail before writing an artifact."""
 
@@ -612,6 +655,44 @@ class MixedcaseCalibrationCliTests(unittest.TestCase):
                 main()
 
             self.assertEqual(calibrate.call_args.kwargs["label_groups"], ("lower",))
+
+    def test_cli_passes_include_pair_rules_to_greedy_bias(self) -> None:
+        """The greedy-bias CLI should expose deployed pair-rule scoring."""
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            output_path = Path(temp_dir) / "mixedcase_logit_bias.pt"
+            output = StringIO()
+            with (
+                patch(
+                    "sys.argv",
+                    [
+                        "calibrate_mixedcase_logits.py",
+                        "--greedy-labels",
+                        "0O",
+                        "--include-pair-rules",
+                        "--output-path",
+                        str(output_path),
+                        "--dry-run",
+                    ],
+                ),
+                patch(
+                    "scripts.calibrate_mixedcase_logits.calibrate_mixedcase_greedy_bias",
+                    return_value={
+                        "base_accuracy": 87.0,
+                        "calibrated_accuracy": 87.0,
+                        "best_scale": "greedy-per-label",
+                        "improvement": 0.0,
+                        "best_checkpoint": {"test_accuracy": 87.0},
+                        "includes_pair_rules": True,
+                        "wrote": False,
+                        "output_path": str(output_path),
+                    },
+                ) as calibrate,
+                patch("sys.stdout", output),
+            ):
+                main()
+
+            self.assertTrue(calibrate.call_args.kwargs["include_pair_rules"])
 
     def test_parse_label_groups_rejects_unknown_group(self) -> None:
         """Group filters should reject typos before a long calibration run."""

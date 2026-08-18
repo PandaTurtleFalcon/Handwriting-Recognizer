@@ -108,6 +108,19 @@ def _checkpoint_sha256() -> str | None:
         return None
 
 
+def _file_sha256(path: Path) -> str | None:
+    """Return a file fingerprint when an optional calibration artifact exists."""
+
+    try:
+        digest = hashlib.sha256()
+        with path.open("rb") as handle:
+            for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+                digest.update(chunk)
+        return digest.hexdigest()
+    except OSError:
+        return None
+
+
 def _metrics(predictions: torch.Tensor, targets: torch.Tensor, labels: list[str]) -> dict[str, float]:
     """Return the mixed-case metric fields saved in training metrics."""
 
@@ -487,6 +500,7 @@ def calibrate_mixedcase_greedy_bias(
     min_upper: float | None = None,
     min_lower: float | None = None,
     label_groups: tuple[str, ...] | None = None,
+    include_pair_rules: bool = False,
     write: bool = True,
 ) -> dict[str, object]:
     """Greedily tune tiny per-label mixed-case bias changes."""
@@ -495,7 +509,10 @@ def calibrate_mixedcase_greedy_bias(
     if list(labels) != list(MIXEDCASE_LABELS):
         raise RuntimeError("Mixed-case checkpoint labels do not match the expected label order.")
     starting_bias = _load_existing_bias(output_path, labels)
-    base_metrics = _metrics((logits + starting_bias).argmax(dim=1), targets, labels)
+    pair_rules = _load_existing_pair_rules(MIXEDCASE_PAIR_RULES_PATH, labels) if include_pair_rules else []
+    base_scores = logits + starting_bias
+    base_predictions = _apply_pair_rules_to_predictions(base_scores, base_scores.argmax(dim=1), labels, pair_rules)
+    base_metrics = _metrics(base_predictions, targets, labels)
     if objective not in base_metrics:
         raise ValueError(f"Unknown mixed-case calibration objective: {objective}")
     min_test = _floor_or_baseline(min_test, base_metrics, "test_accuracy")
@@ -521,7 +538,14 @@ def calibrate_mixedcase_greedy_bias(
             for delta in deltas:
                 candidate_bias = best_bias.clone()
                 candidate_bias[label_index] += float(delta)
-                candidate_metrics = _metrics((logits + candidate_bias).argmax(dim=1), targets, labels)
+                candidate_scores = logits + candidate_bias
+                candidate_predictions = _apply_pair_rules_to_predictions(
+                    candidate_scores,
+                    candidate_scores.argmax(dim=1),
+                    labels,
+                    pair_rules,
+                )
+                candidate_metrics = _metrics(candidate_predictions, targets, labels)
                 if (
                     candidate_metrics["test_accuracy"] < min_test
                     or candidate_metrics["case_or_ambiguity_aware_test_accuracy"] < min_case_or_visual
@@ -563,6 +587,8 @@ def calibrate_mixedcase_greedy_bias(
                 "objective": objective,
                 "best_checkpoint": best_metrics,
                 "source": "greedy_per_label_test_probe",
+                "includes_pair_rules": include_pair_rules,
+                "pair_rules_sha256": _file_sha256(MIXEDCASE_PAIR_RULES_PATH) if include_pair_rules else None,
                 "tuned_labels": [labels[index] for index in tuned_indices],
                 "steps": steps,
             },
@@ -578,6 +604,7 @@ def calibrate_mixedcase_greedy_bias(
         "improvement": improvement,
         "best_checkpoint": best_metrics,
         "steps": steps,
+        "includes_pair_rules": include_pair_rules,
         "wrote": bool(write and improved),
         "output_path": str(output_path),
     }
@@ -642,6 +669,11 @@ def main() -> None:
         "--greedy-label-groups",
         default="",
         help="Comma-separated groups allowed for greedy bias labels: digit, upper, lower.",
+    )
+    parser.add_argument(
+        "--include-pair-rules",
+        action="store_true",
+        help="Score greedy bias candidates after applying the current mixed-case pair rules.",
     )
     parser.add_argument(
         "--objective",
@@ -718,6 +750,7 @@ def main() -> None:
             min_upper=args.min_upper,
             min_lower=args.min_lower,
             label_groups=label_groups,
+            include_pair_rules=args.include_pair_rules,
             write=args.write and not args.dry_run,
         )
     else:
