@@ -33,6 +33,7 @@ from character_model import (
     FocalCrossEntropyLoss,
     labels_match_with_ambiguity,
     load_correction_memory_exemplars,
+    make_loaders,
     stratified_split_indices,
 )
 from alnum_model import LABELS, MIXEDCASE_LABELS, attach_mixedcase_hybrid, attach_mixedcase_logit_bias
@@ -174,6 +175,8 @@ class CharacterPostprocessingTests(unittest.TestCase):
                     "93.5",
                     "--min-checkpoint-punctuation",
                     "96.0",
+                    "--train-only-extra-root",
+                    "tmp/rough",
                 ],
             ),
             patch("character_model.train_character_model") as train,
@@ -186,6 +189,45 @@ class CharacterPostprocessingTests(unittest.TestCase):
         self.assertEqual(train.call_args.kwargs["min_checkpoint_digit"], 95.0)
         self.assertEqual(train.call_args.kwargs["min_checkpoint_letter"], 93.5)
         self.assertEqual(train.call_args.kwargs["min_checkpoint_punctuation"], 96.0)
+        self.assertEqual(train.call_args.kwargs["train_only_extra_roots"], [Path("tmp/rough")])
+
+    def test_train_only_extra_root_skips_validation_loader(self) -> None:
+        """Generated practice samples should train the model without entering validation."""
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / "base"
+            train_only = Path(directory) / "train-only"
+            for class_code in ("65", "66"):
+                (root / class_code).mkdir(parents=True)
+            (train_only / "65").mkdir(parents=True)
+            for index, image_path in enumerate(
+                [
+                    root / "65" / "a0.png",
+                    root / "65" / "a1.png",
+                    root / "66" / "b0.png",
+                    root / "66" / "b1.png",
+                    train_only / "65" / "extra-a0.png",
+                    train_only / "65" / "extra-a1.png",
+                    train_only / "65" / "extra-a2.png",
+                ]
+            ):
+                image = Image.new("L", (24, 24), 255)
+                draw = ImageDraw.Draw(image)
+                draw.line((4 + index % 3, 20, 12, 4, 20, 20), fill=0, width=2)
+                image.save(image_path)
+
+            train_loader, validation_loader, labels = make_loaders(
+                root,
+                batch_size=16,
+                train_only_extra_roots=[train_only],
+            )
+
+            train_total = sum(batch_targets.numel() for _batch_images, batch_targets in train_loader)
+            validation_total = sum(batch_targets.numel() for _batch_images, batch_targets in validation_loader)
+
+        self.assertEqual(labels, ["A", "B"])
+        self.assertEqual(train_total, 5)
+        self.assertEqual(validation_total, 2)
 
     def test_labels_match_with_visual_ambiguity_groups(self) -> None:
         """Ambiguity-aware scoring should accept known handwriting lookalikes."""

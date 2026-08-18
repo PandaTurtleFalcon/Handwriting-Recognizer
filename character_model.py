@@ -466,6 +466,42 @@ def build_or_load_combined_cache(root: Path, extra_roots: list[Path] | None = No
     return image_tensor, target_tensor, labels
 
 
+def load_extra_character_tensors(extra_roots: list[Path], labels: list[str]) -> tuple[torch.Tensor, torch.Tensor] | None:
+    """Load ASCII-folder character samples that should not enter validation."""
+
+    if not extra_roots:
+        return None
+    label_to_index = {label: index for index, label in enumerate(labels)}
+    extra_images: list[torch.Tensor] = []
+    extra_targets: list[torch.Tensor] = []
+    unknown_folders: list[str] = []
+    for extra_root in extra_roots:
+        if not extra_root.exists() or not extra_root.is_dir():
+            raise RuntimeError(f"Extra character dataset does not exist: {extra_root}")
+        for class_dir in sorted(path for path in extra_root.iterdir() if path.is_dir()):
+            if not class_dir.name.isdigit():
+                unknown_folders.append(str(class_dir))
+                continue
+            label = chr(int(class_dir.name))
+            if label not in label_to_index:
+                continue
+            loaded_images = []
+            for image_path in sorted(class_dir.glob("*.png")):
+                with Image.open(image_path) as image:
+                    loaded_images.append(character_tensor_from_image(image.convert("L")))
+            if loaded_images:
+                extra_images.append(torch.stack(loaded_images))
+                extra_targets.append(
+                    torch.full((len(loaded_images),), label_to_index[label], dtype=torch.long)
+                )
+    if unknown_folders:
+        formatted = ", ".join(unknown_folders[:8])
+        raise RuntimeError(f"Extra character dataset has non-ASCII-code folders: {formatted}")
+    if not extra_images:
+        return None
+    return torch.cat(extra_images), torch.cat(extra_targets)
+
+
 def build_character_exemplars(
     root: Path = DATASET_ROOT,
     extra_roots: list[Path] | None = None,
@@ -639,7 +675,12 @@ def _correction_memory_signature(corrections_path: Path = CORRECTIONS_PATH) -> t
     return stat.st_mtime_ns, stat.st_size
 
 
-def make_loaders(root: Path, batch_size: int, extra_roots: list[Path] | None = None) -> tuple[DataLoader, DataLoader, list[str]]:
+def make_loaders(
+    root: Path,
+    batch_size: int,
+    extra_roots: list[Path] | None = None,
+    train_only_extra_roots: list[Path] | None = None,
+) -> tuple[DataLoader, DataLoader, list[str]]:
     """Build weighted train and validation loaders for curated characters."""
 
     images, targets, labels = build_or_load_combined_cache(root, extra_roots)
@@ -650,6 +691,13 @@ def make_loaders(root: Path, batch_size: int, extra_roots: list[Path] | None = N
         random_state=42,
         stratify=targets.numpy(),
     )
+    train_only = load_extra_character_tensors(train_only_extra_roots or [], labels)
+    if train_only is not None:
+        train_only_images, train_only_targets = train_only
+        train_only_start = len(targets)
+        images = torch.cat((images, train_only_images.float()))
+        targets = torch.cat((targets, train_only_targets))
+        train_indices.extend(range(train_only_start, len(targets)))
 
     dataset = TensorDataset(images, targets)
     train_labels = [int(targets[index]) for index in train_indices]
@@ -924,6 +972,7 @@ def train_character_model(
     warm_start: bool = False,
     augment: bool = False,
     extra_roots: list[Path] | None = None,
+    train_only_extra_roots: list[Path] | None = None,
     checkpoint_objective: str = "validation_accuracy",
     min_checkpoint_validation: float = 0.0,
     min_checkpoint_ambiguity: float = 0.0,
@@ -951,7 +1000,13 @@ def train_character_model(
     else:
         device = get_device()
     selected_extra_roots = extra_roots or []
-    train_loader, validation_loader, labels = make_loaders(dataset_root, batch_size, selected_extra_roots)
+    selected_train_only_extra_roots = train_only_extra_roots or []
+    train_loader, validation_loader, labels = make_loaders(
+        dataset_root,
+        batch_size,
+        selected_extra_roots,
+        selected_train_only_extra_roots,
+    )
     model_class = CHARACTER_MODEL_TYPES[model_type]
     model = model_class(num_classes=len(labels)).to(device)
     if warm_start and WEIGHTS_PATH.exists():
@@ -1104,6 +1159,7 @@ def train_character_model(
                 "warm_start": warm_start,
                 "augment": augment,
                 "extra_roots": [str(path) for path in selected_extra_roots],
+                "train_only_extra_roots": [str(path) for path in selected_train_only_extra_roots],
                 "checkpoint_objective": checkpoint_objective,
                 "min_checkpoint_validation": min_checkpoint_validation,
                 "min_checkpoint_ambiguity": min_checkpoint_ambiguity,
@@ -2505,6 +2561,7 @@ def main() -> None:
     parser.add_argument("--warm-start", action="store_true")
     parser.add_argument("--augment", action="store_true")
     parser.add_argument("--extra-root", action="append", type=Path, default=[])
+    parser.add_argument("--train-only-extra-root", action="append", type=Path, default=[])
     parser.add_argument(
         "--checkpoint-objective",
         choices=sorted(CHARACTER_CHECKPOINT_OBJECTIVES),
@@ -2533,6 +2590,7 @@ def main() -> None:
         warm_start=args.warm_start,
         augment=args.augment,
         extra_roots=args.extra_root,
+        train_only_extra_roots=args.train_only_extra_root,
         checkpoint_objective=args.checkpoint_objective,
         min_checkpoint_validation=args.min_checkpoint_validation,
         min_checkpoint_ambiguity=args.min_checkpoint_ambiguity,
