@@ -182,6 +182,73 @@ class MixedcaseCalibrationCliTests(unittest.TestCase):
             self.assertEqual(artifact["tuned_labels"], ["0"])
             self.assertEqual(len(artifact["steps"]), 1)
 
+    def test_greedy_bias_can_optimize_lowercase_split(self) -> None:
+        """Greedy mode should support targeting lowercase with safety floors."""
+
+        logits = torch.tensor(
+            [
+                [0.50, 0.00, 0.00],
+                [0.00, 0.50, 0.00],
+                [0.00, 0.20, 0.10],
+                [0.00, 0.30, 0.20],
+            ],
+            dtype=torch.float32,
+        )
+        targets = torch.tensor([0, 1, 2, 2], dtype=torch.long)
+        train_targets = torch.tensor([0, 1, 2], dtype=torch.long)
+        labels = ["0", "A", "a"]
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            output_path = Path(temp_dir) / "mixedcase_logit_bias.pt"
+            with (
+                patch("scripts.calibrate_mixedcase_logits._mixedcase_logits", return_value=(logits, targets, train_targets, labels)),
+                patch("scripts.calibrate_mixedcase_logits.MIXEDCASE_LABELS", labels),
+            ):
+                report = calibrate_mixedcase_greedy_bias(
+                    output_path=output_path,
+                    batch_size=4,
+                    labels_to_tune="a",
+                    deltas=(0.2,),
+                    rounds=2,
+                    min_improvement=0.01,
+                    objective="lower_test_accuracy",
+                    min_test=0.0,
+                    min_case_or_visual=0.0,
+                    min_digit=100.0,
+                    min_upper=100.0,
+                    min_lower=0.0,
+                    write=True,
+                )
+
+            self.assertTrue(report["wrote"])
+            self.assertEqual(report["objective"], "lower_test_accuracy")
+            self.assertGreater(report["calibrated_objective"], report["base_objective"])
+            artifact = torch.load(output_path, map_location="cpu", weights_only=True)
+            self.assertEqual(artifact["objective"], "lower_test_accuracy")
+
+    def test_greedy_bias_rejects_unknown_objective(self) -> None:
+        """Invalid objective names should fail before writing an artifact."""
+
+        logits = torch.tensor([[0.50, 0.00, 0.00]], dtype=torch.float32)
+        targets = torch.tensor([0], dtype=torch.long)
+        train_targets = torch.tensor([0], dtype=torch.long)
+        labels = ["0", "A", "a"]
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            output_path = Path(temp_dir) / "mixedcase_logit_bias.pt"
+            with (
+                patch("scripts.calibrate_mixedcase_logits._mixedcase_logits", return_value=(logits, targets, train_targets, labels)),
+                patch("scripts.calibrate_mixedcase_logits.MIXEDCASE_LABELS", labels),
+            ):
+                with self.assertRaises(ValueError):
+                    calibrate_mixedcase_greedy_bias(
+                        output_path=output_path,
+                        batch_size=1,
+                        labels_to_tune="a",
+                        objective="not_a_metric",
+                    )
+            self.assertFalse(output_path.exists())
+
 
 if __name__ == "__main__":
     unittest.main()

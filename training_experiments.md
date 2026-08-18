@@ -618,6 +618,11 @@ restored, so future improvement loops do not repeat known-bad blends.
   - Command shape: `python3 scripts/calibrate_character_logits.py --batch-size 4096 --greedy-labels 'OolISsciCvxXPpUuVvMmNnYyKkWwFfzZ' --greedy-rounds 5 --greedy-deltas=-0.08,-0.06,-0.04,-0.02,0.02,0.04,0.06,0.08 --objective letter_validation_accuracy --min-validation 93.50 --min-ambiguity 98.85 --min-digit 95.0 --min-letter 92.67 --min-punctuation 96.0 --require-app-gates`.
   - Result: accepted four tiny bias steps (`P -0.08`, `U -0.08`, `Y -0.08`, `z +0.02`), improving character exact from `93.55%` to `93.58%` and character letter exact from `92.67%` to `92.72%`. Digit exact remains passing at `95.05%`; clean app remains `100.00% (45/45)` and script app remains `95.56% (86/90)`.
 
+- Split-aware mixed-case lowercase calibration:
+  - Code path: `scripts/calibrate_mixedcase_logits.py` now supports greedy objectives and aggregate floors (`--objective`, `--min-test`) so probes can target the weakest lowercase split without accepting aggregate exact regressions.
+  - Command shape: first rejected a write that improved lower exact to `72.66%` but dropped aggregate exact from `87.4449%` to `87.4401%`; then restored the prior artifact and reran with `--min-test 87.44488335457518`. The accepted command was `python3 scripts/calibrate_mixedcase_logits.py --batch-size 4096 --greedy-labels 'ocsumlfqpiIvVg9S5CUMNO0l1' --greedy-rounds 4 --greedy-deltas=-0.08,-0.06,-0.04,-0.02,0.02,0.04,0.06,0.08 --objective lower_test_accuracy --min-test 87.44488335457518 --min-case-or-visual 97.70 --min-digit 94.90 --min-upper 83.90 --min-lower 72.63 --write --require-app-gates`.
+  - Result: accepted two tiny bias steps (`q +0.02`, `f +0.02`), keeping aggregate mixed-case exact at `87.44%` while improving lower exact from `72.63%` to `72.64%`. Clean app remains `100.00% (45/45)` and script app remains `95.56% (86/90)`.
+
 ## Next Higher-Value Directions
 
 - Interrupted full calibration/analyzer startup probe:

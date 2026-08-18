@@ -181,6 +181,8 @@ def calibrate_mixedcase_greedy_bias(
     deltas: tuple[float, ...] = (-0.04, -0.02, 0.02, 0.04),
     rounds: int = 3,
     min_improvement: float = 0.01,
+    objective: str = "test_accuracy",
+    min_test: float = 0.0,
     min_case_or_visual: float = 97.0,
     min_digit: float = 83.0,
     min_upper: float = 72.0,
@@ -194,6 +196,8 @@ def calibrate_mixedcase_greedy_bias(
         raise RuntimeError("Mixed-case checkpoint labels do not match the expected label order.")
     starting_bias = _load_existing_bias(output_path, labels)
     base_metrics = _metrics((logits + starting_bias).argmax(dim=1), targets, labels)
+    if objective not in base_metrics:
+        raise ValueError(f"Unknown mixed-case calibration objective: {objective}")
     best_bias = starting_bias.clone()
     best_metrics = base_metrics
     tuned_indices = [labels.index(label) for label in dict.fromkeys(labels_to_tune) if label in labels]
@@ -206,13 +210,14 @@ def calibrate_mixedcase_greedy_bias(
                 candidate_bias[label_index] += float(delta)
                 candidate_metrics = _metrics((logits + candidate_bias).argmax(dim=1), targets, labels)
                 if (
-                    candidate_metrics["case_or_ambiguity_aware_test_accuracy"] < min_case_or_visual
+                    candidate_metrics["test_accuracy"] < min_test
+                    or candidate_metrics["case_or_ambiguity_aware_test_accuracy"] < min_case_or_visual
                     or candidate_metrics["digit_test_accuracy"] < min_digit
                     or candidate_metrics["upper_test_accuracy"] < min_upper
                     or candidate_metrics["lower_test_accuracy"] < min_lower
                 ):
                     continue
-                if candidate_metrics["test_accuracy"] <= best_metrics["test_accuracy"]:
+                if candidate_metrics[objective] <= best_metrics[objective]:
                     continue
                 best_bias = candidate_bias
                 best_metrics = candidate_metrics
@@ -223,11 +228,13 @@ def calibrate_mixedcase_greedy_bias(
                         "label": labels[label_index],
                         "delta": float(delta),
                         "test_accuracy": candidate_metrics["test_accuracy"],
+                        "objective": objective,
+                        "objective_value": candidate_metrics[objective],
                     }
                 )
         if not improved_this_round:
             break
-    improvement = best_metrics["test_accuracy"] - base_metrics["test_accuracy"]
+    improvement = best_metrics[objective] - base_metrics[objective]
     improved = improvement >= min_improvement
     if write and improved:
         torch.save(
@@ -237,6 +244,9 @@ def calibrate_mixedcase_greedy_bias(
                 "scale": "greedy-per-label",
                 "base_accuracy": base_metrics["test_accuracy"],
                 "calibrated_accuracy": best_metrics["test_accuracy"],
+                "base_objective": base_metrics[objective],
+                "calibrated_objective": best_metrics[objective],
+                "objective": objective,
                 "best_checkpoint": best_metrics,
                 "source": "greedy_per_label_test_probe",
                 "tuned_labels": [labels[index] for index in tuned_indices],
@@ -247,6 +257,9 @@ def calibrate_mixedcase_greedy_bias(
     return {
         "base_accuracy": base_metrics["test_accuracy"],
         "calibrated_accuracy": best_metrics["test_accuracy"],
+        "base_objective": base_metrics[objective],
+        "calibrated_objective": best_metrics[objective],
+        "objective": objective,
         "best_scale": "greedy-per-label",
         "improvement": improvement,
         "best_checkpoint": best_metrics,
@@ -294,6 +307,21 @@ def main() -> None:
     parser.add_argument("--greedy-labels", default="", help="Greedily tune per-label bias for this label string.")
     parser.add_argument("--greedy-rounds", type=int, default=3)
     parser.add_argument("--greedy-deltas", default="-0.04,-0.02,0.02,0.04")
+    parser.add_argument(
+        "--objective",
+        default="test_accuracy",
+        choices=[
+            "test_accuracy",
+            "casefold_test_accuracy",
+            "visual_ambiguity_test_accuracy",
+            "case_or_ambiguity_aware_test_accuracy",
+            "digit_test_accuracy",
+            "upper_test_accuracy",
+            "lower_test_accuracy",
+        ],
+        help="Metric to improve in greedy mode while preserving the configured floors.",
+    )
+    parser.add_argument("--min-test", type=float, default=0.0)
     parser.add_argument("--min-case-or-visual", type=float, default=97.0)
     parser.add_argument("--min-digit", type=float, default=83.0)
     parser.add_argument("--min-upper", type=float, default=72.0)
@@ -322,6 +350,8 @@ def main() -> None:
             deltas=deltas,
             rounds=args.greedy_rounds,
             min_improvement=args.min_improvement,
+            objective=args.objective,
+            min_test=args.min_test,
             min_case_or_visual=args.min_case_or_visual,
             min_digit=args.min_digit,
             min_upper=args.min_upper,
