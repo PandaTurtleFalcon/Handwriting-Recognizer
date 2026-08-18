@@ -1038,3 +1038,9 @@ restored, so future improvement loops do not repeat known-bad blends.
   - Result: no dataset or model artifact changed by this patch. The current full CVL archive download is still running under ignored `data/cvl/cvl-database-1-1.zip.part`, but future retries should not waste an already-downloaded multi-GB partial file when the server supports resume.
   - Verification: `test_download_cvl_dataset.py test_prepare_cvl_letters.py test_web_app.py` passed (`110 passed`).
   - Takeaway: the CVL acquisition path is less fragile before running the next mixed-case letter-crop experiment.
+
+- Rejected tall-region splitter relaxation for reported phrase:
+  - Code path: probed the current `_blank_seam_cut` and `_thin_bridge_cut` helpers on each segmented region from `data/app_hardcase_fixtures/look_behind_you_reported.png` without changing source code.
+  - Result: rejected/no-op. Relaxing the `_split_one_touching_character_region()` aspect-ratio gate would find a blank cut in some oversized tall boxes, but it would also split the final `u`-like glyph into two pieces (`265x437`, cut around column `130`), making the raw row longer than the target phrase.
+  - Verification: direct diagnostic replay measured `13` current regions and showed the unsafe candidate split before any patch was applied.
+  - Takeaway: the raw failure is still real, but a broad tall-box split is too risky. Any segmentation fix needs stronger glyph/sequence context, not just a lower aspect threshold.
