@@ -55,6 +55,28 @@ class WebAppRenderingTests(unittest.TestCase):
 
         self.assertEqual(main.build_row_sequences(predictions), ["01", "23"])
 
+    def test_build_row_sequences_inserts_clear_word_gap(self) -> None:
+        """A large horizontal gap in one row should become a text space."""
+
+        predictions = [
+            {"label": "l", "row": 1, "x": 0, "width": 20},
+            {"label": "o", "row": 1, "x": 24, "width": 20},
+            {"label": "k", "row": 1, "x": 48, "width": 20},
+            {"label": "b", "row": 1, "x": 112, "width": 20},
+        ]
+
+        self.assertEqual(main.build_row_sequences(predictions), ["lok b"])
+
+    def test_build_row_sequences_keeps_close_digits_compact(self) -> None:
+        """Normal digit groups should not get accidental spaces."""
+
+        predictions = [
+            {"digit": 1, "row": 1, "x": 0, "width": 24},
+            {"digit": 5, "row": 1, "x": 30, "width": 24},
+        ]
+
+        self.assertEqual(main.build_row_sequences(predictions), ["15"])
+
     def test_render_result_maps_boxes_to_numbered_cards(self) -> None:
         """Rendered boxes and cards should use matching prediction numbers."""
 

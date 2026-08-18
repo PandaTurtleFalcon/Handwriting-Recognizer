@@ -1562,9 +1562,28 @@ def build_row_sequences(predictions: list[dict[str, object]]) -> list[str]:
         row = int(prediction.get("row", 1))
         rows.setdefault(row, []).append(prediction)
     return [
-        "".join(prediction_value(item) for item in sorted(items, key=lambda item: float(item.get("x", 0))))
+        build_spaced_row_sequence(sorted(items, key=lambda item: float(item.get("x", 0))))
         for _, items in sorted(rows.items())
     ]
+
+
+def build_spaced_row_sequence(items: list[dict[str, object]]) -> str:
+    """Insert spaces when detected character boxes have a clear word gap."""
+
+    if not items:
+        return ""
+    widths = [max(1.0, float(item.get("width", 0))) for item in items]
+    typical_width = sorted(widths)[len(widths) // 2]
+    gap_threshold = max(32.0, typical_width * 0.85)
+    parts = [prediction_value(items[0])]
+    previous_right = float(items[0].get("x", 0)) + max(0.0, float(items[0].get("width", 0)))
+    for item in items[1:]:
+        x = float(item.get("x", 0))
+        if x - previous_right >= gap_threshold:
+            parts.append(" ")
+        parts.append(prediction_value(item))
+        previous_right = max(previous_right, x + max(0.0, float(item.get("width", 0))))
+    return "".join(parts)
 
 
 def resolve_visual_twin_predictions(predictions: list[dict[str, object]]) -> list[dict[str, object]]:

@@ -299,6 +299,14 @@ class ContextRulesTests(unittest.TestCase):
         self.assertEqual(cleanup.display, "look behind\nyou")
         self.assertEqual(cleanup.rows, ["look behind", "you"])
 
+    def test_common_word_cleanup_handles_spaced_current_model_tokens(self) -> None:
+        """Detected word gaps should let common visual tokens clean separately."""
+
+        cleanup = cleanup_context("lOok beh'ndyo4", ["lOok beh'nd", "yo4"])
+
+        self.assertEqual(cleanup.display, "look behind\nyou")
+        self.assertEqual(cleanup.rows, ["look behind", "you"])
+
     def test_common_word_cleanup_handles_fragmented_reported_look_behind_variant(self) -> None:
         """The reported phrase should clean even when segmentation splits a word."""
 

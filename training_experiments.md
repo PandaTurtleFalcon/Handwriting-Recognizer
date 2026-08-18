@@ -984,3 +984,9 @@ restored, so future improvement loops do not repeat known-bad blends.
   - Result: rejected/no-op. Base and reranked exact both stayed `87.7774%`; all six tested visual families were rejected by calibration (`0Oo`, `1Iil`, `5Ss`, `2Zz`, `8B`, `Cc`) with validation deltas from `-0.1467` to `0.0`.
   - Verification: `test_mixedcase_feature_reranker.py test_extra_alnum_datasets.py` passed (`39` tests), and the probe output was saved to `tmp/mixedcase_the_adviser_probe_20260818T152813Z.json`.
   - Takeaway: T-H-E does not currently transfer through the simple linear family-feature adviser. Future T-H-E work should be representation-level pretraining/distillation or a stronger CNN adapter, not this existing geometry/logit reranker.
+
+- App-level word-gap cleanup for the uploaded phrase:
+  - Code path: changed `main.build_row_sequences()` to insert a real space when adjacent detected boxes in the same row have a clear horizontal word gap, then added spaced-token cleanup in `context_rules.py` for current visual-word reads like `lOok beh'nd` and `yo4`.
+  - Result: no model artifacts changed. The saved uploaded screenshot now replays with raw rows `["lOok beh'nd", "yo4"]` instead of a fully glued top row, and still cleans to `look behind\nyou`.
+  - Verification: `test_context_rules.py test_web_app.py` passed (`134` tests), `scripts/evaluate_hardcases.py --uploaded-fixtures --json` reported cleaned uploaded hardcase `1/1`, and `scripts/summarize_benchmarks.py --include-uploaded-hardcases --json` returned the same deployed model baseline.
+  - Takeaway: this is a real app-level reading improvement for multi-word uploads, but it does not solve the raw character model's exact mixed-case/letter failures. The raw uploaded diagnostic remains `0/1`, which is correct until the underlying crops are classified exactly.

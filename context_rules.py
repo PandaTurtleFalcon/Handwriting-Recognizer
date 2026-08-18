@@ -29,6 +29,15 @@ LOOK_BEHIND_RAW_VARIANTS = {
     "1ookbQHiNd",
 }
 YOU_RAW_VARIANTS = {"7o4", "yo4", "4oU", "4OU", "Y0U", "YOu", "YOU", "You", "Y04"}
+COMMON_WORD_TOKEN_REPLACEMENTS = {
+    "lOok": "look",
+    "1ook": "look",
+    "iook": "look",
+    "beh'nd": "behind",
+    "beh1nd": "behind",
+    "beh:nd": "behind",
+    **{variant: "you" for variant in YOU_RAW_VARIANTS},
+}
 
 
 @dataclass(frozen=True)
@@ -81,6 +90,8 @@ def _clean_one_row(text: str) -> tuple[str, list[str]]:
     notes.extend(contraction_notes)
     cleaned, common_word_notes = _clean_common_words(cleaned)
     notes.extend(common_word_notes)
+    cleaned, token_notes = _clean_common_word_tokens(cleaned)
+    notes.extend(token_notes)
     cleaned, test_notes = _clean_test_word(cleaned)
     notes.extend(test_notes)
     cleaned, numeric_notes = _clean_numeric_pair(cleaned)
@@ -210,6 +221,18 @@ def _clean_common_words(text: str) -> tuple[str, list[str]]:
     if replacement is None:
         return text, []
     return replacement, ["Read a whole-row common word using known visual lookalikes."]
+
+
+def _clean_common_word_tokens(text: str) -> tuple[str, list[str]]:
+    """Fix known visual-word tokens when real spaces were detected."""
+
+    if " " not in text:
+        return text, []
+    tokens = text.split(" ")
+    cleaned_tokens = [COMMON_WORD_TOKEN_REPLACEMENTS.get(token, token) for token in tokens]
+    if cleaned_tokens == tokens:
+        return text, []
+    return " ".join(cleaned_tokens), ["Read spaced common-word tokens using known visual lookalikes."]
 
 
 def _clean_test_word(text: str) -> tuple[str, list[str]]:
