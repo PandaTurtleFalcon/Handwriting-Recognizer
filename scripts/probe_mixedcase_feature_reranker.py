@@ -342,6 +342,7 @@ def run_probe(
     extra_roots: list[Path] | None = None,
     extra_samples_per_class: int | None = None,
     hidden_units: int = 0,
+    confirmation_ratio: float = 0.5,
 ) -> dict[str, object]:
     """Train family probes on train split and evaluate on test split."""
 
@@ -353,6 +354,11 @@ def run_probe(
     calibration_count = max(1, min(int(train_targets.numel()) - 1, int(round(train_targets.numel() * calibration_ratio))))
     calibration_indices = order[:calibration_count]
     fit_indices = order[calibration_count:]
+    confirmation_count = int(round(calibration_count * confirmation_ratio))
+    confirmation_count = max(0, min(calibration_count - 1, confirmation_count))
+    selection_count = calibration_count - confirmation_count
+    selection_indices = calibration_indices[:selection_count]
+    confirmation_indices = calibration_indices[selection_count:]
     fit_images = train_images[fit_indices]
     fit_targets = train_targets[fit_indices]
     fit_images, fit_targets = _fit_tensors(
@@ -362,13 +368,25 @@ def run_probe(
         extra_samples_per_class,
         seed,
     )
-    calibration_images = train_images[calibration_indices]
-    calibration_targets = train_targets[calibration_indices]
+    selection_images = train_images[selection_indices]
+    selection_targets = train_targets[selection_indices]
+    confirmation_images = train_images[confirmation_indices]
+    confirmation_targets = train_targets[confirmation_indices]
     fit_mixed, fit_folded = _model_outputs(fit_images, batch_size)
-    calibration_mixed, calibration_folded = _model_outputs(calibration_images, batch_size)
+    selection_mixed, selection_folded = _model_outputs(selection_images, batch_size)
+    confirmation_mixed, confirmation_folded = (
+        _model_outputs(confirmation_images, batch_size)
+        if int(confirmation_targets.numel()) > 0
+        else (torch.empty((0, len(MIXEDCASE_LABELS))), torch.empty((0, len(LABELS))))
+    )
     test_mixed, test_folded = _model_outputs(test_images, batch_size)
     artifact = _load_hybrid_artifact()
-    calibration_predictions = hybrid_predictions(calibration_mixed, calibration_folded, artifact)
+    selection_predictions = hybrid_predictions(selection_mixed, selection_folded, artifact)
+    confirmation_predictions = (
+        hybrid_predictions(confirmation_mixed, confirmation_folded, artifact)
+        if int(confirmation_targets.numel()) > 0
+        else torch.empty((0,), dtype=torch.long)
+    )
     base_predictions = hybrid_predictions(test_mixed, test_folded, artifact)
     probe_predictions = base_predictions.clone()
     family_reports = []
@@ -377,22 +395,47 @@ def run_probe(
         probe = train_family_probe(train_features, fit_targets, family_indices, epochs, learning_rate, hidden_units)
         if probe is None:
             continue
-        calibration_candidate = apply_family_probe(
-            calibration_predictions,
-            calibration_images,
-            calibration_mixed,
-            calibration_folded,
+        selection_candidate = apply_family_probe(
+            selection_predictions,
+            selection_images,
+            selection_mixed,
+            selection_folded,
             probe,
         )
-        calibration_before = _metrics(calibration_predictions, calibration_targets)
-        calibration_after = _metrics(calibration_candidate, calibration_targets)
-        validation_delta = calibration_after["test_accuracy"] - calibration_before["test_accuracy"]
-        if validation_delta < min_family_delta:
+        selection_before = _metrics(selection_predictions, selection_targets)
+        selection_after = _metrics(selection_candidate, selection_targets)
+        selection_delta = selection_after["test_accuracy"] - selection_before["test_accuracy"]
+        confirmation_delta = None
+        if int(confirmation_targets.numel()) > 0:
+            confirmation_candidate = apply_family_probe(
+                confirmation_predictions,
+                confirmation_images,
+                confirmation_mixed,
+                confirmation_folded,
+                probe,
+            )
+            confirmation_before = _metrics(confirmation_predictions, confirmation_targets)
+            confirmation_after = _metrics(confirmation_candidate, confirmation_targets)
+            confirmation_delta = confirmation_after["test_accuracy"] - confirmation_before["test_accuracy"]
+        if selection_delta < min_family_delta:
             family_reports.append(
                 {
                     "family": probe.name,
                     "accepted": False,
-                    "validation_delta": validation_delta,
+                    "selection_delta": selection_delta,
+                    "confirmation_delta": confirmation_delta,
+                    "rejection_reason": "selection_delta_below_floor",
+                }
+            )
+            continue
+        if confirmation_delta is not None and confirmation_delta < min_family_delta:
+            family_reports.append(
+                {
+                    "family": probe.name,
+                    "accepted": False,
+                    "selection_delta": selection_delta,
+                    "confirmation_delta": confirmation_delta,
+                    "rejection_reason": "confirmation_delta_below_floor",
                 }
             )
             continue
@@ -403,7 +446,8 @@ def run_probe(
             {
                 "family": probe.name,
                 "accepted": True,
-                "validation_delta": validation_delta,
+                "selection_delta": selection_delta,
+                "confirmation_delta": confirmation_delta,
                 "before_test_accuracy": before["test_accuracy"],
                 "after_test_accuracy": after["test_accuracy"],
                 "delta": after["test_accuracy"] - before["test_accuracy"],
@@ -420,11 +464,14 @@ def run_probe(
         "families": family_reports,
         "train_samples": int(train_targets.numel()),
         "fit_samples": int(fit_targets.numel()),
-        "calibration_samples": int(calibration_targets.numel()),
+        "calibration_samples": int(calibration_count),
+        "selection_samples": int(selection_targets.numel()),
+        "confirmation_samples": int(confirmation_targets.numel()),
         "test_samples": int(test_targets.numel()),
         "extra_roots": [str(path) for path in (extra_roots or [])],
         "extra_samples_per_class": extra_samples_per_class,
         "hidden_units": hidden_units,
+        "confirmation_ratio": confirmation_ratio,
     }
 
 
@@ -443,6 +490,12 @@ def main() -> None:
     parser.add_argument("--extra-root", action="append", type=Path, default=[])
     parser.add_argument("--extra-samples-per-class", type=int, default=None)
     parser.add_argument("--hidden-units", type=int, default=0)
+    parser.add_argument(
+        "--confirmation-ratio",
+        type=float,
+        default=0.5,
+        help="Fraction of held-out calibration samples reserved for a second acceptance check.",
+    )
     args = parser.parse_args()
     print(
         json.dumps(
@@ -458,6 +511,7 @@ def main() -> None:
                 extra_roots=args.extra_root,
                 extra_samples_per_class=args.extra_samples_per_class,
                 hidden_units=args.hidden_units,
+                confirmation_ratio=args.confirmation_ratio,
             ),
             indent=2,
         )

@@ -4,6 +4,7 @@ from unittest.mock import patch
 
 import torch
 
+from scripts.probe_mixedcase_feature_reranker import FamilyProbe
 from scripts.probe_mixedcase_feature_reranker import _fit_tensors
 from scripts.probe_mixedcase_feature_reranker import _is_promotable
 from scripts.probe_mixedcase_feature_reranker import geometry_features
@@ -133,8 +134,96 @@ class MixedcaseFeatureRerankerTests(unittest.TestCase):
             )
 
         self.assertEqual(report["hidden_units"], 7)
+        self.assertEqual(report["confirmation_ratio"], 0.5)
+        self.assertEqual(report["selection_samples"], 1)
+        self.assertEqual(report["confirmation_samples"], 2)
         self.assertEqual(report["test_delta"], 0.0)
         self.assertFalse(report["promotable"])
+
+    def test_run_probe_rejects_adapter_without_confirmation_gain(self) -> None:
+        """One calibration win should not be enough to touch final test predictions."""
+
+        train_images = torch.zeros((8, 1, 28, 28), dtype=torch.float32)
+        train_targets = torch.tensor([10, 11, 10, 11, 10, 11, 10, 11], dtype=torch.long)
+        test_images = torch.zeros((4, 1, 28, 28), dtype=torch.float32)
+        test_targets = torch.tensor([10, 11, 10, 11], dtype=torch.long)
+        probe_model = torch.nn.Linear(1, 2)
+
+        def fake_train_family_probe(*_args, **_kwargs):
+            return FamilyProbe("AB", (10, 11), probe_model)
+
+        call_count = {"count": 0}
+
+        def fake_apply(predictions, *_args, **_kwargs):
+            call_count["count"] += 1
+            candidate = predictions.clone()
+            if call_count["count"] == 1:
+                candidate[:] = 11
+            else:
+                candidate[:] = 10
+            return candidate
+
+        with (
+            patch(
+                "scripts.probe_mixedcase_feature_reranker._split_tensors",
+                side_effect=[(train_images, train_targets), (test_images, test_targets)],
+            ),
+            patch(
+                "scripts.probe_mixedcase_feature_reranker._model_outputs",
+                side_effect=lambda images, _batch_size: (
+                    torch.zeros((images.shape[0], 62), dtype=torch.float32),
+                    torch.zeros((images.shape[0], 36), dtype=torch.float32),
+                ),
+            ),
+            patch("scripts.probe_mixedcase_feature_reranker._load_hybrid_artifact", return_value={"enabled": False}),
+            patch(
+                "scripts.probe_mixedcase_feature_reranker.hybrid_predictions",
+                side_effect=lambda mixed, _folded, _artifact: torch.full((mixed.shape[0],), 10, dtype=torch.long),
+            ),
+            patch("scripts.probe_mixedcase_feature_reranker.selected_families", return_value=[(10, 11)]),
+            patch("scripts.probe_mixedcase_feature_reranker.family_features", return_value=torch.zeros((6, 1))),
+            patch("scripts.probe_mixedcase_feature_reranker.train_family_probe", side_effect=fake_train_family_probe),
+            patch("scripts.probe_mixedcase_feature_reranker.apply_family_probe", side_effect=fake_apply),
+            patch(
+                "scripts.probe_mixedcase_feature_reranker._metrics",
+                side_effect=[
+                    {"test_accuracy": 50.0},
+                    {"test_accuracy": 75.0},
+                    {"test_accuracy": 50.0},
+                    {"test_accuracy": 50.0},
+                    {
+                        "test_accuracy": 80.0,
+                        "case_or_ambiguity_aware_test_accuracy": 98.0,
+                        "digit_test_accuracy": 96.0,
+                        "upper_test_accuracy": 88.0,
+                        "lower_test_accuracy": 75.0,
+                    },
+                    {
+                        "test_accuracy": 80.0,
+                        "case_or_ambiguity_aware_test_accuracy": 98.0,
+                        "digit_test_accuracy": 96.0,
+                        "upper_test_accuracy": 88.0,
+                        "lower_test_accuracy": 75.0,
+                    },
+                ],
+            ),
+        ):
+            report = run_probe(
+                batch_size=8,
+                epochs=1,
+                learning_rate=0.01,
+                train_sample_limit=None,
+                family_limit=None,
+                calibration_ratio=0.5,
+                min_family_delta=0.01,
+                seed=3,
+                confirmation_ratio=0.5,
+            )
+
+        self.assertEqual(report["families"][0]["rejection_reason"], "confirmation_delta_below_floor")
+        self.assertGreater(report["families"][0]["selection_delta"], 0)
+        self.assertLessEqual(report["families"][0]["confirmation_delta"], 0)
+        self.assertEqual(report["test_delta"], 0.0)
 
 
 if __name__ == "__main__":
