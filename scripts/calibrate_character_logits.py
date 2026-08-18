@@ -119,7 +119,9 @@ def calibrate_character_pair_rules(
     logits, targets, _train_targets, labels = _validation_logits(batch_size)
     starting_bias = _load_existing_bias(LOGIT_BIAS_PATH, labels)
     scores = logits + starting_bias
-    starting_predictions = scores.argmax(dim=1)
+    raw_predictions = scores.argmax(dim=1)
+    existing_rules = _load_existing_pair_rules(output_path, labels)
+    starting_predictions = _apply_pair_rules_to_predictions(scores, raw_predictions, labels, existing_rules)
     base_breakdown = _breakdown(starting_predictions, targets, labels)
     if objective not in base_breakdown:
         raise ValueError(f"Unknown character calibration objective: {objective}")
@@ -131,7 +133,8 @@ def calibrate_character_pair_rules(
         for family in families
         for left, right in itertools.permutations(dict.fromkeys(label for label in family if label in label_to_index), 2)
     ]
-    steps: list[dict[str, object]] = []
+    steps: list[dict[str, object]] = list(existing_rules)
+    new_steps: list[dict[str, object]] = []
     for round_index in range(max(0, rounds)):
         best_candidate: tuple[tuple[float, float], str, str, float, int, dict[str, float], torch.Tensor] | None = None
         for from_label, to_label in candidate_pairs:
@@ -187,6 +190,7 @@ def calibrate_character_pair_rules(
                 "objective_value": best_breakdown[objective],
             }
         )
+        new_steps.append(steps[-1])
     improvement = best_breakdown[objective] - base_breakdown[objective]
     improved = improvement >= min_improvement
     if write and improved:
@@ -217,9 +221,51 @@ def calibrate_character_pair_rules(
         "improvement": improvement,
         "best_checkpoint": best_breakdown,
         "steps": steps,
+        "new_steps": new_steps,
         "wrote": bool(write and improved),
         "output_path": str(output_path),
     }
+
+
+def _apply_pair_rules_to_predictions(
+    scores: torch.Tensor,
+    starting_predictions: torch.Tensor,
+    labels: list[str],
+    rules: list[dict[str, object]],
+) -> torch.Tensor:
+    """Apply character pair rules to predictions in serving order."""
+
+    label_to_index = {label: index for index, label in enumerate(labels)}
+    predictions = starting_predictions.clone()
+    for rule in rules:
+        from_label = str(rule.get("from", ""))
+        to_label = str(rule.get("to", ""))
+        if from_label not in label_to_index or to_label not in label_to_index:
+            continue
+        try:
+            threshold = float(rule["threshold"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        from_index = label_to_index[from_label]
+        to_index = label_to_index[to_label]
+        margin = scores[:, to_index] - scores[:, from_index]
+        predictions[(predictions == from_index) & (margin >= threshold)] = to_index
+    return predictions
+
+
+def _load_existing_pair_rules(output_path: Path, labels: list[str]) -> list[dict[str, object]]:
+    """Return existing matching character pair rules for continuation runs."""
+
+    if not output_path.exists():
+        return []
+    try:
+        artifact = json.loads(output_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return []
+    if not isinstance(artifact, dict) or list(artifact.get("labels", [])) != list(labels):
+        return []
+    rules = artifact.get("rules", [])
+    return [rule for rule in rules if isinstance(rule, dict)]
 
 
 def calibrate_character_logits(

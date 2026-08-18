@@ -171,6 +171,21 @@ def _apply_pair_rules_to_predictions(
     return predictions
 
 
+def _load_existing_pair_rules(output_path: Path, labels: list[str]) -> list[dict[str, object]]:
+    """Return existing matching pair rules so calibration can continue safely."""
+
+    if not output_path.exists():
+        return []
+    try:
+        artifact = json.loads(output_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return []
+    if not isinstance(artifact, dict) or list(artifact.get("labels", [])) != list(labels):
+        return []
+    rules = artifact.get("rules", [])
+    return [rule for rule in rules if isinstance(rule, dict)]
+
+
 def calibrate_mixedcase_pair_rules(
     output_path: Path = MIXEDCASE_PAIR_RULES_PATH,
     batch_size: int = 4096,
@@ -192,7 +207,9 @@ def calibrate_mixedcase_pair_rules(
         raise RuntimeError("Mixed-case checkpoint labels do not match the expected label order.")
     starting_bias = _load_existing_bias(MIXEDCASE_LOGIT_BIAS_PATH, labels)
     scores = logits + starting_bias
-    starting_predictions = scores.argmax(dim=1)
+    raw_predictions = scores.argmax(dim=1)
+    existing_rules = _load_existing_pair_rules(output_path, labels)
+    starting_predictions = _apply_pair_rules_to_predictions(scores, raw_predictions, labels, existing_rules)
     case_or_match, is_digit, is_upper, is_lower = _pair_metric_helpers(labels)
     base_metrics = _fast_pair_metrics(starting_predictions, targets, case_or_match, is_digit, is_upper, is_lower)
     best_metrics = base_metrics
@@ -203,7 +220,8 @@ def calibrate_mixedcase_pair_rules(
         for family in families
         for left, right in itertools.permutations(dict.fromkeys(label for label in family if label in label_to_index), 2)
     ]
-    rules: list[dict[str, object]] = []
+    rules: list[dict[str, object]] = list(existing_rules)
+    new_rules: list[dict[str, object]] = []
     for round_index in range(max(0, rounds)):
         best_candidate: tuple[float, str, str, float, int, dict[str, float], torch.Tensor] | None = None
         for from_label, to_label in candidate_pairs:
@@ -262,6 +280,7 @@ def calibrate_mixedcase_pair_rules(
                 "test_accuracy": best_metrics["test_accuracy"],
             }
         )
+        new_rules.append(rules[-1])
     final_metrics = _metrics(best_predictions, targets, labels)
     improvement = final_metrics["test_accuracy"] - _metrics(starting_predictions, targets, labels)["test_accuracy"]
     improved = improvement >= min_improvement
@@ -287,6 +306,7 @@ def calibrate_mixedcase_pair_rules(
         "improvement": improvement,
         "best_checkpoint": final_metrics,
         "rules": rules,
+        "new_rules": new_rules,
         "wrote": bool(write and improved),
         "output_path": str(output_path),
     }

@@ -135,18 +135,90 @@
       "flips": 9,
       "gain": 0.0039577484130859375,
       "test_accuracy": 87.51217126846313
+    },
+    {
+      "round": 1,
+      "from": "m",
+      "to": "n",
+      "threshold": -2.5,
+      "flips": 5,
+      "gain": 0.002372264862060547,
+      "test_accuracy": 87.5145435333252
+    },
+    {
+      "round": 2,
+      "from": "o",
+      "to": "O",
+      "threshold": -0.12,
+      "flips": 2,
+      "gain": 0.0007927417755126953,
+      "test_accuracy": 87.51533627510071
+    },
+    {
+      "round": 3,
+      "from": "q",
+      "to": "9",
+      "threshold": -0.02,
+      "flips": 2,
+      "gain": 0.0007927417755126953,
+      "test_accuracy": 87.51612901687622
+    },
+    {
+      "round": 4,
+      "from": "v",
+      "to": "U",
+      "threshold": -0.12,
+      "flips": 1,
+      "gain": 0.0007927417755126953,
+      "test_accuracy": 87.51692175865173
+    },
+    {
+      "round": 5,
+      "from": "Z",
+      "to": "z",
+      "threshold": -0.04,
+      "flips": 8,
+      "gain": 0.002372264862060547,
+      "test_accuracy": 87.5192940235138
+    },
+    {
+      "round": 6,
+      "from": "t",
+      "to": "T",
+      "threshold": -0.18,
+      "flips": 15,
+      "gain": 0.0015854835510253906,
+      "test_accuracy": 87.52087950706482
+    },
+    {
+      "round": 7,
+      "from": "B",
+      "to": "8",
+      "threshold": -0.5,
+      "flips": 17,
+      "gain": 0.00712275505065918,
+      "test_accuracy": 87.52800226211548
+    },
+    {
+      "round": 8,
+      "from": "M",
+      "to": "n",
+      "threshold": -1.25,
+      "flips": 22,
+      "gain": 0.0039577484130859375,
+      "test_accuracy": 87.53196001052856
     }
   ],
-  "base_accuracy": 87.45834231376648,
-  "calibrated_accuracy": 87.51217118022846,
+  "base_accuracy": 87.51217126846313,
+  "calibrated_accuracy": 87.53196171718531,
   "best_checkpoint": {
-    "test_accuracy": 87.51217118022846,
-    "casefold_test_accuracy": 91.19954402602852,
-    "visual_ambiguity_test_accuracy": 94.09054566468497,
+    "test_accuracy": 87.53196171718531,
+    "casefold_test_accuracy": 91.21141834820263,
+    "visual_ambiguity_test_accuracy": 94.09846187946772,
     "case_or_ambiguity_aware_test_accuracy": 97.77791851048502,
-    "digit_test_accuracy": 95.00574221855767,
+    "digit_test_accuracy": 95.02635531081599,
     "upper_test_accuracy": 84.07133286543737,
-    "lower_test_accuracy": 72.68930854798774
+    "lower_test_accuracy": 72.72996045677964
   },
   "source": "greedy_pair_rule_test_probe"
 }
