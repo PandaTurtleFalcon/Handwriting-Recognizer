@@ -554,6 +554,33 @@ input[type="text"]:focus-visible {
   max-width: 100%;
   overflow-wrap: anywhere;
 }
+.raw-output {
+  margin-top: 8px;
+}
+.raw-output summary {
+  display: inline-flex;
+  align-items: center;
+  min-height: 30px;
+  padding: 4px 10px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: #fff;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+  cursor: pointer;
+}
+.raw-output[open] summary {
+  margin-bottom: 6px;
+}
+.raw-output code {
+  background: #fff7ed;
+  color: #9a3412;
+}
+.raw-output .final-answer-chip {
+  background: #eef2ff;
+  color: #3730a3;
+}
 .digits {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
@@ -2436,10 +2463,11 @@ def render_raw_sequence_note(result: dict[str, object]) -> str:
     if raw_display == cleaned_display:
         return ""
     return (
-        '<div class="row-output raw-output">'
-        f"<code>raw model read (diagnostic): {html.escape(raw_display)}</code>"
+        '<details class="row-output raw-output">'
+        "<summary>Diagnostics</summary>"
+        f"<code>raw model read, not final answer: {html.escape(raw_display)}</code>"
         f'<code class="final-answer-chip">final answer: {html.escape(cleaned_display)}</code>'
-        "</div>"
+        "</details>"
     )
 
 

@@ -667,7 +667,8 @@ class WebAppRenderingTests(unittest.TestCase):
             }
         )
 
-        self.assertIn("raw model read (diagnostic): xOOh:1i / 7o4", html)
+        self.assertIn("<summary>Diagnostics</summary>", html)
+        self.assertIn("raw model read, not final answer: xOOh:1i / 7o4", html)
         self.assertIn("final answer: look behind / you", html)
         self.assertIn("final answer", html)
 
