@@ -12,6 +12,7 @@ import hashlib
 import json
 import sys
 import urllib.request
+import zipfile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -124,6 +125,42 @@ def download_archive(archive: CvlArchive, output_root: Path) -> Path:
     return destination
 
 
+def _safe_extract_path(destination_root: Path, member_name: str) -> Path:
+    """Return a zip member destination, rejecting path traversal."""
+
+    target = (destination_root / member_name).resolve()
+    root = destination_root.resolve()
+    if target != root and root not in target.parents:
+        raise RuntimeError(f"Refusing unsafe zip member path: {member_name}")
+    return target
+
+
+def extract_archive(archive_path: Path, extract_root: Path) -> dict[str, object]:
+    """Safely extract one local CVL archive and return a small summary."""
+
+    target_root = extract_root / archive_path.stem
+    target_root.mkdir(parents=True, exist_ok=True)
+    files = 0
+    directories = 0
+    with zipfile.ZipFile(archive_path) as archive:
+        for member in archive.infolist():
+            target = _safe_extract_path(target_root, member.filename)
+            if member.is_dir():
+                target.mkdir(parents=True, exist_ok=True)
+                directories += 1
+                continue
+            target.parent.mkdir(parents=True, exist_ok=True)
+            with archive.open(member) as source, target.open("wb") as destination:
+                destination.write(source.read())
+            files += 1
+    return {
+        "archive": str(archive_path),
+        "output_root": str(target_root),
+        "files": files,
+        "directories": directories,
+    }
+
+
 def manifest_for_archives(archives: dict[str, CvlArchive]) -> dict[str, object]:
     """Return a JSON-serializable manifest for local CVL downloads."""
 
@@ -155,6 +192,7 @@ def main() -> int:
         help="Archive alias/key to download. Aliases: full, cropped, parser, viewer. Repeatable.",
     )
     parser.add_argument("--dry-run", action="store_true", help="Print metadata without downloading archives.")
+    parser.add_argument("--extract", action="store_true", help="Extract selected downloaded archives after verification.")
     args = parser.parse_args()
 
     record = fetch_record(args.record_url)
@@ -167,13 +205,17 @@ def main() -> int:
     report = {
         "manifest": str(manifest_path),
         "dry_run": bool(args.dry_run),
+        "extract": bool(args.extract),
         "selected": selected_keys,
         "downloaded": [],
+        "extracted": [],
     }
     if not args.dry_run:
         for key in selected_keys:
             path = download_archive(archives[key], args.output_root)
             report["downloaded"].append(str(path))
+            if args.extract:
+                report["extracted"].append(extract_archive(path, args.output_root))
     print(json.dumps(report, indent=2))
     return 0
 

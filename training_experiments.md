@@ -1020,3 +1020,9 @@ restored, so future improvement loops do not repeat known-bad blends.
   - Result: downloaded and verified only the small official XML parser archive at `data/cvl/DkGtDbXmlReader-src.zip`; the multi-GB image archives were not downloaded in this bounded iteration. No model artifact changed.
   - Verification: `test_prepare_cvl_letters.py test_download_cvl_dataset.py` passed (`11` tests), `scripts/download_cvl_dataset.py --dry-run --archive parser` resolved `DkGtDbXmlReader-src.zip`, and both CVL scripts compiled.
   - Takeaway: the next data step is now mechanical: run `scripts/download_cvl_dataset.py --archive full`, extract the archive under ignored `data/cvl`, then run `scripts/prepare_cvl_letters.py --source-root data/cvl --output data/cvl_letters_twin_subset.pt --limit-per-label 80` before a guarded mixed-case probe.
+
+- CVL safe extraction and XML encoding fallback:
+  - Code path: extended `scripts/download_cvl_dataset.py` with `--extract`, extracting selected verified archives under an archive-stem folder and rejecting zip members that would escape the destination. `scripts/prepare_cvl_letters.py` now repairs the official parser sample's misleading `encoding="UTF-16"` declaration when the bytes are plain XML text.
+  - Result: extracted the small parser archive locally to `data/cvl/DkGtDbXmlReader-src`; no multi-GB image archive or model artifact changed.
+  - Verification: `test_prepare_cvl_letters.py test_download_cvl_dataset.py` passed (`14` tests), `scripts/download_cvl_dataset.py --archive parser --extract` extracted `148` files, and parser sample XML files now parse cleanly while yielding `0` trainable words because they contain layout regions without transcriptions.
+  - Takeaway: the CVL path is ready for the large archive: download with extraction, then run the letter-crop importer over the extracted data.

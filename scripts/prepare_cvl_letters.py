@@ -103,6 +103,21 @@ def _text_from_element(element: ElementTree.Element) -> str:
     return "".join(element.itertext()).strip()
 
 
+def _parse_xml_root(xml_path: Path) -> ElementTree.Element:
+    """Parse CVL XML, tolerating official samples with a bad UTF-16 header."""
+
+    try:
+        return ElementTree.parse(xml_path).getroot()
+    except ElementTree.ParseError:
+        raw = xml_path.read_bytes()
+        repaired = raw.replace(b'encoding="UTF-16"', b'encoding="UTF-8"')
+        repaired = repaired.replace(b"encoding='UTF-16'", b"encoding='UTF-8'")
+        try:
+            return ElementTree.fromstring(repaired)
+        except ElementTree.ParseError as exc:
+            raise ValueError(f"Could not parse CVL XML: {xml_path}") from exc
+
+
 def _box_from_child_points(element: ElementTree.Element) -> tuple[int, int, int, int] | None:
     """Return a rectangle around PAGE-style child Point coordinates."""
 
@@ -124,10 +139,7 @@ def _box_from_child_points(element: ElementTree.Element) -> tuple[int, int, int,
 def parse_cvl_words(xml_path: Path) -> list[CvlWord]:
     """Parse labeled word boxes from one CVL XML file."""
 
-    try:
-        root = ElementTree.parse(xml_path).getroot()
-    except ElementTree.ParseError as exc:
-        raise ValueError(f"Could not parse CVL XML: {xml_path}") from exc
+    root = _parse_xml_root(xml_path)
     words = []
     for element in root.iter():
         box = _box_from_attrs(dict(element.attrib)) or _box_from_child_points(element)

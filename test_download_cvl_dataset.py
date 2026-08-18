@@ -1,10 +1,12 @@
 import tempfile
 import unittest
+import zipfile
 from pathlib import Path
 
 from scripts.download_cvl_dataset import (
     CvlArchive,
     archive_is_complete,
+    extract_archive,
     manifest_for_archives,
     parse_archives,
     resolve_archive_keys,
@@ -74,6 +76,32 @@ class DownloadCvlDatasetTests(unittest.TestCase):
 
         self.assertIn("non-commercial", manifest["license"])
         self.assertEqual(manifest["archives"][0]["key"], "cvl-database-1-1.zip")
+
+    def test_extract_archive_writes_files_under_archive_stem(self) -> None:
+        """Archive extraction should keep contents grouped by source archive."""
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            archive_path = root / "sample.zip"
+            with zipfile.ZipFile(archive_path, "w") as archive:
+                archive.writestr("folder/file.txt", "hello")
+
+            report = extract_archive(archive_path, root / "out")
+
+            self.assertEqual(report["files"], 1)
+            self.assertEqual((root / "out" / "sample" / "folder" / "file.txt").read_text(encoding="utf-8"), "hello")
+
+    def test_extract_archive_rejects_path_traversal(self) -> None:
+        """Malicious zip members must not escape the extraction folder."""
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            archive_path = root / "bad.zip"
+            with zipfile.ZipFile(archive_path, "w") as archive:
+                archive.writestr("../escape.txt", "nope")
+
+            with self.assertRaisesRegex(RuntimeError, "unsafe zip member"):
+                extract_archive(archive_path, root / "out")
 
 
 if __name__ == "__main__":

@@ -66,6 +66,21 @@ class PrepareCvlLettersTests(unittest.TestCase):
         self.assertEqual(words[0].text, "Look")
         self.assertEqual(words[0].box, (8, 18, 72, 52))
 
+    def test_parse_words_repairs_misdeclared_utf16_header(self) -> None:
+        """Some official CVL sample XML is UTF-8 text with a UTF-16 declaration."""
+
+        with tempfile.TemporaryDirectory() as directory:
+            xml_path = Path(directory) / "sample.xml"
+            xml_path.write_bytes(
+                b'<?xml version="1.0" encoding="UTF-16" ?>\n'
+                b'<root><word text="Oo" x="1" y="2" width="30" height="40" /></root>'
+            )
+
+            words = parse_cvl_words(xml_path)
+
+        self.assertEqual(len(words), 1)
+        self.assertEqual(words[0].text, "Oo")
+
     def test_matching_image_falls_back_to_prefix_match(self) -> None:
         """Cropped/full image stems can include suffixes around the XML stem."""
 
