@@ -30,10 +30,12 @@ from character_model import (
     character_checkpoint_rejection_message,
     character_checkpoint_score,
     character_loss_weights,
+    benchmark_gate_failures,
     FocalCrossEntropyLoss,
     labels_match_with_ambiguity,
     load_correction_memory_exemplars,
     make_loaders,
+    parse_benchmark_gate_names,
     stratified_split_indices,
 )
 from alnum_model import LABELS, MIXEDCASE_LABELS, attach_mixedcase_hybrid, attach_mixedcase_logit_bias
@@ -190,6 +192,63 @@ class CharacterPostprocessingTests(unittest.TestCase):
         self.assertEqual(train.call_args.kwargs["min_checkpoint_letter"], 93.5)
         self.assertEqual(train.call_args.kwargs["min_checkpoint_punctuation"], 96.0)
         self.assertEqual(train.call_args.kwargs["train_only_extra_roots"], [Path("tmp/rough")])
+
+    def test_parse_benchmark_gate_names_defaults_to_character_gates(self) -> None:
+        """Empty benchmark gate CLI values should use the character-owned gates."""
+
+        self.assertEqual(
+            parse_benchmark_gate_names(" character_exact, punctuation_exact "),
+            ("character_exact", "punctuation_exact"),
+        )
+        self.assertIn("character_digit_exact", parse_benchmark_gate_names(""))
+
+    def test_benchmark_gate_failures_report_regressions_and_targets(self) -> None:
+        """Post-training benchmark gates should explain rejected candidates."""
+
+        failures = benchmark_gate_failures(
+            {"character_exact": 94.2, "punctuation_exact": 96.1},
+            {"character_exact": 94.0, "punctuation_exact": 96.2},
+            target=95.0,
+        )
+
+        self.assertEqual(
+            failures,
+            [
+                "character_exact 94.0000% < baseline 94.2000%",
+                "character_exact 94.0000% < target 95.0000%",
+            ],
+        )
+
+    def test_character_cli_can_require_saved_benchmark_gates(self) -> None:
+        """Protected training should check saved benchmark gates after writing."""
+
+        with (
+            tempfile.TemporaryDirectory() as directory,
+            patch(
+                "sys.argv",
+                [
+                    "character_model.py",
+                    "--require-benchmark-gates",
+                    "--benchmark-gate-names",
+                    "character_exact",
+                    "--benchmark-backup-dir",
+                    str(Path(directory) / "backup"),
+                ],
+            ),
+            patch(
+                "character_model.saved_benchmark_values",
+                side_effect=[{"character_exact": 94.1}, {"character_exact": 94.2}],
+            ) as gates,
+            patch("character_model.backup_character_artifacts") as backup,
+            patch("character_model.restore_character_artifacts") as restore,
+            patch("character_model.train_character_model") as train,
+        ):
+            character_model.main()
+
+        self.assertEqual(gates.call_count, 2)
+        self.assertTrue(backup.called)
+        self.assertTrue(train.called)
+        self.assertFalse(restore.called)
 
     def test_train_only_extra_root_skips_validation_loader(self) -> None:
         """Generated practice samples should train the model without entering validation."""

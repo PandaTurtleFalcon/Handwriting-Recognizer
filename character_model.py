@@ -12,6 +12,7 @@ import argparse
 import hashlib
 import json
 import random
+import shutil
 import threading
 import time
 from dataclasses import asdict, dataclass
@@ -45,6 +46,22 @@ LOGIT_BIAS_PATH = PROJECT_DIR / "character_logit_bias.pt"
 PAIR_RULES_PATH = PROJECT_DIR / "character_pair_rules.json"
 CORRECTIONS_PATH = PROJECT_DIR / "data" / "corrections" / "corrections.jsonl"
 CORRECTION_UPLOAD_DIR = PROJECT_DIR / "data" / "corrections" / "uploads"
+CHARACTER_ARTIFACT_PATHS = (
+    WEIGHTS_PATH,
+    METRICS_PATH,
+    LABELS_PATH,
+    EXEMPLARS_PATH,
+    LOGIT_BIAS_PATH,
+    PAIR_RULES_PATH,
+)
+DEFAULT_CHARACTER_BENCHMARK_GATES = (
+    "character_exact",
+    "character_ambiguity",
+    "character_digit_exact",
+    "character_letter_exact",
+    "punctuation_exact",
+    "punctuation_ambiguity",
+)
 
 IMAGE_SIZE = 32
 CACHE_PATH = PROJECT_DIR / "data" / "unipen_chars" / f"character_cache_segmented_{IMAGE_SIZE}.pt"
@@ -1175,6 +1192,76 @@ def train_character_model(
         encoding="utf-8",
     )
     return history
+
+
+def backup_character_artifacts(backup_dir: Path) -> dict[str, bool]:
+    """Copy current character artifacts so a failed training probe can restore them."""
+
+    backup_dir.mkdir(parents=True, exist_ok=True)
+    manifest = {}
+    for artifact_path in CHARACTER_ARTIFACT_PATHS:
+        existed = artifact_path.exists()
+        manifest[artifact_path.name] = existed
+        if existed:
+            shutil.copy2(artifact_path, backup_dir / artifact_path.name)
+    (backup_dir / "manifest.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+    return manifest
+
+
+def restore_character_artifacts(backup_dir: Path) -> None:
+    """Restore character artifacts from a backup directory."""
+
+    manifest_path = backup_dir / "manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8")) if manifest_path.exists() else {}
+    for artifact_path in CHARACTER_ARTIFACT_PATHS:
+        backup_path = backup_dir / artifact_path.name
+        if backup_path.exists():
+            shutil.copy2(backup_path, artifact_path)
+        elif manifest.get(artifact_path.name) is False and artifact_path.exists():
+            artifact_path.unlink()
+
+
+def parse_benchmark_gate_names(value: str) -> tuple[str, ...]:
+    """Parse comma-separated benchmark gate names."""
+
+    names = tuple(name.strip() for name in value.split(",") if name.strip())
+    return names or DEFAULT_CHARACTER_BENCHMARK_GATES
+
+
+def saved_benchmark_values(gate_names: tuple[str, ...]) -> dict[str, float]:
+    """Return selected saved benchmark values from the repository summary."""
+
+    from scripts.summarize_benchmarks import summarize_saved_metrics
+
+    rows = summarize_saved_metrics(PROJECT_DIR)
+    values = {}
+    for row in rows:
+        name = str(row.get("name", ""))
+        value = row.get("value")
+        if name in gate_names and value is not None:
+            values[name] = float(value)
+    missing = sorted(set(gate_names) - set(values))
+    if missing:
+        raise RuntimeError(f"Missing benchmark gate(s): {', '.join(missing)}")
+    return values
+
+
+def benchmark_gate_failures(
+    before: dict[str, float],
+    after: dict[str, float],
+    tolerance: float = 0.0,
+    target: float | None = None,
+) -> list[str]:
+    """Return benchmark gates that regressed or failed an optional target."""
+
+    failures = []
+    for name, before_value in before.items():
+        after_value = after[name]
+        if after_value + tolerance < before_value:
+            failures.append(f"{name} {after_value:.4f}% < baseline {before_value:.4f}%")
+        if target is not None and after_value + tolerance < target:
+            failures.append(f"{name} {after_value:.4f}% < target {target:.4f}%")
+    return failures
 
 
 def load_character_model(
@@ -2573,7 +2660,46 @@ def main() -> None:
     parser.add_argument("--min-checkpoint-digit", type=float, default=0.0)
     parser.add_argument("--min-checkpoint-letter", type=float, default=0.0)
     parser.add_argument("--min-checkpoint-punctuation", type=float, default=0.0)
+    parser.add_argument(
+        "--require-benchmark-gates",
+        action="store_true",
+        help="Restore character artifacts unless selected saved benchmark gates do not regress.",
+    )
+    parser.add_argument(
+        "--benchmark-gate-names",
+        default=",".join(DEFAULT_CHARACTER_BENCHMARK_GATES),
+        help="Comma-separated saved benchmark gates protected by --require-benchmark-gates.",
+    )
+    parser.add_argument(
+        "--benchmark-gate-target",
+        type=float,
+        default=None,
+        help="Optional minimum target for every selected benchmark gate.",
+    )
+    parser.add_argument(
+        "--benchmark-gate-tolerance",
+        type=float,
+        default=0.0,
+        help="Allowed percentage-point tolerance when comparing benchmark gates.",
+    )
+    parser.add_argument(
+        "--benchmark-backup-dir",
+        type=Path,
+        default=None,
+        help="Backup directory used by --require-benchmark-gates.",
+    )
     args = parser.parse_args()
+    gate_names = parse_benchmark_gate_names(args.benchmark_gate_names)
+    backup_dir = args.benchmark_backup_dir
+    baseline_gates = None
+    if args.require_benchmark_gates:
+        baseline_gates = saved_benchmark_values(gate_names)
+        if backup_dir is None:
+            backup_dir = PROJECT_DIR / "tmp" / "character_benchmark_gate_backups" / time.strftime(
+                "%Y%m%dT%H%M%SZ",
+                time.gmtime(),
+            )
+        backup_character_artifacts(backup_dir)
     train_character_model(
         epochs=args.epochs,
         batch_size=args.batch_size,
@@ -2598,6 +2724,21 @@ def main() -> None:
         min_checkpoint_letter=args.min_checkpoint_letter,
         min_checkpoint_punctuation=args.min_checkpoint_punctuation,
     )
+    if baseline_gates is not None:
+        candidate_gates = saved_benchmark_values(gate_names)
+        failures = benchmark_gate_failures(
+            baseline_gates,
+            candidate_gates,
+            tolerance=args.benchmark_gate_tolerance,
+            target=args.benchmark_gate_target,
+        )
+        if failures:
+            restore_character_artifacts(backup_dir)
+            joined = "; ".join(failures)
+            raise RuntimeError(
+                f"Rejected character training checkpoint: {joined}. Restored artifacts from {backup_dir}."
+            )
+        print(f"Benchmark gates passed: {', '.join(gate_names)}")
 
 
 if __name__ == "__main__":

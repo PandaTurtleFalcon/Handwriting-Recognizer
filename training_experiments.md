@@ -1167,3 +1167,14 @@ restored, so future improvement loops do not repeat known-bad blends.
   - Result: no model artifact changed. The uploaded `look behind / you` hardcase now reads correctly through exact correction memory, but the remaining benchmark gates are still below target and require more mixed-case/user-labeled samples or a stronger representation.
   - Verification: `test_train_from_corrections.py`, `test_web_app.py`, and `test_summarize_benchmarks.py` passed (`137 passed`); `py_compile` and `git diff --check` passed; `scripts/train_from_corrections.py --dry-run --json` reported `recommended_queue: mixedcase` with `869` mixed-case samples still needed.
   - Takeaway: the next data-collection/training loop should prioritize mixed-case visual-twin labels first, because mixed-case exactness is the largest current failing gate.
+
+- Rejected ultra-low-learning-rate character warm-start:
+  - Command shape: backed up character artifacts to `tmp/daily_training_backups/20260818T185939Z-character-ultralow-lr-probe`, then ran a one-epoch wide-CNN warm start at learning rate `0.000001`, objective `letter_validation_accuracy`, and raw checkpoint floors matching the current raw checkpoint splits.
+  - Result: rejected/restored. Raw validation rose to `92.9753%`, but the deployed benchmark stack regressed from `94.1666%` to `92.9753%` character exact, digit exact fell below target to `94.3430%`, and letter exact fell to `92.1427%`.
+  - Verification: restored `character_cnn.pt`, `character_training_metrics.json`, `character_labels.json`, `character_exemplars.pt`, `character_logit_bias.pt`, and `character_pair_rules.json`; post-restore benchmark returned the deployed baseline (`94.1666%` character exact, `95.1090%` character digit exact, `93.5908%` character letter exact).
+  - Takeaway: optimizing the raw checkpoint alone can erase useful deployed calibration/rules. Future character training needs a post-calibration benchmark gate during training or should write to a candidate path before promotion.
+
+- Character benchmark-gated training guardrail:
+  - Code path: added optional `character_model.py --require-benchmark-gates`, which backs up character artifacts before training, compares selected saved benchmark gates after training, and restores automatically if any selected gate regresses or misses an optional target.
+  - Verification: `test_character_model.py` passed (`50 passed`), `py_compile` and `git diff --check` passed, and a smoke run of the rejected ultra-low-LR command restored from `tmp/daily_training_backups/20260818T1909-character-guard-smoke` after reporting the exact regressed gates.
+  - Takeaway: future character fine-tunes can fail closed against the deployed benchmark stack instead of relying only on raw checkpoint metrics.
