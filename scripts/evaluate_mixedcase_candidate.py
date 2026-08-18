@@ -6,6 +6,7 @@ import argparse
 import json
 import sys
 from pathlib import Path
+from typing import Any
 
 import torch
 from torch import nn
@@ -121,6 +122,70 @@ def gate_rows(metrics: dict[str, float], target: float) -> list[dict[str, object
     ]
 
 
+def read_baseline_metrics(path: Path | None) -> dict[str, float]:
+    """Read baseline metrics from a report or raw metrics JSON file."""
+
+    if path is None:
+        return {}
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    metrics = payload.get("metrics", payload) if isinstance(payload, dict) else {}
+    if not isinstance(metrics, dict):
+        raise RuntimeError(f"{path} does not contain a metrics object.")
+    return {
+        str(key): float(value)
+        for key, value in metrics.items()
+        if key in GATE_KEYS and isinstance(value, (int, float))
+    }
+
+
+def baseline_rows(
+    metrics: dict[str, float],
+    baseline_metrics: dict[str, float],
+    tolerance: float = 0.0,
+) -> list[dict[str, object]]:
+    """Return pass/fail rows comparing candidate metrics to a baseline."""
+
+    rows = []
+    for key in GATE_KEYS:
+        if key not in baseline_metrics:
+            continue
+        value = float(metrics.get(key, 0.0))
+        baseline = float(baseline_metrics[key])
+        rows.append(
+            {
+                "name": key,
+                "value": value,
+                "baseline": baseline,
+                "tolerance": tolerance,
+                "passed": value + tolerance >= baseline,
+            }
+        )
+    return rows
+
+
+def failed_rows(rows: list[dict[str, object]]) -> list[dict[str, object]]:
+    """Return rows that did not pass their gate."""
+
+    return [row for row in rows if not bool(row.get("passed"))]
+
+
+def _print_rows(title: str, rows: list[dict[str, Any]]) -> None:
+    """Print a compact table of gate rows."""
+
+    if not rows:
+        return
+    print(title)
+    for row in rows:
+        status = "PASS" if row["passed"] else "FAIL"
+        if "baseline" in row:
+            print(
+                f"{row['name']}: {row['value']:.4f}% "
+                f"baseline={row['baseline']:.4f}% tolerance={row['tolerance']:.4f}% {status}"
+            )
+        else:
+            print(f"{row['name']}: {row['value']:.4f}% target={row['target']:.2f}% {status}")
+
+
 def main() -> None:
     """Run the command-line candidate evaluator."""
 
@@ -131,6 +196,10 @@ def main() -> None:
     parser.add_argument("--mode", choices=("raw", "hybrid"), default="raw")
     parser.add_argument("--sample-limit", type=int, default=None)
     parser.add_argument("--target", type=float, default=95.0)
+    parser.add_argument("--baseline-json", type=Path, default=None)
+    parser.add_argument("--baseline-tolerance", type=float, default=0.0)
+    parser.add_argument("--require-target", action="store_true")
+    parser.add_argument("--require-baseline", action="store_true")
     parser.add_argument("--json", action="store_true")
     args = parser.parse_args()
 
@@ -141,16 +210,23 @@ def main() -> None:
         mode=args.mode,
         sample_limit=args.sample_limit,
     )
-    rows = gate_rows(report["metrics"], args.target)
-    report["gates"] = rows
+    target_rows = gate_rows(report["metrics"], args.target)
+    baseline_metrics = read_baseline_metrics(args.baseline_json)
+    comparison_rows = baseline_rows(report["metrics"], baseline_metrics, args.baseline_tolerance)
+    report["gates"] = target_rows
+    report["baseline_gates"] = comparison_rows
+    target_failures = failed_rows(target_rows) if args.require_target else []
+    baseline_failures = failed_rows(comparison_rows) if args.require_baseline else []
     if args.json:
         print(json.dumps(report, indent=2))
-        return
-    print(f"checkpoint: {report['checkpoint_path']}")
-    print(f"mode: {report['mode']} examples: {report['total_examples']}")
-    for row in rows:
-        status = "PASS" if row["passed"] else "FAIL"
-        print(f"{row['name']}: {row['value']:.4f}% target={row['target']:.2f}% {status}")
+    else:
+        print(f"checkpoint: {report['checkpoint_path']}")
+        print(f"mode: {report['mode']} examples: {report['total_examples']}")
+        _print_rows("target gates:", target_rows)
+        _print_rows("baseline gates:", comparison_rows)
+    if target_failures or baseline_failures:
+        failure_names = [str(row["name"]) for row in [*target_failures, *baseline_failures]]
+        raise SystemExit(f"Candidate failed required gate(s): {', '.join(failure_names)}")
 
 
 if __name__ == "__main__":

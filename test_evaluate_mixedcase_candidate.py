@@ -7,9 +7,12 @@ import torch
 
 from alnum_model import MIXEDCASE_LABELS
 from scripts.evaluate_mixedcase_candidate import (
+    baseline_rows,
     candidate_test_tensors,
+    failed_rows,
     gate_rows,
     load_candidate_checkpoint,
+    read_baseline_metrics,
 )
 
 
@@ -33,6 +36,41 @@ class MixedcaseCandidateEvaluatorTests(unittest.TestCase):
         self.assertTrue(by_name["digit_test_accuracy"]["passed"])
         self.assertFalse(by_name["upper_test_accuracy"]["passed"])
         self.assertEqual(by_name["upper_test_accuracy"]["value"], 94.9)
+
+    def test_baseline_rows_allow_tolerance_for_noisy_samples(self) -> None:
+        rows = baseline_rows(
+            {
+                "test_accuracy": 87.78,
+                "case_or_ambiguity_aware_test_accuracy": 98.04,
+            },
+            {
+                "test_accuracy": 87.79,
+                "case_or_ambiguity_aware_test_accuracy": 98.04,
+            },
+            tolerance=0.02,
+        )
+
+        self.assertTrue(all(row["passed"] for row in rows))
+
+    def test_failed_rows_returns_only_required_failures(self) -> None:
+        rows = [
+            {"name": "test_accuracy", "passed": True},
+            {"name": "upper_test_accuracy", "passed": False},
+        ]
+
+        self.assertEqual(failed_rows(rows), [{"name": "upper_test_accuracy", "passed": False}])
+
+    def test_read_baseline_metrics_accepts_nested_report_json(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "baseline.json"
+            path.write_text(
+                '{"metrics":{"test_accuracy":87.7,"upper_test_accuracy":84.6},"ignored":true}',
+                encoding="utf-8",
+            )
+
+            metrics = read_baseline_metrics(path)
+
+        self.assertEqual(metrics, {"test_accuracy": 87.7, "upper_test_accuracy": 84.6})
 
     def test_candidate_test_tensors_can_sample_deterministically(self) -> None:
         mnist_images = torch.arange(6, dtype=torch.float32).view(6, 1, 1, 1)

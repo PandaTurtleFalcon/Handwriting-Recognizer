@@ -1233,3 +1233,9 @@ restored, so future improvement loops do not repeat known-bad blends.
   - Result: not promotable and no deployed artifact changed. The epoch reported raw exact `80.21%`, digit `99.11%`, upper `71.31%`, and lower `84.22%`; the saved candidate evaluated on a 4096-example diagnostic slice at `80.22%` exact with upper only `71.36%`.
   - Verification: focused candidate evaluator tests passed, the candidate evaluator smoke command completed, and `scripts/summarize_benchmarks.py --json` confirmed deployed metrics stayed unchanged.
   - Takeaway: tiny low-learning-rate warm starts are not enough; the next candidate should change representation or data balance more substantially, then use this evaluator before any calibration/promotion attempt.
+
+- Candidate evaluator target and baseline gates:
+  - Code path: extended `scripts/evaluate_mixedcase_candidate.py` with `--require-target`, `--baseline-json`, `--baseline-tolerance`, and `--require-baseline` so candidate checkpoints can fail closed against both the 95% target and a saved baseline report.
+  - Result: no model artifact changed. The current raw deployed checkpoint correctly fails `--require-target` on a 1024-example diagnostic slice (`80.47%` exact, upper `71.49%`), while the same checkpoint passes a same-slice `--require-baseline` comparison.
+  - Verification: focused evaluator tests passed and the same-slice baseline gate check reported no failures.
+  - Takeaway: future candidate runs now have a reliable non-deploying promotion gate before any heavier calibration, app-hardcase replay, or artifact replacement.
