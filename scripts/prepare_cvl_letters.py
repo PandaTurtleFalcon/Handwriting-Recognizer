@@ -35,6 +35,7 @@ DEFAULT_LABELS = "Oo0Il1isS5CcUuvPpZz2"
 IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".tif", ".tiff", ".bmp"}
 TEXT_ATTRS = ("text", "transcription", "word", "label", "value", "contents")
 ALNUM_RE = re.compile(r"[A-Za-z0-9]")
+WORD_IMAGE_RE = re.compile(r"^\d+-\d+-\d+-\d+-(?P<text>.+)$")
 
 
 @dataclass(frozen=True)
@@ -115,6 +116,17 @@ def _parse_xml_root(xml_path: Path) -> ElementTree.Element:
         try:
             return ElementTree.fromstring(repaired)
         except ElementTree.ParseError as exc:
+            for encoding in ("utf-8", "latin-1"):
+                try:
+                    text = raw.decode(encoding)
+                except UnicodeDecodeError:
+                    continue
+                text = re.sub(r"^\s*<\?xml[^>]*\?>", "", text, count=1)
+                text = "".join(character for character in text if character in "\t\n\r" or ord(character) >= 32)
+                try:
+                    return ElementTree.fromstring(text)
+                except ElementTree.ParseError:
+                    continue
             raise ValueError(f"Could not parse CVL XML: {xml_path}") from exc
 
 
@@ -169,6 +181,16 @@ def matching_image_for_xml(xml_path: Path, image_index: dict[str, Path]) -> Path
         if stem.startswith(xml_path.stem) or xml_path.stem.startswith(stem):
             return image_path
     return None
+
+
+def text_from_word_image_path(path: Path) -> str | None:
+    """Return the transcription embedded in a CVL pre-cropped word filename."""
+
+    match = WORD_IMAGE_RE.match(path.stem)
+    if match is None:
+        return None
+    text = match.group("text").replace("_", " ").strip()
+    return text or None
 
 
 def _ink_bounds(mask: np.ndarray, left: int, right: int) -> tuple[int, int]:
@@ -237,7 +259,27 @@ def prepare_cvl_letters(
     targets: list[int] = []
     counts: dict[str, int] = {}
     word_count = 0
+    word_image_count = 0
     missing_images = 0
+    for image_path in sorted(source_root.rglob("*")):
+        if not image_path.is_file() or image_path.suffix.lower() not in IMAGE_EXTENSIONS:
+            continue
+        word_text = text_from_word_image_path(image_path)
+        if word_text is None:
+            continue
+        trainable = _filtered_labels(word_text, allowed_labels)
+        if not trainable:
+            continue
+        word_count += 1
+        word_image_count += 1
+        with Image.open(image_path) as image:
+            for label, label_crop in split_word_by_ink(image.convert("RGB"), trainable):
+                count = counts.get(label, 0)
+                if limit_per_label is not None and count >= limit_per_label:
+                    continue
+                images.append(_foreground_tensor_from_image(label_crop))
+                targets.append(label_to_index[label])
+                counts[label] = count + 1
     for xml_path in sorted(source_root.rglob("*.xml")):
         image_path = matching_image_for_xml(xml_path, image_index)
         if image_path is None:
@@ -272,6 +314,7 @@ def prepare_cvl_letters(
         "images": int(image_tensor.shape[0]),
         "classes": len(counts),
         "words_used": word_count,
+        "word_images_used": word_image_count,
         "missing_image_xml_files": missing_images,
         "per_class": dict(sorted(counts.items())),
         "output": str(output_path),

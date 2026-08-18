@@ -11,6 +11,7 @@ from scripts.prepare_cvl_letters import (
     parse_cvl_words,
     prepare_cvl_letters,
     split_word_by_ink,
+    text_from_word_image_path,
 )
 
 
@@ -81,6 +82,21 @@ class PrepareCvlLettersTests(unittest.TestCase):
         self.assertEqual(len(words), 1)
         self.assertEqual(words[0].text, "Oo")
 
+    def test_parse_words_repairs_latin1_text_with_bad_header(self) -> None:
+        """Some CVL XML is Latin-1 text while still claiming UTF-16."""
+
+        with tempfile.TemporaryDirectory() as directory:
+            xml_path = Path(directory) / "sample.xml"
+            xml_path.write_bytes(
+                b'<?xml version="1.0" encoding="UTF-16" ?>\r\n'
+                b'<root><word text="Mail\xfcfterl" x="1" y="2" width="30" height="40" /></root>'
+            )
+
+            words = parse_cvl_words(xml_path)
+
+        self.assertEqual(len(words), 1)
+        self.assertEqual(words[0].text, "Mail\u00fcfterl")
+
     def test_matching_image_falls_back_to_prefix_match(self) -> None:
         """Cropped/full image stems can include suffixes around the XML stem."""
 
@@ -92,6 +108,14 @@ class PrepareCvlLettersTests(unittest.TestCase):
             matched = matching_image_for_xml(root / "writer-001.xml", {"writer-001-cropped": image_path})
 
         self.assertEqual(matched, image_path)
+
+    def test_text_from_word_image_path_reads_cvl_filename_label(self) -> None:
+        """CVL pre-cropped word images store the transcription in the filename."""
+
+        path = Path("0050-7-5-7-You.tif")
+
+        self.assertEqual(text_from_word_image_path(path), "You")
+        self.assertIsNone(text_from_word_image_path(Path("0050-page.tif")))
 
     def test_filtered_labels_keeps_only_requested_alnum_labels(self) -> None:
         """Spaces and punctuation should not become CVL character targets."""
@@ -136,6 +160,29 @@ class PrepareCvlLettersTests(unittest.TestCase):
         self.assertEqual(report["classes"], 2)
         self.assertEqual(tuple(cache["images"].shape), (2, 1, 28, 28))
         self.assertEqual(cache["targets"].tolist(), [18, 24])
+
+    def test_prepare_cvl_letters_reads_precropped_word_images(self) -> None:
+        """The full CVL archive includes labeled word crops without XML lookup."""
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            word_dir = root / "trainset" / "words" / "0001"
+            word_dir.mkdir(parents=True)
+            image_path = word_dir / "0001-1-2-3-You.tif"
+            image = Image.new("RGB", (120, 60), "white")
+            draw = ImageDraw.Draw(image)
+            draw.line((15, 10, 15, 50), fill="black", width=4)
+            draw.ellipse((45, 12, 75, 48), outline="black", width=4)
+            draw.line((100, 10, 100, 50), fill="black", width=4)
+            image.save(image_path)
+            output_path = root / "cvl_letters.pt"
+
+            report = prepare_cvl_letters(root, output_path, labels="You", limit_per_label=2)
+            cache = torch.load(output_path, map_location="cpu", weights_only=True)
+
+        self.assertEqual(report["images"], 3)
+        self.assertEqual(report["word_images_used"], 1)
+        self.assertEqual(tuple(cache["images"].shape), (3, 1, 28, 28))
 
 
 if __name__ == "__main__":

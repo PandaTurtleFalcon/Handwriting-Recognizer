@@ -1044,3 +1044,10 @@ restored, so future improvement loops do not repeat known-bad blends.
   - Result: rejected/no-op. Relaxing the `_split_one_touching_character_region()` aspect-ratio gate would find a blank cut in some oversized tall boxes, but it would also split the final `u`-like glyph into two pieces (`265x437`, cut around column `130`), making the raw row longer than the target phrase.
   - Verification: direct diagnostic replay measured `13` current regions and showed the unsafe candidate split before any patch was applied.
   - Takeaway: the raw failure is still real, but a broad tall-box split is too risky. Any segmentation fix needs stronger glyph/sequence context, not just a lower aspect threshold.
+
+- Rejected CVL mixed-case adviser probe:
+  - Code path: extended `scripts/prepare_cvl_letters.py` so it repairs Latin-1 CVL XML files with bad UTF-16 declarations and mines the full archive's pre-cropped `words/.../*.tif` images directly from filename transcriptions.
+  - Conversion result: `data/cvl_letters_twin_subset.pt` contains `1280` capped crops across `16` hard labels (`80` each for `1`, `5`, `I`, `P`, `S`, `U`, `Z`, `c`, `i`, `l`, `o`, `p`, `s`, `u`, `v`, `z`) from `79146` CVL word images.
+  - Probe result: rejected/no artifact write. The MLP adviser with CVL extras regressed exact from `87.7774%` to `87.7315%`; the linear adviser regressed to `87.7354%`. Both preserved ambiguity-aware accuracy but traded uppercase exactness for tiny lowercase gains.
+  - Verification: `test_prepare_cvl_letters.py` passed (`10 passed`), and both `scripts/probe_mixedcase_feature_reranker.py` runs reported `promotable: false`.
+  - Takeaway: CVL word crops are now available locally for experiments, but the current feature-reranker path still does not transfer safely. Next CVL work should be a representation/pretraining or sequence-recognition experiment, not the existing adviser.
