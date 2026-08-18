@@ -1139,6 +1139,45 @@ class WebAppRenderingTests(unittest.TestCase):
 
         self.assertEqual("".join(main.prediction_value(item) for item in resolved), "555")
 
+    def test_visual_twin_resolver_handles_script_s5s_with_weak_alternatives(self) -> None:
+        """Rough script S5s can expose only tiny S/s alternatives."""
+
+        predictions = [
+            {"label": "5", "confidence": 0.99, "x": 41, "y": 41, "width": 52, "height": 74, "row": 1, "alternatives": [{"label": "S", "confidence": 0.009}]},
+            {"label": "5", "confidence": 0.99, "x": 102, "y": 48, "width": 51, "height": 74, "row": 1, "alternatives": [{"label": "S", "confidence": 0.004}]},
+            {"label": "5", "confidence": 0.99, "x": 162, "y": 57, "width": 49, "height": 58, "row": 1, "alternatives": [{"label": "S", "confidence": 0.035}]},
+        ]
+
+        resolved = main.resolve_visual_twin_predictions(predictions)
+
+        self.assertEqual("".join(main.prediction_value(item) for item in resolved), "S5s")
+
+    def test_visual_twin_resolver_handles_script_ss5_with_weak_alternatives(self) -> None:
+        """A shorter middle glyph separates script Ss5 from numeric 555."""
+
+        predictions = [
+            {"label": "5", "confidence": 0.99, "x": 40, "y": 40, "width": 54, "height": 72, "row": 1, "alternatives": [{"label": "S", "confidence": 0.030}]},
+            {"label": "5", "confidence": 0.99, "x": 98, "y": 55, "width": 52, "height": 61, "row": 1, "alternatives": [{"label": "S", "confidence": 0.011}]},
+            {"label": "5", "confidence": 0.99, "x": 160, "y": 44, "width": 51, "height": 72, "row": 1, "alternatives": [{"label": "S", "confidence": 0.011}]},
+        ]
+
+        resolved = main.resolve_visual_twin_predictions(predictions)
+
+        self.assertEqual("".join(main.prediction_value(item) for item in resolved), "Ss5")
+
+    def test_visual_twin_resolver_handles_script_5ss_with_weak_alternatives(self) -> None:
+        """When the final script glyph is short, weak S alternatives choose the uppercase slot."""
+
+        predictions = [
+            {"label": "5", "confidence": 0.99, "x": 43, "y": 44, "width": 51, "height": 72, "row": 1, "alternatives": [{"label": "S", "confidence": 0.007}]},
+            {"label": "5", "confidence": 0.99, "x": 107, "y": 44, "width": 51, "height": 73, "row": 1, "alternatives": [{"label": "S", "confidence": 0.012}]},
+            {"label": "5", "confidence": 0.99, "x": 165, "y": 51, "width": 51, "height": 61, "row": 1, "alternatives": [{"label": "S", "confidence": 0.014}]},
+        ]
+
+        resolved = main.resolve_visual_twin_predictions(predictions)
+
+        self.assertEqual("".join(main.prediction_value(item) for item in resolved), "5Ss")
+
     def test_visual_twin_resolver_handles_mixed_s5s_labels(self) -> None:
         """S/s/5 can arrive as mixed labels before geometry cleanup."""
 

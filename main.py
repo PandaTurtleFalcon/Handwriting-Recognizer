@@ -1580,6 +1580,9 @@ def _resolve_visual_twin_row(row: list[dict[str, object]]) -> list[dict[str, obj
     if len(row) == 3 and labels == ["5", "5", "5"]:
         edge_strengths = [_alternative_confidence(row[0], {"S", "s"}), _alternative_confidence(row[2], {"S", "s"})]
         middle_strength = _alternative_confidence(row[1], {"S", "s"})
+        script_resolved = _resolve_script_s5s_triplet(row)
+        if script_resolved is not None:
+            return script_resolved
         if min(edge_strengths) >= 0.12 and middle_strength <= 0.05:
             first_width = float(row[0].get("width", 0))
             last_width = float(row[2].get("width", 0))
@@ -1715,6 +1718,41 @@ def _resolve_visual_twin_row(row: list[dict[str, object]]) -> list[dict[str, obj
                 _with_prediction_label(row[2], "1", 0.86),
                 row[3],
             ]
+    return None
+
+
+def _resolve_script_s5s_triplet(row: list[dict[str, object]]) -> list[dict[str, object]] | None:
+    """Resolve script-rendered S/5/s rows when all three glyphs read as 5."""
+
+    if len(row) != 3:
+        return None
+    strengths = [_alternative_confidence(item, {"S", "s"}) for item in row]
+    if sum(1 for strength in strengths if strength >= 0.004) < 2:
+        return None
+    heights = [float(item.get("height", 0)) for item in row]
+    tops = [float(item.get("y", 0)) for item in row]
+    if min(heights) <= 0:
+        return None
+    shortest = min(range(3), key=lambda index: heights[index])
+    tallest = max(heights)
+    if heights[shortest] > tallest * 0.88:
+        return None
+    if tops[shortest] < min(tops) + tallest * 0.08:
+        return None
+    if shortest == 1:
+        return [
+            _with_prediction_label(row[0], "S", 0.84),
+            _with_prediction_label(row[1], "s", 0.84),
+            row[2],
+        ]
+    if shortest == 2:
+        upper_index = 0 if strengths[0] >= strengths[1] else 1
+        digit_index = 1 - upper_index
+        resolved = list(row)
+        resolved[upper_index] = _with_prediction_label(row[upper_index], "S", 0.84)
+        resolved[digit_index] = _with_prediction_label(row[digit_index], "5", 0.84)
+        resolved[2] = _with_prediction_label(row[2], "s", 0.84)
+        return resolved
     return None
 
 

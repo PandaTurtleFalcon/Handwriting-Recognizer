@@ -737,3 +737,9 @@ restored, so future improvement loops do not repeat known-bad blends.
   - Result: accepted per-letter thresholds in `mixedcase_hybrid.json`, improving deployable mixed-case exact from `87.70%` to `87.78%` and case-or-visual from `98.00%` to `98.05%`. Digit exact stayed `95.02%`; upper exact improved from `84.41%` to `84.80%`; lower exact moved from `73.14%` to `73.04%`.
   - Verification: `scripts/analyze_mixedcase_confusions.py --top 8 --batch-size 4096` matched the artifact metrics, `scripts/summarize_benchmarks.py` reports the new mixed-case gates, focused hybrid tests passed, app hardcases stayed `100.00% (45/45)`, and script hardcases stayed `96.67% (87/90)`.
   - Remaining blocker: this is only a small inference-calibration gain. Exact mixed-case is still far below the 95% target, dominated by visual-twin/case families (`1/I/l/i`, `0/O/o`, and `5/S/s`), so the next useful work needs better family-specific training data or a changed exact-case objective.
+
+- Script S/5/s app-level resolver:
+  - Command shape: inspected pre-router predictions for generated `S5s`, `Ss5`, and `5Ss` script hardcases, then added a narrow row-level resolver for three-glyph rows that all classify as `5` but have multiple weak S/s alternatives and one clearly shorter, lower lowercase-shaped glyph.
+  - Result: generated script app hardcases improved from `96.67% (87/90)` exact to `100.00% (90/90)` exact; ambiguity-aware stayed `100.00%`.
+  - Verification: focused resolver tests passed (`5 passed`), `scripts/evaluate_hardcases.py --script-cases --json` passed all 90 cases, and `scripts/summarize_benchmarks.py` confirmed saved model metrics were unchanged.
+  - Remaining blocker: this improves app-level recognition only. It does not change aggregate mixed-case or character-letter model metrics, which are still below 95%.
