@@ -39,6 +39,33 @@ class PrepareCvlLettersTests(unittest.TestCase):
         self.assertEqual(words[0].box, (1, 2, 31, 42))
         self.assertEqual(words[1].box, (5, 6, 35, 46))
 
+    def test_parse_words_accepts_page_style_polygon_points(self) -> None:
+        """Official CVL tooling emits PAGE-like polygons for text regions."""
+
+        with tempfile.TemporaryDirectory() as directory:
+            xml_path = Path(directory) / "sample.xml"
+            xml_path.write_text(
+                """
+                <PcGts xmlns="http://schema.primaresearch.org/PAGE/gts/pagecontent/2010-03-19">
+                  <Page imageFilename="sample.tif">
+                    <Word transcription="Look">
+                      <Point x="10" y="20" />
+                      <Point x="70" y="18" />
+                      <Point x="72" y="50" />
+                      <Point x="8" y="52" />
+                    </Word>
+                  </Page>
+                </PcGts>
+                """,
+                encoding="utf-8",
+            )
+
+            words = parse_cvl_words(xml_path)
+
+        self.assertEqual(len(words), 1)
+        self.assertEqual(words[0].text, "Look")
+        self.assertEqual(words[0].box, (8, 18, 72, 52))
+
     def test_matching_image_falls_back_to_prefix_match(self) -> None:
         """Cropped/full image stems can include suffixes around the XML stem."""
 

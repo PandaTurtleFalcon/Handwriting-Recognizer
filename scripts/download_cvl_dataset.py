@@ -1,0 +1,182 @@
+"""Download CVL dataset archives into the ignored local data folder.
+
+The CVL archives are large and licensed for non-commercial research use, so
+this helper never commits data. It queries the Zenodo record metadata, writes a
+small manifest, and can download selected archives with checksum verification.
+"""
+
+from __future__ import annotations
+
+import argparse
+import hashlib
+import json
+import sys
+import urllib.request
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any
+
+
+PROJECT_DIR = Path(__file__).resolve().parents[1]
+DEFAULT_RECORD_URL = "https://zenodo.org/api/records/1492267"
+DEFAULT_OUTPUT_ROOT = PROJECT_DIR / "data" / "cvl"
+DEFAULT_MANIFEST_PATH = DEFAULT_OUTPUT_ROOT / "zenodo_manifest.json"
+FILE_ALIASES = {
+    "full": "cvl-database-1-1.zip",
+    "cropped": "cvl-database-cropped-1-1.zip",
+    "parser": "DkGtDbXmlReader-src.zip",
+    "viewer": "GtViewer.zip",
+}
+
+
+@dataclass(frozen=True)
+class CvlArchive:
+    """One downloadable CVL archive from the Zenodo record."""
+
+    key: str
+    size: int
+    checksum: str
+    url: str
+
+    @property
+    def md5(self) -> str | None:
+        """Return the expected MD5 digest when Zenodo provides one."""
+
+        algorithm, _, digest = self.checksum.partition(":")
+        if algorithm.lower() != "md5" or not digest:
+            return None
+        return digest
+
+
+def parse_archives(record: dict[str, Any]) -> dict[str, CvlArchive]:
+    """Extract downloadable archive metadata from a Zenodo record JSON."""
+
+    archives: dict[str, CvlArchive] = {}
+    for item in record.get("files", []):
+        key = str(item.get("key", ""))
+        links = item.get("links", {})
+        url = str(links.get("self", ""))
+        if not key or not url:
+            continue
+        archives[key] = CvlArchive(
+            key=key,
+            size=int(item.get("size", 0)),
+            checksum=str(item.get("checksum", "")),
+            url=url,
+        )
+    return archives
+
+
+def fetch_record(record_url: str = DEFAULT_RECORD_URL) -> dict[str, Any]:
+    """Fetch the Zenodo CVL record metadata."""
+
+    with urllib.request.urlopen(record_url, timeout=30) as response:
+        return json.load(response)
+
+
+def resolve_archive_keys(requested: list[str], archives: dict[str, CvlArchive]) -> list[str]:
+    """Resolve CLI aliases like `full` into concrete Zenodo file keys."""
+
+    resolved = []
+    for item in requested:
+        key = FILE_ALIASES.get(item, item)
+        if key not in archives:
+            known = ", ".join(sorted([*FILE_ALIASES, *archives]))
+            raise ValueError(f"Unknown CVL archive {item!r}; choose one of: {known}")
+        resolved.append(key)
+    return resolved
+
+
+def file_md5(path: Path) -> str:
+    """Return the MD5 digest for one local archive."""
+
+    digest = hashlib.md5()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def archive_is_complete(path: Path, archive: CvlArchive) -> bool:
+    """Return whether a local file matches the expected size and checksum."""
+
+    if not path.exists() or path.stat().st_size != archive.size:
+        return False
+    expected_md5 = archive.md5
+    return expected_md5 is None or file_md5(path) == expected_md5
+
+
+def download_archive(archive: CvlArchive, output_root: Path) -> Path:
+    """Download one CVL archive unless a verified copy already exists."""
+
+    output_root.mkdir(parents=True, exist_ok=True)
+    destination = output_root / archive.key
+    if archive_is_complete(destination, archive):
+        return destination
+    temporary = destination.with_suffix(destination.suffix + ".part")
+    urllib.request.urlretrieve(archive.url, temporary)
+    if archive.size and temporary.stat().st_size != archive.size:
+        raise RuntimeError(f"Downloaded {archive.key} has unexpected size: {temporary.stat().st_size}")
+    expected_md5 = archive.md5
+    if expected_md5 is not None and file_md5(temporary) != expected_md5:
+        raise RuntimeError(f"Downloaded {archive.key} failed MD5 verification.")
+    temporary.replace(destination)
+    return destination
+
+
+def manifest_for_archives(archives: dict[str, CvlArchive]) -> dict[str, object]:
+    """Return a JSON-serializable manifest for local CVL downloads."""
+
+    return {
+        "source": DEFAULT_RECORD_URL,
+        "license": "CC BY-NC 3.0 / non-commercial research use",
+        "archives": [
+            {
+                "key": archive.key,
+                "size": archive.size,
+                "checksum": archive.checksum,
+                "url": archive.url,
+            }
+            for archive in sorted(archives.values(), key=lambda item: item.key)
+        ],
+    }
+
+
+def main() -> int:
+    """CLI entry point."""
+
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--record-url", default=DEFAULT_RECORD_URL)
+    parser.add_argument("--output-root", type=Path, default=DEFAULT_OUTPUT_ROOT)
+    parser.add_argument(
+        "--archive",
+        action="append",
+        default=[],
+        help="Archive alias/key to download. Aliases: full, cropped, parser, viewer. Repeatable.",
+    )
+    parser.add_argument("--dry-run", action="store_true", help="Print metadata without downloading archives.")
+    args = parser.parse_args()
+
+    record = fetch_record(args.record_url)
+    archives = parse_archives(record)
+    args.output_root.mkdir(parents=True, exist_ok=True)
+    manifest = manifest_for_archives(archives)
+    manifest_path = args.output_root / DEFAULT_MANIFEST_PATH.name
+    manifest_path.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+    selected_keys = resolve_archive_keys(args.archive or ["full"], archives)
+    report = {
+        "manifest": str(manifest_path),
+        "dry_run": bool(args.dry_run),
+        "selected": selected_keys,
+        "downloaded": [],
+    }
+    if not args.dry_run:
+        for key in selected_keys:
+            path = download_archive(archives[key], args.output_root)
+            report["downloaded"].append(str(path))
+    print(json.dumps(report, indent=2))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

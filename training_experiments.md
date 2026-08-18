@@ -1014,3 +1014,9 @@ restored, so future improvement loops do not repeat known-bad blends.
   - Result: no dataset or model artifact changed. `data/cvl` is not present on this machine, so the conversion command correctly skipped local cache creation.
   - Verification: `test_prepare_cvl_letters.py test_extra_alnum_datasets.py` passed (`41` tests), and `scripts/prepare_cvl_letters.py` compiled.
   - Takeaway: the project now has the local-only ingestion path needed for CVL once the `cvl-database-cropped-1-1.zip`/XML contents are placed under ignored `data/cvl`.
+
+- CVL downloader and PAGE-polygon support:
+  - Code path: added `scripts/download_cvl_dataset.py`, which queries Zenodo record `1492267`, writes an ignored local manifest, downloads selected archive aliases (`full`, `cropped`, `parser`, `viewer`), and verifies size plus MD5 before reusing a file. `scripts/prepare_cvl_letters.py` now also converts child `Point x/y` polygons into rectangular crop boxes for PAGE-style CVL XML.
+  - Result: downloaded and verified only the small official XML parser archive at `data/cvl/DkGtDbXmlReader-src.zip`; the multi-GB image archives were not downloaded in this bounded iteration. No model artifact changed.
+  - Verification: `test_prepare_cvl_letters.py test_download_cvl_dataset.py` passed (`11` tests), `scripts/download_cvl_dataset.py --dry-run --archive parser` resolved `DkGtDbXmlReader-src.zip`, and both CVL scripts compiled.
+  - Takeaway: the next data step is now mechanical: run `scripts/download_cvl_dataset.py --archive full`, extract the archive under ignored `data/cvl`, then run `scripts/prepare_cvl_letters.py --source-root data/cvl --output data/cvl_letters_twin_subset.pt --limit-per-label 80` before a guarded mixed-case probe.

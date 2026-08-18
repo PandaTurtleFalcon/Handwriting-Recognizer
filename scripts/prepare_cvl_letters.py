@@ -103,6 +103,24 @@ def _text_from_element(element: ElementTree.Element) -> str:
     return "".join(element.itertext()).strip()
 
 
+def _box_from_child_points(element: ElementTree.Element) -> tuple[int, int, int, int] | None:
+    """Return a rectangle around PAGE-style child Point coordinates."""
+
+    points = []
+    for child in element:
+        if child.tag.rsplit("}", 1)[-1] != "Point":
+            continue
+        x = _attr_float(dict(child.attrib), "x")
+        y = _attr_float(dict(child.attrib), "y")
+        if x is not None and y is not None:
+            points.append((x, y))
+    if not points:
+        return None
+    xs = [point[0] for point in points]
+    ys = [point[1] for point in points]
+    return _clean_box(min(xs), min(ys), max(xs), max(ys))
+
+
 def parse_cvl_words(xml_path: Path) -> list[CvlWord]:
     """Parse labeled word boxes from one CVL XML file."""
 
@@ -112,7 +130,7 @@ def parse_cvl_words(xml_path: Path) -> list[CvlWord]:
         raise ValueError(f"Could not parse CVL XML: {xml_path}") from exc
     words = []
     for element in root.iter():
-        box = _box_from_attrs(dict(element.attrib))
+        box = _box_from_attrs(dict(element.attrib)) or _box_from_child_points(element)
         text = _text_from_element(element)
         if box is None or not ALNUM_RE.search(text):
             continue
