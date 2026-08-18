@@ -1236,6 +1236,21 @@ def mixedcase_checkpoint_meets_floors(
     )
 
 
+def validate_mixedcase_warm_start_checkpoint(checkpoint: dict[str, object], model_type: str) -> None:
+    """Raise if a mixed-case warm-start checkpoint cannot initialize this run."""
+
+    if list(checkpoint.get("labels", [])) != list(MIXEDCASE_LABELS):
+        raise RuntimeError("Mixed-case warm-start checkpoint labels do not match the current label order.")
+    checkpoint_model_type = str(checkpoint.get("model_type", "cnn"))
+    if checkpoint_model_type != model_type:
+        raise RuntimeError(
+            "Mixed-case warm-start checkpoint model type "
+            f"{checkpoint_model_type!r} does not match requested model type {model_type!r}."
+        )
+    if "model_state_dict" not in checkpoint:
+        raise RuntimeError("Mixed-case warm-start checkpoint is missing model_state_dict.")
+
+
 def make_mixedcase_loaders(
     batch_size: int,
     samples_per_class: int | None,
@@ -1970,8 +1985,8 @@ def train_mixedcase(
         transferred_from_folded = initialize_mixedcase_from_folded_checkpoint(model, model_type, device)
     if warm_start and MIXEDCASE_WEIGHTS_PATH.exists():
         checkpoint = torch.load(MIXEDCASE_WEIGHTS_PATH, map_location=device, weights_only=True)
-        if list(checkpoint.get("labels", [])) == list(MIXEDCASE_LABELS) and checkpoint.get("model_type", "cnn") == model_type:
-            model.load_state_dict(checkpoint["model_state_dict"])
+        validate_mixedcase_warm_start_checkpoint(checkpoint, model_type)
+        model.load_state_dict(checkpoint["model_state_dict"])
     if freeze_feature_layers_enabled:
         freeze_feature_layers(model)
     trainable_parameters = [parameter for parameter in model.parameters() if parameter.requires_grad]
@@ -1993,10 +2008,17 @@ def train_mixedcase(
             device,
         )
         best_accuracy = warm_start_metrics["test_accuracy"]
-        best_score = mixedcase_checkpoint_score(warm_start_metrics, checkpoint_objective)
-        best_state = {key: value.detach().cpu() for key, value in model.state_dict().items()}
-        best_per_class_accuracy = evaluate_per_class(model, test_loader, list(MIXEDCASE_LABELS), device)
-        best_metrics = {**warm_start_metrics, "source": "warm_start_seed"}
+        if mixedcase_checkpoint_meets_floors(
+            warm_start_metrics,
+            min_checkpoint_case_or_visual,
+            min_checkpoint_digit,
+            min_checkpoint_upper,
+            min_checkpoint_lower,
+        ):
+            best_score = mixedcase_checkpoint_score(warm_start_metrics, checkpoint_objective)
+            best_state = {key: value.detach().cpu() for key, value in model.state_dict().items()}
+            best_per_class_accuracy = evaluate_per_class(model, test_loader, list(MIXEDCASE_LABELS), device)
+            best_metrics = {**warm_start_metrics, "source": "warm_start_seed"}
         print(
             f"Warm-start mixed-case exact={best_accuracy:.2f}% "
             f"case_or_visual={warm_start_metrics['case_or_ambiguity_aware_test_accuracy']:.2f}%",

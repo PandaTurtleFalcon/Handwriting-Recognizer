@@ -36,6 +36,7 @@ from alnum_model import (
     mixedcase_labels_match_with_visual_ambiguity,
     mixedcase_type_logits,
     mixedcase_type_targets,
+    validate_mixedcase_warm_start_checkpoint,
 )
 from extra_alnum_datasets import load_labeled_image_folder
 
@@ -355,6 +356,43 @@ class ExtraAlnumDatasetTests(unittest.TestCase):
                 min_digit=95.0,
                 min_upper=84.0,
                 min_lower=73.0,
+            )
+        )
+
+    def test_mixedcase_warm_start_rejects_model_type_mismatch(self) -> None:
+        """Warm-start training should fail fast instead of random-initializing."""
+
+        with self.assertRaisesRegex(RuntimeError, "model type"):
+            validate_mixedcase_warm_start_checkpoint(
+                {"labels": list(MIXEDCASE_LABELS), "model_type": "cnn", "model_state_dict": {}},
+                "rescnn",
+            )
+
+    def test_mixedcase_warm_start_accepts_matching_checkpoint(self) -> None:
+        """A matching mixed-case checkpoint should pass warm-start validation."""
+
+        validate_mixedcase_warm_start_checkpoint(
+            {"labels": list(MIXEDCASE_LABELS), "model_type": "cnn", "model_state_dict": {}},
+            "cnn",
+        )
+
+    def test_mixedcase_warm_start_metrics_must_meet_checkpoint_floors(self) -> None:
+        """A raw warm-start seed below deployed floors should not be saveable."""
+
+        raw_warm_start_metrics = {
+            "case_or_ambiguity_aware_test_accuracy": 97.02,
+            "digit_test_accuracy": 94.92,
+            "upper_test_accuracy": 84.07,
+            "lower_test_accuracy": 72.65,
+        }
+
+        self.assertFalse(
+            mixedcase_checkpoint_meets_floors(
+                raw_warm_start_metrics,
+                min_case_or_visual=98.04,
+                min_digit=95.02,
+                min_upper=84.70,
+                min_lower=73.14,
             )
         )
 
