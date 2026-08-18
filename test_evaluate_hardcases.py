@@ -61,7 +61,7 @@ class HardCaseEvaluationTests(unittest.TestCase):
 
         with patch("scripts.evaluate_hardcases.load_web_models", return_value=(object(), object())):
             with patch("scripts.evaluate_hardcases.main.classify_files") as classifier:
-                classifier.return_value = [{"sequence": "look behind\nyou"}]
+                classifier.return_value = [{"sequence": "look behind\nyou", "raw_sequence": "xOO11eh'nd7o4"}]
 
                 report = evaluate_uploaded_fixtures(
                     [{"path": __file__, "target": "look behind you"}]
@@ -69,7 +69,9 @@ class HardCaseEvaluationTests(unittest.TestCase):
 
         self.assertEqual(report["total"], 1)
         self.assertEqual(report["exact_accuracy"], 100.0)
+        self.assertEqual(report["raw_exact_accuracy"], 0.0)
         self.assertEqual(report["results"][0]["font"], "uploaded")
+        self.assertEqual(report["results"][0]["raw_prediction"], "xOO11eh'nd7o4")
 
     def test_evaluate_uploaded_fixtures_skips_missing_files(self) -> None:
         """Missing local fixture files should not crash the evaluator."""

@@ -771,6 +771,10 @@ class BenchmarkSummaryTests(unittest.TestCase):
                 "exact_correct": 1,
                 "ambiguity_aware_accuracy": 100.0,
                 "ambiguity_aware_correct": 1,
+                "raw_exact_accuracy": 0.0,
+                "raw_exact_correct": 0,
+                "raw_ambiguity_aware_accuracy": 0.0,
+                "raw_ambiguity_aware_correct": 0,
                 "total": 1,
             },
         ) as evaluate:
@@ -782,6 +786,9 @@ class BenchmarkSummaryTests(unittest.TestCase):
         self.assertTrue(by_name["uploaded_hardcase_ambiguity"]["passed"])
         self.assertEqual(by_name["uploaded_hardcase_exact"]["correct"], 1)
         self.assertEqual(by_name["uploaded_hardcase_exact"]["total"], 1)
+        self.assertFalse(by_name["uploaded_hardcase_raw_exact"]["passed"])
+        self.assertFalse(by_name["uploaded_hardcase_raw_ambiguity"]["passed"])
+        self.assertEqual(by_name["uploaded_hardcase_raw_exact"]["correct"], 0)
 
     def test_summarizes_correction_memory_priority_coverage(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

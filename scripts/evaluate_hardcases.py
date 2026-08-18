@@ -92,6 +92,9 @@ class HardCaseResult:
     exact: bool
     ambiguity_aware: bool
     font: str = ""
+    raw_prediction: str | None = None
+    raw_exact: bool | None = None
+    raw_ambiguity_aware: bool | None = None
 
 
 def load_web_models() -> tuple[object, object]:
@@ -561,6 +564,7 @@ def evaluate_uploaded_fixtures(fixtures: list[dict[str, object]] | None = None) 
             continue
         classified = main.classify_files([(path.name, path.read_bytes())], model, device, save_sources=False)[0]
         prediction = str(classified.get("sequence", ""))
+        raw_prediction = str(classified.get("raw_sequence", prediction))
         results.append(
             HardCaseResult(
                 target=target,
@@ -568,16 +572,25 @@ def evaluate_uploaded_fixtures(fixtures: list[dict[str, object]] | None = None) 
                 exact=display_matches(target, prediction),
                 ambiguity_aware=sequence_matches_with_ambiguity(target, prediction),
                 font="uploaded",
+                raw_prediction=raw_prediction,
+                raw_exact=display_matches(target, raw_prediction),
+                raw_ambiguity_aware=sequence_matches_with_ambiguity(target, raw_prediction),
             )
         )
     exact = sum(result.exact for result in results)
     ambiguity = sum(result.ambiguity_aware for result in results)
+    raw_exact = sum(bool(result.raw_exact) for result in results)
+    raw_ambiguity = sum(bool(result.raw_ambiguity_aware) for result in results)
     return {
         "total": len(results),
         "exact_correct": exact,
         "exact_accuracy": 100.0 * exact / max(len(results), 1),
         "ambiguity_aware_correct": ambiguity,
         "ambiguity_aware_accuracy": 100.0 * ambiguity / max(len(results), 1),
+        "raw_exact_correct": raw_exact,
+        "raw_exact_accuracy": 100.0 * raw_exact / max(len(results), 1),
+        "raw_ambiguity_aware_correct": raw_ambiguity,
+        "raw_ambiguity_aware_accuracy": 100.0 * raw_ambiguity / max(len(results), 1),
         "results": [result.__dict__ for result in results],
     }
 

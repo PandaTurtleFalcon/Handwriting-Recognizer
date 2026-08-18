@@ -962,3 +962,9 @@ restored, so future improvement loops do not repeat known-bad blends.
   - Result: rejected/restored. The HASY-alias rerun reported real floor misses after the trainer diagnostic fix: validation `92.98%`, ambiguity-aware `99.04%`, digit `94.34%`, letter `92.14%`, and punctuation `95.71%`, all below the deployed floors.
   - Verification: artifacts were restored from the backup. Focused character tests passed (`45` tests), and the character module compiles.
   - Takeaway: the character model is also near a calibration/training plateau. A rejected floor-gate message exposed confusing trainer output, so the trainer now reports the specific floor names that blocked acceptance.
+
+- Uploaded fixture raw-vs-cleaned benchmark split:
+  - Code path: extended `scripts.evaluate_hardcases.evaluate_uploaded_fixtures()` to record `raw_sequence` metrics next to cleaned display metrics, and extended `scripts.summarize_benchmarks.summarize_uploaded_hardcases()` with `uploaded_hardcase_raw_exact` and `uploaded_hardcase_raw_ambiguity` gates.
+  - Result: no model artifacts changed. The saved rough `look behind you` upload still passes cleaned app output (`1/1`), but raw recognition is now visibly failing (`0/1`) with raw prediction `xOO11eh'nd7o4`.
+  - Verification: `test_evaluate_hardcases.py test_summarize_benchmarks.py` passed (`32` tests), `scripts/evaluate_hardcases.py --uploaded-fixtures --json` reported cleaned `100.00%` and raw `0.00%`, and `scripts/summarize_benchmarks.py --include-uploaded-hardcases --json` now includes the raw uploaded gates.
+  - Takeaway: this prevents future progress reports from overstating app-level recognition when exact cleanup allowlists are carrying the result.

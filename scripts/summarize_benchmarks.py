@@ -363,6 +363,20 @@ def summarize_uploaded_hardcases(target: float = 95.0) -> list[dict[str, object]
             report.get("ambiguity_aware_correct", 0),
             report.get("total", 0),
         ),
+        _counted_gate(
+            "uploaded_hardcase_raw_exact",
+            _float_or_none(report.get("raw_exact_accuracy")),
+            target,
+            report.get("raw_exact_correct", 0),
+            report.get("total", 0),
+        ),
+        _counted_gate(
+            "uploaded_hardcase_raw_ambiguity",
+            _float_or_none(report.get("raw_ambiguity_aware_accuracy")),
+            target,
+            report.get("raw_ambiguity_aware_correct", 0),
+            report.get("total", 0),
+        ),
     ]
 
 
