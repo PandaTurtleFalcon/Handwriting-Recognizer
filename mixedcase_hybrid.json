@@ -69,15 +69,15 @@
   "mixedcase_checkpoint_sha256": "75f3263d7d16344780d2a4efbb3f539959fd0b95a6f5930f74391a0f2aa964eb",
   "folded_checkpoint_sha256": "0dc123ab7b6962da8a7de49bb828d8db5524f8fda884bdd811a941479e477f40",
   "best_checkpoint": {
-    "test_accuracy": 91.28424752420382,
-    "case_or_ambiguity_aware_test_accuracy": 98.27505679884106,
+    "test_accuracy": 87.6902860128401,
+    "case_or_ambiguity_aware_test_accuracy": 98.01698819692376,
     "digit_test_accuracy": 95.02488294708324,
-    "upper_test_accuracy": 92.73272506858929,
-    "lower_test_accuracy": 80.21730293063307
+    "upper_test_accuracy": 84.39035283608754,
+    "lower_test_accuracy": 73.1032188920507
   },
   "notes": [
-    "Uses the folded 36-class alnum model for letter identity and the mixed-case model for upper/lower choice.",
-    "Digits stay on the calibrated mixed-case prediction because folded identity reduced EMNIST ByClass digit accuracy.",
+    "Uses the folded 36-class alnum model for letter identity only when the mixed-case model already predicts an alphabetic class.",
+    "Mixed-case digit top-1 predictions stay unchanged because folded identity reduced EMNIST ByClass digit accuracy when allowed to override them.",
     "Still below the 95% exact target; lower-case exact remains the largest verified gap."
   ]
 }

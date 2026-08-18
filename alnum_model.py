@@ -1430,6 +1430,7 @@ class HybridMixedcaseModel(nn.Module):
     def forward(self, inputs: torch.Tensor) -> torch.Tensor:
         mixed_outputs = self.mixedcase_model(inputs)
         folded_outputs = self.folded_model(inputs)
+        mixed_predictions = mixed_outputs.argmax(dim=1)
         folded_predictions = folded_outputs.argmax(dim=1)
         outputs = mixed_outputs.clone()
         row_max = outputs.max(dim=1).values + 1e-4
@@ -1437,7 +1438,7 @@ class HybridMixedcaseModel(nn.Module):
             folded_index = 10 + letter_index
             upper_index = 10 + letter_index
             lower_index = 36 + letter_index
-            identity_mask = folded_predictions == folded_index
+            identity_mask = (mixed_predictions >= 10) & (folded_predictions == folded_index)
             if not bool(identity_mask.any()):
                 continue
             lower_margin = mixed_outputs[:, lower_index] - mixed_outputs[:, upper_index]

@@ -46,7 +46,7 @@ def tiny_transform(image: Image.Image) -> torch.Tensor:
 class ExtraAlnumDatasetTests(unittest.TestCase):
     """Regression tests for optional local alphanumeric datasets."""
 
-    def test_hybrid_mixedcase_uses_folded_identity_for_letters_only(self) -> None:
+    def test_hybrid_mixedcase_keeps_mixedcase_digits(self) -> None:
         class FixedModel(nn.Module):
             def __init__(self, outputs: torch.Tensor) -> None:
                 super().__init__()
@@ -62,7 +62,7 @@ class ExtraAlnumDatasetTests(unittest.TestCase):
         mixed_outputs[2, MIXEDCASE_LABELS.index("b")] = 4.0
         mixed_outputs[2, MIXEDCASE_LABELS.index("B")] = 2.0
         folded_outputs = torch.full((3, len(LABELS)), -10.0)
-        folded_outputs[0, LABELS.index("7")] = 9.0
+        folded_outputs[0, LABELS.index("S")] = 9.0
         folded_outputs[1, LABELS.index("A")] = 9.0
         folded_outputs[2, LABELS.index("B")] = 9.0
 
