@@ -217,6 +217,72 @@ class CharacterCalibrationCliTests(unittest.TestCase):
             artifact = torch.load(output_path, map_location="cpu", weights_only=True)
             self.assertEqual(artifact["objective"], "letter_validation_accuracy")
 
+    def test_greedy_bias_defaults_to_non_regression_floors(self) -> None:
+        """A split gain should not be accepted by default if another split regresses."""
+
+        logits = torch.tensor(
+            [
+                [0.20, 0.10, 0.00],
+                [0.30, 0.20, 0.00],
+            ],
+            dtype=torch.float32,
+        )
+        targets = torch.tensor([0, 1], dtype=torch.long)
+        train_targets = torch.tensor([0, 1, 2], dtype=torch.long)
+        labels = ["0", "A", "."]
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            output_path = Path(temp_dir) / "character_logit_bias.pt"
+            with patch("scripts.calibrate_character_logits._validation_logits", return_value=(logits, targets, train_targets, labels)):
+                report = calibrate_character_greedy_bias(
+                    output_path=output_path,
+                    batch_size=2,
+                    labels_to_tune="A",
+                    deltas=(0.2,),
+                    rounds=1,
+                    min_improvement=0.01,
+                    objective="letter_validation_accuracy",
+                    write=True,
+                )
+
+            self.assertFalse(report["wrote"])
+            self.assertEqual(report["calibrated_objective"], report["base_objective"])
+            self.assertFalse(output_path.exists())
+
+    def test_greedy_bias_allows_explicitly_looser_floor(self) -> None:
+        """Callers can still opt into a looser floor for deliberate probes."""
+
+        logits = torch.tensor(
+            [
+                [0.20, 0.10, 0.00],
+                [0.30, 0.20, 0.00],
+            ],
+            dtype=torch.float32,
+        )
+        targets = torch.tensor([0, 1], dtype=torch.long)
+        train_targets = torch.tensor([0, 1, 2], dtype=torch.long)
+        labels = ["0", "A", "."]
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            output_path = Path(temp_dir) / "character_logit_bias.pt"
+            with patch("scripts.calibrate_character_logits._validation_logits", return_value=(logits, targets, train_targets, labels)):
+                report = calibrate_character_greedy_bias(
+                    output_path=output_path,
+                    batch_size=2,
+                    labels_to_tune="A",
+                    deltas=(0.2,),
+                    rounds=1,
+                    min_improvement=0.01,
+                    objective="letter_validation_accuracy",
+                    min_validation=0.0,
+                    min_digit=0.0,
+                    min_punctuation=0.0,
+                    write=True,
+                )
+
+            self.assertTrue(report["wrote"])
+            self.assertGreater(report["calibrated_objective"], report["base_objective"])
+
     def test_greedy_bias_can_evaluate_after_existing_pair_rules(self) -> None:
         """Stacked greedy mode should stamp the pair-rule artifact it measured."""
 
@@ -363,6 +429,41 @@ class CharacterCalibrationCliTests(unittest.TestCase):
                     min_digit=0.0,
                     min_letter=0.0,
                     min_punctuation=0.0,
+                    write=True,
+                )
+
+            self.assertFalse(report["wrote"])
+            self.assertEqual(report["calibrated_objective"], report["base_objective"])
+            self.assertFalse(output_path.exists())
+
+    def test_pair_rules_default_to_non_regression_floors(self) -> None:
+        """Pair-rule mode should preserve every split unless a floor is explicit."""
+
+        logits = torch.tensor(
+            [
+                [0.40, 0.30, 0.00],
+                [0.40, 0.50, 0.00],
+            ],
+            dtype=torch.float32,
+        )
+        targets = torch.tensor([0, 1], dtype=torch.long)
+        train_targets = torch.tensor([0, 1, 2], dtype=torch.long)
+        labels = ["0", "O", "."]
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            output_path = Path(temp_dir) / "character_pair_rules.json"
+            with (
+                patch("scripts.calibrate_character_logits._validation_logits", return_value=(logits, targets, train_targets, labels)),
+                patch("scripts.calibrate_character_logits.LOGIT_BIAS_PATH", Path(temp_dir) / "missing.pt"),
+            ):
+                report = calibrate_character_pair_rules(
+                    output_path=output_path,
+                    batch_size=2,
+                    families=("0O",),
+                    thresholds=(-0.15,),
+                    rounds=1,
+                    min_improvement=0.01,
+                    objective="letter_validation_accuracy",
                     write=True,
                 )
 

@@ -823,3 +823,9 @@ restored, so future improvement loops do not repeat known-bad blends.
   - Command shape: reran `scripts/calibrate_character_logits.py --pair-rules --dry-run` with current visual-twin families, objective `letter_validation_accuracy`, and floors for overall `>=94.16%`, ambiguity `>=99.10%`, digit `>=95.05%`, letter `>=93.59%`, and punctuation `>=96.05%`.
   - Result: rejected/no-op. The search found no new safe rule (`improvement=0.0`, `new_steps=[]`), leaving character exact at `94.1666%` and character-letter exact at `93.5908%`.
   - Takeaway: current character pair rules are tapped out under the present safety floors; future movement likely needs new data or a changed model objective.
+
+- Character calibration non-regression floor guard:
+  - Code path: changed greedy character bias and pair-rule calibration so omitted split floors default to the current baseline metrics for that run. Explicit `--min-*` values still override the baseline for deliberate probes.
+  - Result: future letter-targeted character searches can no longer improve `letter_validation_accuracy` while quietly regressing overall, digit, punctuation, or ambiguity metrics. A real greedy-bias dry-run over visual twins with omitted floors stayed a no-op (`improvement=0.0`, `steps=[]`), confirming the current artifact remains unchanged.
+  - Verification: `test_calibrate_character_logits.py` and `test_summarize_benchmarks.py` passed (`27 passed`).
+  - Takeaway: this is a safety/tooling improvement, not a metric gain. It makes the next autonomous searches more trustworthy before attempting larger data or architecture changes.

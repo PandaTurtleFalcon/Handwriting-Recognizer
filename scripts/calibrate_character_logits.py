@@ -135,11 +135,11 @@ def calibrate_character_pair_rules(
     rounds: int = 10,
     min_improvement: float = 0.01,
     objective: str = "letter_validation_accuracy",
-    min_validation: float = 0.0,
-    min_ambiguity: float = 98.8,
-    min_digit: float = 0.0,
-    min_letter: float = 0.0,
-    min_punctuation: float = 95.0,
+    min_validation: float | None = None,
+    min_ambiguity: float | None = None,
+    min_digit: float | None = None,
+    min_letter: float | None = None,
+    min_punctuation: float | None = None,
     write: bool = True,
 ) -> dict[str, object]:
     """Greedily tune ordered pairwise visual-twin rules for character logits."""
@@ -153,6 +153,11 @@ def calibrate_character_pair_rules(
     base_breakdown = _breakdown(starting_predictions, targets, labels)
     if objective not in base_breakdown:
         raise ValueError(f"Unknown character calibration objective: {objective}")
+    min_validation = _floor_or_baseline(min_validation, base_breakdown, "validation_accuracy")
+    min_ambiguity = _floor_or_baseline(min_ambiguity, base_breakdown, "ambiguity_aware_validation_accuracy")
+    min_digit = _floor_or_baseline(min_digit, base_breakdown, "digit_validation_accuracy")
+    min_letter = _floor_or_baseline(min_letter, base_breakdown, "letter_validation_accuracy")
+    min_punctuation = _floor_or_baseline(min_punctuation, base_breakdown, "punctuation_validation_accuracy")
     best_predictions = starting_predictions.clone()
     best_breakdown = base_breakdown
     label_to_index = {label: index for index, label in enumerate(labels)}
@@ -282,6 +287,18 @@ def _apply_pair_rules_to_predictions(
     return predictions
 
 
+def _floor_or_baseline(
+    requested: float | None,
+    baseline: dict[str, float],
+    metric_name: str,
+) -> float:
+    """Use the current baseline as the default floor to prevent regressions."""
+
+    if requested is not None:
+        return float(requested)
+    return float(baseline.get(metric_name, 0.0))
+
+
 def _load_existing_pair_rules(output_path: Path, labels: list[str]) -> list[dict[str, object]]:
     """Return existing matching character pair rules for continuation runs."""
 
@@ -382,11 +399,11 @@ def calibrate_character_greedy_bias(
     rounds: int = 6,
     min_improvement: float = 0.01,
     objective: str = "validation_accuracy",
-    min_validation: float = 0.0,
-    min_ambiguity: float = 98.8,
-    min_digit: float = 0.0,
-    min_letter: float = 0.0,
-    min_punctuation: float = 95.0,
+    min_validation: float | None = None,
+    min_ambiguity: float | None = None,
+    min_digit: float | None = None,
+    min_letter: float | None = None,
+    min_punctuation: float | None = None,
     include_pair_rules: bool = False,
     write: bool = True,
 ) -> dict[str, object]:
@@ -400,6 +417,11 @@ def calibrate_character_greedy_bias(
     base_breakdown = _breakdown(base_predictions, targets, labels)
     if objective not in base_breakdown:
         raise ValueError(f"Unknown character calibration objective: {objective}")
+    min_validation = _floor_or_baseline(min_validation, base_breakdown, "validation_accuracy")
+    min_ambiguity = _floor_or_baseline(min_ambiguity, base_breakdown, "ambiguity_aware_validation_accuracy")
+    min_digit = _floor_or_baseline(min_digit, base_breakdown, "digit_validation_accuracy")
+    min_letter = _floor_or_baseline(min_letter, base_breakdown, "letter_validation_accuracy")
+    min_punctuation = _floor_or_baseline(min_punctuation, base_breakdown, "punctuation_validation_accuracy")
     best_bias = starting_bias.clone()
     best_breakdown = base_breakdown
     tuned_indices = [labels.index(label) for label in dict.fromkeys(labels_to_tune) if label in labels]
@@ -548,11 +570,11 @@ def main() -> None:
         ],
         help="Metric to improve in greedy mode while preserving the configured floors.",
     )
-    parser.add_argument("--min-validation", type=float, default=0.0)
-    parser.add_argument("--min-ambiguity", type=float, default=98.8)
-    parser.add_argument("--min-digit", type=float, default=0.0)
-    parser.add_argument("--min-letter", type=float, default=0.0)
-    parser.add_argument("--min-punctuation", type=float, default=95.0)
+    parser.add_argument("--min-validation", type=float, default=None)
+    parser.add_argument("--min-ambiguity", type=float, default=None)
+    parser.add_argument("--min-digit", type=float, default=None)
+    parser.add_argument("--min-letter", type=float, default=None)
+    parser.add_argument("--min-punctuation", type=float, default=None)
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument(
         "--require-app-gates",
