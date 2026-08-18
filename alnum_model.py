@@ -1125,6 +1125,37 @@ def mixedcase_auxiliary_loss(
     return loss
 
 
+class FocalCrossEntropyLoss(nn.Module):
+    """Cross-entropy with optional focal scaling for hard mixed-case samples."""
+
+    def __init__(
+        self,
+        weight: torch.Tensor | None = None,
+        label_smoothing: float = 0.0,
+        gamma: float = 0.0,
+    ) -> None:
+        super().__init__()
+        self.register_buffer("weight", weight if weight is not None else None)
+        self.label_smoothing = label_smoothing
+        self.gamma = max(float(gamma), 0.0)
+
+    def forward(self, logits: torch.Tensor, targets: torch.Tensor) -> torch.Tensor:
+        cross_entropy = nn.functional.cross_entropy(
+            logits,
+            targets,
+            weight=self.weight,
+            reduction="none",
+            label_smoothing=self.label_smoothing,
+        )
+        if self.gamma <= 0.0:
+            return cross_entropy.mean()
+        with torch.no_grad():
+            probabilities = torch.softmax(logits, dim=1)
+            target_probabilities = probabilities.gather(1, targets.unsqueeze(1)).squeeze(1).clamp_min(1e-6)
+            focal_scale = torch.pow(1.0 - target_probabilities, self.gamma)
+        return (focal_scale * cross_entropy).mean()
+
+
 def evaluate_mixedcase_breakdown(
     model: nn.Module,
     loader: DataLoader,
@@ -1809,6 +1840,7 @@ def save_mixedcase_checkpoint(
     folded_loss_weight: float = 0.0,
     type_loss_weight: float = 0.0,
     label_smoothing: float = 0.03,
+    focal_gamma: float = 0.0,
     transfer_from_folded: bool = False,
     class_balance_strength: float = 0.0,
     freeze_feature_layers: bool = False,
@@ -1845,6 +1877,7 @@ def save_mixedcase_checkpoint(
                 "folded_loss_weight": folded_loss_weight,
                 "type_loss_weight": type_loss_weight,
                 "label_smoothing": label_smoothing,
+                "focal_gamma": focal_gamma,
                 "transfer_from_folded": transfer_from_folded,
                 "class_balance_strength": class_balance_strength,
                 "freeze_feature_layers": freeze_feature_layers,
@@ -1881,6 +1914,7 @@ def save_mixedcase_checkpoint(
                 "folded_loss_weight": folded_loss_weight,
                 "type_loss_weight": type_loss_weight,
                 "label_smoothing": label_smoothing,
+                "focal_gamma": focal_gamma,
                 "transfer_from_folded": transfer_from_folded,
                 "class_balance_strength": class_balance_strength,
                 "freeze_feature_layers": freeze_feature_layers,
@@ -1924,6 +1958,7 @@ def train_mixedcase(
     folded_loss_weight: float = 0.0,
     type_loss_weight: float = 0.0,
     label_smoothing: float = 0.03,
+    focal_gamma: float = 0.0,
     transfer_from_folded: bool = False,
     class_balance_strength: float = 0.0,
     freeze_feature_layers_enabled: bool = False,
@@ -1976,9 +2011,10 @@ def train_mixedcase(
         class_counts,
         class_balance_strength,
     )
-    criterion = nn.CrossEntropyLoss(
+    criterion = FocalCrossEntropyLoss(
         weight=loss_weights.to(device) if loss_weights is not None else None,
         label_smoothing=label_smoothing,
+        gamma=focal_gamma,
     )
     transferred_from_folded = False
     if transfer_from_folded and not warm_start:
@@ -2127,6 +2163,7 @@ def train_mixedcase(
             folded_loss_weight,
             type_loss_weight,
             label_smoothing,
+            focal_gamma,
             transferred_from_folded,
             class_balance_strength,
             freeze_feature_layers_enabled,
@@ -2415,6 +2452,12 @@ def main() -> None:
         help="Label smoothing used by mixed-case cross-entropy training.",
     )
     parser.add_argument(
+        "--mixedcase-focal-gamma",
+        type=float,
+        default=0.0,
+        help="Optional focal-loss gamma for hard mixed-case examples.",
+    )
+    parser.add_argument(
         "--mixedcase-transfer-from-folded",
         action="store_true",
         help="Initialize a fresh mixed-case CNN from the folded alnum checkpoint before training.",
@@ -2486,6 +2529,7 @@ def main() -> None:
             folded_loss_weight=args.mixedcase_folded_loss_weight,
             type_loss_weight=args.mixedcase_type_loss_weight,
             label_smoothing=args.mixedcase_label_smoothing,
+            focal_gamma=args.mixedcase_focal_gamma,
             transfer_from_folded=args.mixedcase_transfer_from_folded,
             class_balance_strength=args.mixedcase_class_balance_strength,
             freeze_feature_layers_enabled=args.mixedcase_freeze_feature_layers,

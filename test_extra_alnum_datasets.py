@@ -11,6 +11,7 @@ from PIL import Image, ImageDraw
 
 from alnum_model import (
     AugmentedTensorDataset,
+    FocalCrossEntropyLoss,
     HybridMixedcaseModel,
     LABELS,
     MIXEDCASE_LABELS,
@@ -325,6 +326,24 @@ class ExtraAlnumDatasetTests(unittest.TestCase):
         self.assertLess(weights[0].item(), weights[1].item())
         self.assertAlmostEqual(weights[0].item(), 0.7905694, places=5)
         self.assertAlmostEqual(weights[1].item(), 1.5811388, places=5)
+
+    def test_focal_cross_entropy_zero_gamma_matches_cross_entropy(self) -> None:
+        logits = torch.tensor([[2.0, 0.0, -1.0], [0.0, 1.0, 3.0]])
+        targets = torch.tensor([0, 2])
+
+        focal_loss = FocalCrossEntropyLoss(gamma=0.0)(logits, targets)
+        cross_entropy = nn.functional.cross_entropy(logits, targets)
+
+        self.assertAlmostEqual(float(focal_loss.item()), float(cross_entropy.item()), places=6)
+
+    def test_focal_cross_entropy_downweights_easy_examples(self) -> None:
+        logits = torch.tensor([[5.0, -1.0], [0.1, 0.0]])
+        targets = torch.tensor([0, 1])
+
+        plain_loss = FocalCrossEntropyLoss(gamma=0.0)(logits, targets)
+        focal_loss = FocalCrossEntropyLoss(gamma=1.5)(logits, targets)
+
+        self.assertLess(float(focal_loss.item()), float(plain_loss.item()))
 
     def test_mixedcase_checkpoint_score_can_use_balanced_group_accuracy(self) -> None:
         """Balanced checkpoint selection should optimize the weakest split."""
