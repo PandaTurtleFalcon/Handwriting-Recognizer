@@ -240,6 +240,7 @@ class ContextRulesTests(unittest.TestCase):
         self.assertEqual(cleanup_context("44").display, "Yy")
         self.assertEqual(cleanup_context("xOO11eh'nd").display, "look behind")
         self.assertEqual(cleanup_context("xOOh:1i").display, "look behind")
+        self.assertEqual(cleanup_context("lOokbeh'nd").display, "look behind")
         self.assertEqual(cleanup_context("iookbehind").display, "look behind")
         self.assertEqual(cleanup_context("1ooKbehind").display, "look behind")
         self.assertEqual(cleanup_context("100Kbehind").display, "look behind")
@@ -247,6 +248,7 @@ class ContextRulesTests(unittest.TestCase):
         self.assertEqual(cleanup_context("1ookb9HiNd").display, "look behind")
         self.assertEqual(cleanup_context("1ookbQHiNd").display, "look behind")
         self.assertEqual(cleanup_context("7o4").display, "you")
+        self.assertEqual(cleanup_context("yo4").display, "you")
         self.assertEqual(cleanup_context("4oU").display, "you")
         self.assertEqual(cleanup_context("Y0U").display, "you")
         self.assertEqual(cleanup_context("YOu").display, "you")
@@ -285,6 +287,14 @@ class ContextRulesTests(unittest.TestCase):
         """The reported xOOh:1i row should clean to look behind."""
 
         cleanup = cleanup_context("xOOh:1i7o4", ["xOOh:1i", "7o4"])
+
+        self.assertEqual(cleanup.display, "look behind\nyou")
+        self.assertEqual(cleanup.rows, ["look behind", "you"])
+
+    def test_common_word_cleanup_handles_current_model_look_behind_variant(self) -> None:
+        """The current model replay of the saved upload should still clean."""
+
+        cleanup = cleanup_context("lOokbeh'ndyo4", ["lOokbeh'nd", "yo4"])
 
         self.assertEqual(cleanup.display, "look behind\nyou")
         self.assertEqual(cleanup.rows, ["look behind", "you"])
