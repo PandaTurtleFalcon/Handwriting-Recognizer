@@ -841,3 +841,9 @@ restored, so future improvement loops do not repeat known-bad blends.
   - Result: future mixed-case searches can target lowercase or uppercase without allowing unrelated digit/letter-group regressions. Real dry-runs did not produce a deployable gain: lower-only greedy bias found no safe steps, upper-only greedy bias found a tiny `Q -0.12` step (`+0.0032%` upper exact) below the write threshold, and upper/lower-only pair rules found no new safe rules.
   - Verification: `test_calibrate_mixedcase_logits.py` passed (`16 passed`). The deployed artifacts were not changed.
   - Takeaway: mixed-case exact is still not calibration-limited under these simple knobs. The next higher-yield route remains a model/objective change or more real correction data for the worst families (`l/1/I`, `0/O/o`, `S/s/5`, and lower-case `c/m/u/f/p`).
+
+- Mixed-case hybrid baseline-floor guard:
+  - Code path: changed `scripts/calibrate_mixedcase_hybrid.py` so omitted floors default to the deployed hybrid baseline metrics for that run, matching the newer character and mixed-case logit calibrators.
+  - Result: a threshold candidate can no longer improve the selected objective while silently lowering total exact, case-or-visual, digit, uppercase, or lowercase exactness unless an explicit floor is provided. A real deployed-hybrid dry-run with objective `balanced_group_accuracy` found no safe steps (`improvement=0.0`, `steps=[]`), so `mixedcase_hybrid.json` stayed unchanged.
+  - Verification: `test_calibrate_mixedcase_hybrid.py` and `test_calibrate_mixedcase_logits.py` passed together (`20 passed`).
+  - Takeaway: threshold/hybrid calibration is also tapped out under non-regression floors. The remaining mixed-case gap needs a stronger data or architecture step, not more threshold searching.

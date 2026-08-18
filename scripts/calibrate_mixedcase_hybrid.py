@@ -216,6 +216,18 @@ def _objective(metrics: dict[str, float], name: str) -> float:
     return float(metrics[name])
 
 
+def _floor_or_baseline(
+    requested: float | None,
+    baseline: dict[str, float],
+    metric_name: str,
+) -> float:
+    """Use the current baseline as the default floor to avoid regressions."""
+
+    if requested is not None:
+        return float(requested)
+    return float(baseline.get(metric_name, 0.0))
+
+
 def _meets_floors(
     metrics: dict[str, float],
     min_test: float,
@@ -271,11 +283,11 @@ def calibrate_hybrid(
     rounds: int = 6,
     objective: str = "test_accuracy",
     min_improvement: float = 0.01,
-    min_test: float = 0.0,
-    min_case_or_visual: float = 97.0,
-    min_digit: float = 95.0,
-    min_upper: float = 84.0,
-    min_lower: float = 73.0,
+    min_test: float | None = None,
+    min_case_or_visual: float | None = None,
+    min_digit: float | None = None,
+    min_upper: float | None = None,
+    min_lower: float | None = None,
     write: bool = True,
 ) -> dict[str, object]:
     """Greedily tune hybrid thresholds while preserving metric floors."""
@@ -284,6 +296,15 @@ def calibrate_hybrid(
     artifact = _load_hybrid_artifact(output_path)
     base_predictions = hybrid_predictions(mixed_outputs, folded_outputs, artifact)
     base_metrics = hybrid_metrics(base_predictions, targets, labels)
+    min_test = _floor_or_baseline(min_test, base_metrics, "test_accuracy")
+    min_case_or_visual = _floor_or_baseline(
+        min_case_or_visual,
+        base_metrics,
+        "case_or_ambiguity_aware_test_accuracy",
+    )
+    min_digit = _floor_or_baseline(min_digit, base_metrics, "digit_test_accuracy")
+    min_upper = _floor_or_baseline(min_upper, base_metrics, "upper_test_accuracy")
+    min_lower = _floor_or_baseline(min_lower, base_metrics, "lower_test_accuracy")
     best_artifact = artifact
     best_metrics = base_metrics
     steps: list[dict[str, object]] = []
@@ -404,11 +425,11 @@ def main() -> None:
     parser.add_argument("--rounds", type=int, default=6)
     parser.add_argument("--objective", default="test_accuracy", choices=sorted(METRIC_NAMES))
     parser.add_argument("--min-improvement", type=float, default=0.01)
-    parser.add_argument("--min-test", type=float, default=0.0)
-    parser.add_argument("--min-case-or-visual", type=float, default=97.0)
-    parser.add_argument("--min-digit", type=float, default=95.0)
-    parser.add_argument("--min-upper", type=float, default=84.0)
-    parser.add_argument("--min-lower", type=float, default=73.0)
+    parser.add_argument("--min-test", type=float, default=None)
+    parser.add_argument("--min-case-or-visual", type=float, default=None)
+    parser.add_argument("--min-digit", type=float, default=None)
+    parser.add_argument("--min-upper", type=float, default=None)
+    parser.add_argument("--min-lower", type=float, default=None)
     parser.add_argument("--write", action="store_true")
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--require-app-gates", action="store_true")

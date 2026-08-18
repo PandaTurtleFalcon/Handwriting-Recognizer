@@ -1,12 +1,14 @@
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 import torch
 
 from alnum_model import LABELS, MIXEDCASE_LABELS
 from scripts.calibrate_mixedcase_hybrid import (
     _load_hybrid_artifact,
+    calibrate_hybrid,
     hybrid_metrics,
     hybrid_predictions,
 )
@@ -79,6 +81,59 @@ class MixedcaseHybridCalibrationTests(unittest.TestCase):
 
         self.assertEqual(artifact["labels"], list(MIXEDCASE_LABELS))
         self.assertEqual(artifact["letter_case_threshold"], 0.0)
+
+    def test_calibrate_hybrid_defaults_to_non_regression_floors(self) -> None:
+        """A lower split gain should not be accepted when upper exact regresses."""
+
+        mixed_outputs = torch.full((4, len(MIXEDCASE_LABELS)), -10.0)
+        folded_outputs = torch.full((4, len(LABELS)), -10.0)
+        labels = list(MIXEDCASE_LABELS)
+        upper_a = labels.index("A")
+        lower_a = labels.index("a")
+        folded_a = LABELS.index("A")
+        targets = torch.tensor([upper_a, upper_a, lower_a, lower_a])
+        for index in range(4):
+            mixed_outputs[index, upper_a] = 5.0
+            mixed_outputs[index, lower_a] = 4.0
+            folded_outputs[index, folded_a] = 5.0
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            output_path = Path(temp_dir) / "mixedcase_hybrid.json"
+            with (
+                patch(
+                    "scripts.calibrate_mixedcase_hybrid._model_outputs",
+                    return_value=(mixed_outputs, folded_outputs, targets, labels),
+                ),
+                patch(
+                    "scripts.calibrate_mixedcase_hybrid._load_hybrid_artifact",
+                    return_value={
+                        "enabled": True,
+                        "labels": labels,
+                        "letter_case_threshold": 0.0,
+                        "folded_confidence_threshold": 0.0,
+                        "folded_margin_threshold": 0.0,
+                        "letter_case_thresholds": {},
+                        "folded_confidence_thresholds": {},
+                        "folded_margin_thresholds": {},
+                    },
+                ),
+            ):
+                report = calibrate_hybrid(
+                    output_path=output_path,
+                    batch_size=4,
+                    labels_to_tune="A",
+                    case_thresholds=(-2.0,),
+                    confidence_thresholds=(),
+                    margin_thresholds=(),
+                    rounds=1,
+                    objective="lower_test_accuracy",
+                    min_improvement=0.01,
+                    write=True,
+                )
+
+        self.assertFalse(report["wrote"])
+        self.assertEqual(report["calibrated_objective"], report["base_objective"])
+        self.assertFalse(output_path.exists())
 
 
 if __name__ == "__main__":
