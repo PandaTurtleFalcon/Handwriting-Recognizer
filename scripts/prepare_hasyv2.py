@@ -18,6 +18,20 @@ from pathlib import Path
 
 ALNUM_LABELS = set("0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ")
 ASCII_LABELS = set("0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz+-/<>[]|")
+LATEX_ASCII_ALIASES = {
+    r"\backslash": "/",
+    r"\bullet": ".",
+    r"\cdot": ".",
+    r"\ddots": ".",
+    r"\dots": ".",
+    r"\dotsc": ".",
+    r"\iddots": ".",
+    r"\mid": "|",
+    r"\nmid": "|",
+    r"\prime": "'",
+    r"\setminus": "/",
+    r"\vdots": ":",
+}
 
 
 def alnum_label(label: str) -> str | None:
@@ -32,6 +46,8 @@ def alnum_label(label: str) -> str | None:
 def ascii_label(label: str) -> str | None:
     """Map a HASY label into the broader ASCII character label set."""
 
+    if label in LATEX_ASCII_ALIASES:
+        return str(ord(LATEX_ASCII_ALIASES[label]))
     if len(label) == 1 and label in ASCII_LABELS:
         return str(ord(label))
     return None
