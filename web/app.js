@@ -497,6 +497,13 @@ function renderCorrectionReadiness(payload) {
   }
   practiceReadinessEl.replaceChildren();
   practiceReadinessEl.append(makeElement("div", "practice-coverage-summary", "Training readiness"));
+  const summary = payload.summary || {};
+  if (text(summary.recommended_queue)) {
+    const queueName = practiceModeName(text(summary.recommended_queue));
+    const label = text(summary.recommended_label);
+    const queueText = label ? `Primary queue: ${queueName} (${label})` : `Primary queue: ${queueName}`;
+    practiceReadinessEl.append(makeElement("div", "practice-needed-summary", queueText));
+  }
   const grid = makeElement("div", "readiness-grid");
   grid.append(renderReadinessCard("Character", payload.character || {}, "character"));
   grid.append(renderReadinessCard("Folded", payload.folded_alnum || {}, "folded_alnum"));

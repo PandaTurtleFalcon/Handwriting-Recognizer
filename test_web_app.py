@@ -935,6 +935,8 @@ class WebAppRenderingTests(unittest.TestCase):
         self.assertIn("`${sampleCount}/${targetSamples} samples", js)
         self.assertIn("samples still needed", js)
         self.assertIn("renderCorrectionReadiness", js)
+        self.assertIn("summary.recommended_queue", js)
+        self.assertIn("Primary queue:", js)
         self.assertIn("handlePracticeShortcut", js)
         self.assertIn("submitPracticeSample", js)
         self.assertIn('event.key === "Escape"', js)
@@ -1820,6 +1822,10 @@ class WebAppRenderingTests(unittest.TestCase):
         self.assertIn("next_needed", report["character"])
         self.assertIn("readiness", report["folded_alnum"])
         self.assertIn("readiness", report["mixedcase"])
+        self.assertEqual(report["summary"]["recommended_queue"], "mixedcase")
+        self.assertEqual(report["summary"]["recommended_label"], "I")
+        self.assertEqual(report["summary"]["recommended_batch_labels"][:3], ["I", "0", "O"])
+        self.assertEqual(report["queue_recommendations"][0]["queue"], "mixedcase")
 
     def test_correction_coverage_report_can_target_mixedcase_queue(self) -> None:
         """Practice coverage should expose the mixed-case queue directly."""

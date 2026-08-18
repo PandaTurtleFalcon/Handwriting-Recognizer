@@ -359,6 +359,50 @@ def correction_recommendation(
     return {"recommended_action": "collect_corrections", "recommended_label": next_label}
 
 
+def correction_queue_recommendation(
+    name: str,
+    readiness: dict[str, int | float | bool],
+    next_needed: list[dict[str, int | float | str]],
+    not_ready_labels: list[str],
+    recommendation: dict[str, str | None],
+) -> dict[str, object]:
+    """Return a queue-level correction recommendation with batch totals."""
+
+    batch_labels = [
+        str(item["label"])
+        for item in next_needed
+        if isinstance(item, dict) and item.get("label") is not None
+    ]
+    batch_samples = sum(int(item["count"]) for item in next_needed)
+    batch_target_samples = sum(int(item["target"]) for item in next_needed)
+    batch_needed_samples = sum(int(item["needed"]) for item in next_needed)
+    batch_coverage_percent = 100.0 * batch_samples / batch_target_samples if batch_target_samples else 100.0
+    needed_samples = int(readiness.get("needed_samples", 0))
+    not_ready_label_count = int(readiness.get("not_ready_labels", 0))
+    action = str(recommendation.get("recommended_action") or "collect_corrections")
+    blocked_reason = (
+        ""
+        if action == "train_corrections"
+        else f"Need {needed_samples} more labeled samples across {not_ready_label_count} labels before training."
+    )
+    return {
+        "queue": name,
+        "ready": bool(readiness.get("ready")),
+        "recommended_action": action,
+        "recommended_label": recommendation.get("recommended_label"),
+        "recommended_batch_labels": batch_labels,
+        "recommended_batch_size": len(batch_labels),
+        "recommended_batch_samples": batch_samples,
+        "recommended_batch_target_samples": batch_target_samples,
+        "recommended_batch_needed_samples": batch_needed_samples,
+        "recommended_batch_coverage_percent": batch_coverage_percent,
+        "needed_samples": needed_samples,
+        "not_ready_label_count": len(not_ready_labels),
+        "not_ready_label_list": not_ready_labels,
+        "training_blocked_reason": blocked_reason,
+    }
+
+
 def format_readiness_summary(name: str, summary: dict[str, int | bool]) -> str:
     """Return a compact readiness line for correction dry-runs."""
 
@@ -432,34 +476,38 @@ def dry_run_report(
     mixed_next_needed = next_needed_labels(mixed_counts, mixed_priority_labels)
     mixed_not_ready_labels = not_ready_label_list(mixed_counts, mixed_priority_labels)
     mixed_recommendation = correction_recommendation(mixed_readiness, mixed_next_needed)
-    recommendations = [character_recommendation, folded_recommendation, mixed_recommendation]
+    queue_recommendations = [
+        correction_queue_recommendation(
+            "mixedcase",
+            mixed_readiness,
+            mixed_next_needed,
+            mixed_not_ready_labels,
+            mixed_recommendation,
+        ),
+        correction_queue_recommendation(
+            "character",
+            character_readiness,
+            character_next_needed,
+            character_not_ready_labels,
+            character_recommendation,
+        ),
+        correction_queue_recommendation(
+            "folded_alnum",
+            folded_readiness,
+            folded_next_needed,
+            folded_not_ready_labels,
+            folded_recommendation,
+        ),
+    ]
     summary_action = (
         "train_corrections"
-        if all(item["recommended_action"] == "train_corrections" for item in recommendations)
+        if all(item["recommended_action"] == "train_corrections" for item in queue_recommendations)
         else "collect_corrections"
     )
     summary_ready = summary_action == "train_corrections"
-    summary_label = next(
-        (item["recommended_label"] for item in recommendations if item["recommended_label"] is not None),
-        None,
-    )
-    summary_batch_labels = [
-        str(item["label"])
-        for item in character_next_needed
-        if isinstance(item, dict) and item.get("label") is not None
-    ]
-    summary_batch_samples = sum(int(item["count"]) for item in character_next_needed)
-    summary_batch_target_samples = sum(int(item["target"]) for item in character_next_needed)
-    summary_batch_needed_samples = sum(int(item["needed"]) for item in character_next_needed)
-    summary_batch_coverage_percent = (
-        100.0 * summary_batch_samples / summary_batch_target_samples if summary_batch_target_samples else 100.0
-    )
-    summary_needed_samples = int(character_readiness.get("needed_samples", 0))
-    summary_not_ready_labels = int(character_readiness.get("not_ready_labels", 0))
-    summary_blocked_reason = (
-        ""
-        if summary_action == "train_corrections"
-        else f"Need {summary_needed_samples} more labeled samples across {summary_not_ready_labels} labels before training."
+    primary_recommendation = next(
+        (item for item in queue_recommendations if item["recommended_action"] == summary_action),
+        queue_recommendations[0],
     )
     return {
         "summary": {
@@ -468,17 +516,19 @@ def dry_run_report(
             "mixedcase_items": mixed_item_count,
             "ready": summary_ready,
             "recommended_action": summary_action,
-            "recommended_label": summary_label,
-            "recommended_batch_labels": summary_batch_labels,
-            "not_ready_label_count": len(character_not_ready_labels),
-            "not_ready_label_list": character_not_ready_labels,
-            "recommended_batch_size": len(summary_batch_labels),
-            "recommended_batch_samples": summary_batch_samples,
-            "recommended_batch_target_samples": summary_batch_target_samples,
-            "recommended_batch_needed_samples": summary_batch_needed_samples,
-            "recommended_batch_coverage_percent": summary_batch_coverage_percent,
-            "training_blocked_reason": summary_blocked_reason,
+            "recommended_queue": primary_recommendation["queue"],
+            "recommended_label": primary_recommendation["recommended_label"],
+            "recommended_batch_labels": primary_recommendation["recommended_batch_labels"],
+            "not_ready_label_count": primary_recommendation["not_ready_label_count"],
+            "not_ready_label_list": primary_recommendation["not_ready_label_list"],
+            "recommended_batch_size": primary_recommendation["recommended_batch_size"],
+            "recommended_batch_samples": primary_recommendation["recommended_batch_samples"],
+            "recommended_batch_target_samples": primary_recommendation["recommended_batch_target_samples"],
+            "recommended_batch_needed_samples": primary_recommendation["recommended_batch_needed_samples"],
+            "recommended_batch_coverage_percent": primary_recommendation["recommended_batch_coverage_percent"],
+            "training_blocked_reason": primary_recommendation["training_blocked_reason"],
         },
+        "queue_recommendations": queue_recommendations,
         "character": {
             "coverage": dict(character_counts),
             "priority_labels": list(dict.fromkeys(character_priority_labels)),

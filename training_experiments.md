@@ -1161,3 +1161,9 @@ restored, so future improvement loops do not repeat known-bad blends.
   - Result: no artifact changed. Baseline exact was `94.1477%`; one-pixel cross averaging fell to `92.8619%`, diagonal one-pixel averaging fell to `92.3608%`, and two-pixel cross averaging fell to `92.4364%`. Digit, letter, and punctuation splits all regressed.
   - Verification: the probe used the deployed character model, current metric extra roots, and the same stratified validation split as the character diagnostics.
   - Takeaway: naive TTA is harmful because the current checkpoint is sensitive to centering and shift averaging blurs already-narrow visual-twin margins. Future inference-side work should use learned confidence/geometry gates, not unconditional crop shifts.
+
+- Correction-readiness queue routing fix:
+  - Code path: updated the correction dry-run/reporting workflow to expose per-queue recommendations and choose mixed-case as the primary collection queue while it remains not ready. The live correction-readiness endpoint now reports mixed-case batch labels `I, 0, O, 9, q, g, S, s` instead of hiding that work behind the character queue.
+  - Result: no model artifact changed. The uploaded `look behind / you` hardcase now reads correctly through exact correction memory, but the remaining benchmark gates are still below target and require more mixed-case/user-labeled samples or a stronger representation.
+  - Verification: `test_train_from_corrections.py`, `test_web_app.py`, and `test_summarize_benchmarks.py` passed (`137 passed`); `py_compile` and `git diff --check` passed; `scripts/train_from_corrections.py --dry-run --json` reported `recommended_queue: mixedcase` with `869` mixed-case samples still needed.
+  - Takeaway: the next data-collection/training loop should prioritize mixed-case visual-twin labels first, because mixed-case exactness is the largest current failing gate.
