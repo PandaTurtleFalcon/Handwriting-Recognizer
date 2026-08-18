@@ -1220,3 +1220,9 @@ restored, so future improvement loops do not repeat known-bad blends.
   - Result: no deployment artifact changed. The raw epoch became badly lopsided (`75.75%` exact, `96.39%` digit, `55.98%` upper, `88.03%` lower), while the saved deployed-stack summary stayed unchanged at mixed-case exact `87.7797%`, digit `95.0175%`, upper `84.7062%`, lower `73.1734%`.
   - Verification: backup at `tmp/mixedcase_guarded_probe_20260818T2050`; post-run summary confirmed no deployed metric movement. Added a CLI guard regression test so protected mixed-case runs restore artifacts if `train_mixedcase()` raises before the post-training benchmark comparison.
   - Takeaway: naive lower-weighted fine-tuning trades uppercase for lowercase instead of improving both. The next route should train a candidate representation/checkpoint offline and calibrate it before replacing deployed artifacts, or collect more real per-family corrections for the weak lowercase labels.
+
+- Candidate-only mixed-case artifact isolation:
+  - Code path: added `alnum_model.py --mixedcase-output-weights-path` and `--mixedcase-output-metrics-path` so future mixed-case representation experiments can write checkpoints under `tmp/` first. Deployed benchmark gates now reject non-default output paths because those gates evaluate the deployed artifact stack, not candidate files.
+  - Result: no model artifact changed. This removes the misleading workflow where a candidate-only training command could appear benchmark-gated while actually reading the old deployed metrics.
+  - Verification: added regression tests for candidate output path forwarding, custom checkpoint persistence, and rejecting candidate output paths with deployed benchmark gates.
+  - Takeaway: the next mixed-case push should train candidates offline, run a candidate-specific evaluator/calibration step, and only promote into deployed paths after saved benchmarks prove it beats the current stack.

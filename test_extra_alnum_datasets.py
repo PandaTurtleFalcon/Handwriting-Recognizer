@@ -454,6 +454,80 @@ class ExtraAlnumDatasetTests(unittest.TestCase):
         self.assertTrue(train.called)
         self.assertFalse(restore.called)
 
+    def test_mixedcase_cli_passes_candidate_output_paths(self) -> None:
+        """Candidate mixed-case runs should write to caller-provided artifact paths."""
+
+        with (
+            tempfile.TemporaryDirectory() as directory,
+            patch(
+                "sys.argv",
+                [
+                    "alnum_model.py",
+                    "--mixed-case",
+                    "--mixedcase-output-weights-path",
+                    str(Path(directory) / "candidate.pt"),
+                    "--mixedcase-output-metrics-path",
+                    str(Path(directory) / "candidate_metrics.json"),
+                ],
+            ),
+            patch("alnum_model.train_mixedcase") as train,
+        ):
+            alnum_model.main()
+
+        _, kwargs = train.call_args
+        self.assertEqual(kwargs["output_weights_path"], Path(directory) / "candidate.pt")
+        self.assertEqual(kwargs["output_metrics_path"], Path(directory) / "candidate_metrics.json")
+
+    def test_mixedcase_cli_rejects_candidate_outputs_with_deployed_gates(self) -> None:
+        """Deployed benchmark gates should not be used to approve candidate files."""
+
+        with (
+            tempfile.TemporaryDirectory() as directory,
+            patch(
+                "sys.argv",
+                [
+                    "alnum_model.py",
+                    "--mixed-case",
+                    "--mixedcase-require-benchmark-gates",
+                    "--mixedcase-output-weights-path",
+                    str(Path(directory) / "candidate.pt"),
+                ],
+            ),
+            patch("alnum_model.train_mixedcase") as train,
+        ):
+            with self.assertRaisesRegex(ValueError, "deployed benchmark artifacts"):
+                alnum_model.main()
+
+        self.assertFalse(train.called)
+
+    def test_save_mixedcase_checkpoint_writes_custom_artifact_paths(self) -> None:
+        """Mixed-case checkpoint persistence should support isolated candidate files."""
+
+        with tempfile.TemporaryDirectory() as directory:
+            weights_path = Path(directory) / "nested" / "candidate.pt"
+            metrics_path = Path(directory) / "nested" / "candidate_metrics.json"
+
+            alnum_model.save_mixedcase_checkpoint(
+                history=[{"epoch": 1, "test_accuracy": 12.5}],
+                best_state={"classifier.weight": torch.zeros(1, 1)},
+                best_accuracy=12.5,
+                best_metrics={"test_accuracy": 12.5, "source": "unit_test"},
+                model_type="cnn",
+                learning_rate=0.001,
+                seed=123,
+                device=torch.device("cpu"),
+                samples_per_class=1,
+                output_weights_path=weights_path,
+                output_metrics_path=metrics_path,
+            )
+
+            checkpoint = torch.load(weights_path, map_location="cpu", weights_only=True)
+            metrics = json.loads(metrics_path.read_text(encoding="utf-8"))
+
+        self.assertEqual(checkpoint["test_accuracy"], 12.5)
+        self.assertEqual(metrics["output_weights_path"], str(weights_path))
+        self.assertEqual(metrics["output_metrics_path"], str(metrics_path))
+
     def test_mixedcase_cli_restores_artifacts_when_benchmark_gate_regresses(self) -> None:
         """Protected mixed-case training should restore artifacts after regression."""
 

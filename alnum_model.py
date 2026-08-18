@@ -2174,9 +2174,13 @@ def save_mixedcase_checkpoint(
     min_checkpoint_digit: float = 0.0,
     min_checkpoint_upper: float = 0.0,
     min_checkpoint_lower: float = 0.0,
+    output_weights_path: Path = MIXEDCASE_WEIGHTS_PATH,
+    output_metrics_path: Path = MIXEDCASE_METRICS_PATH,
 ) -> None:
     """Persist the best mixed-case weights and metrics."""
 
+    output_weights_path.parent.mkdir(parents=True, exist_ok=True)
+    output_metrics_path.parent.mkdir(parents=True, exist_ok=True)
     if best_state is not None:
         torch.save(
             {
@@ -2215,9 +2219,9 @@ def save_mixedcase_checkpoint(
                 "mixedcase_extra_samples_per_class": mixedcase_extra_samples_per_class,
                 "normalization": {"mean": EMNIST_MEAN, "std": EMNIST_STD},
             },
-            MIXEDCASE_WEIGHTS_PATH,
+            output_weights_path,
         )
-    MIXEDCASE_METRICS_PATH.write_text(
+    output_metrics_path.write_text(
         json.dumps(
             {
                 "labels": MIXEDCASE_LABELS,
@@ -2249,6 +2253,8 @@ def save_mixedcase_checkpoint(
                 "min_checkpoint_digit": min_checkpoint_digit,
                 "min_checkpoint_upper": min_checkpoint_upper,
                 "min_checkpoint_lower": min_checkpoint_lower,
+                "output_weights_path": str(output_weights_path),
+                "output_metrics_path": str(output_metrics_path),
                 "mixedcase_extra_roots": [str(path) for path in (mixedcase_extra_roots or [])],
                 "mixedcase_extra_samples_per_class": mixedcase_extra_samples_per_class,
                 "per_class_accuracy": per_class_accuracy or {},
@@ -2365,6 +2371,8 @@ def train_mixedcase(
     min_checkpoint_digit: float = 0.0,
     min_checkpoint_upper: float = 0.0,
     min_checkpoint_lower: float = 0.0,
+    output_weights_path: Path = MIXEDCASE_WEIGHTS_PATH,
+    output_metrics_path: Path = MIXEDCASE_METRICS_PATH,
 ) -> list[dict[str, float | int]]:
     """Train a 62-class recognizer that distinguishes uppercase and lowercase."""
 
@@ -2572,6 +2580,8 @@ def train_mixedcase(
             min_checkpoint_digit,
             min_checkpoint_upper,
             min_checkpoint_lower,
+            output_weights_path,
+            output_metrics_path,
         )
         print(
             f"Epoch {epoch}/{epochs} train_acc={train_accuracy:.2f}% "
@@ -2910,6 +2920,18 @@ def main() -> None:
         help="Minimum lowercase accuracy required before an epoch can become the best checkpoint.",
     )
     parser.add_argument(
+        "--mixedcase-output-weights-path",
+        type=Path,
+        default=MIXEDCASE_WEIGHTS_PATH,
+        help="Where mixed-case training writes the selected checkpoint weights.",
+    )
+    parser.add_argument(
+        "--mixedcase-output-metrics-path",
+        type=Path,
+        default=MIXEDCASE_METRICS_PATH,
+        help="Where mixed-case training writes its metrics JSON.",
+    )
+    parser.add_argument(
         "--mixedcase-require-benchmark-gates",
         action="store_true",
         help="After mixed-case training, reject and restore artifacts if saved benchmark gates regress.",
@@ -2939,6 +2961,16 @@ def main() -> None:
     )
     args = parser.parse_args()
     if args.mixed_case:
+        mixedcase_uses_candidate_outputs = (
+            args.mixedcase_output_weights_path != MIXEDCASE_WEIGHTS_PATH
+            or args.mixedcase_output_metrics_path != MIXEDCASE_METRICS_PATH
+        )
+        if args.mixedcase_require_benchmark_gates and mixedcase_uses_candidate_outputs:
+            raise ValueError(
+                "--mixedcase-require-benchmark-gates evaluates deployed benchmark artifacts. "
+                "Use the default mixed-case output paths for protected promotion, or train "
+                "candidate artifacts without deployed benchmark gates."
+            )
         mixedcase_gate_names = parse_mixedcase_benchmark_gate_names(args.mixedcase_benchmark_gate_names)
         mixedcase_backup_dir = args.mixedcase_benchmark_backup_dir
         mixedcase_baseline_gates = None
@@ -2985,6 +3017,8 @@ def main() -> None:
                 min_checkpoint_digit=args.mixedcase_min_checkpoint_digit,
                 min_checkpoint_upper=args.mixedcase_min_checkpoint_upper,
                 min_checkpoint_lower=args.mixedcase_min_checkpoint_lower,
+                output_weights_path=args.mixedcase_output_weights_path,
+                output_metrics_path=args.mixedcase_output_metrics_path,
             )
         except Exception:
             if mixedcase_baseline_gates is not None:
