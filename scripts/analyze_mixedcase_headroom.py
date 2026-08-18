@@ -54,6 +54,12 @@ def _group(label: str) -> str:
     return "lower"
 
 
+def _empty_split_counts() -> dict[str, int]:
+    """Return zeroed digit/upper/lower counters for one report row."""
+
+    return {"digit": 0, "upper": 0, "lower": 0}
+
+
 def headroom_report(
     expected_labels: list[str],
     predicted_labels: list[str],
@@ -71,6 +77,7 @@ def headroom_report(
     case_or_visual_oracle = 0
     family_recoverable: Counter[str] = Counter()
     family_total: Counter[str] = Counter()
+    family_split_recoverable: dict[str, dict[str, int]] = {}
     split_total: Counter[str] = Counter()
     split_exact: Counter[str] = Counter()
     split_case_or_visual: Counter[str] = Counter()
@@ -95,6 +102,7 @@ def headroom_report(
         if family_name is not None and not is_exact:
             family_recoverable[family_name] += 1
             family_total[family_name] += 1
+            family_split_recoverable.setdefault(family_name, _empty_split_counts())[expected_split] += 1
 
     def percent(count: int) -> float:
         return 100.0 * count / total
@@ -109,6 +117,34 @@ def headroom_report(
             "total": split_total[split],
         }
 
+    family_rows = []
+    cumulative_correct = exact
+    cumulative_rows = []
+    for family, count in family_recoverable.most_common():
+        split_recoverable = family_split_recoverable.get(family, _empty_split_counts())
+        cumulative_correct += count
+        cumulative_accuracy = percent(cumulative_correct)
+        row = {
+            "family": family,
+            "recoverable_errors": count,
+            "total_family_errors": family_total[family],
+            "error_percent": 100.0 * count / max(len(expected_labels) - exact, 1),
+            "accuracy_gain": percent(count),
+            "split_recoverable_errors": split_recoverable,
+        }
+        family_rows.append(row)
+        cumulative_rows.append(
+            {
+                "families": [str(item["family"]) for item in family_rows],
+                "family": family,
+                "cumulative_recoverable_errors": sum(int(item["recoverable_errors"]) for item in family_rows),
+                "cumulative_accuracy": cumulative_accuracy,
+                "reaches_95": cumulative_accuracy >= 95.0,
+            }
+        )
+
+    families_to_95 = next((row for row in cumulative_rows if bool(row["reaches_95"])), None)
+
     return {
         "total": len(expected_labels),
         "exact_accuracy": percent(exact),
@@ -118,15 +154,9 @@ def headroom_report(
         "case_or_visual_recoverable_errors": case_or_visual_oracle - exact,
         "remaining_non_family_errors": len(expected_labels) - case_or_visual_oracle,
         "splits": split_rows,
-        "families": [
-            {
-                "family": family,
-                "recoverable_errors": count,
-                "total_family_errors": family_total[family],
-                "error_percent": 100.0 * count / max(len(expected_labels) - exact, 1),
-            }
-            for family, count in family_recoverable.most_common()
-        ],
+        "families": family_rows,
+        "cumulative_family_oracle": cumulative_rows,
+        "families_to_reach_95": families_to_95,
     }
 
 
@@ -187,8 +217,20 @@ def main() -> None:
     )
     print(f"recoverable_family_errors={report['case_or_visual_recoverable_errors']}")
     print(f"remaining_non_family_errors={report['remaining_non_family_errors']}")
+    if report["families_to_reach_95"] is not None:
+        threshold = report["families_to_reach_95"]
+        print(
+            "families_to_reach_95="
+            f"{','.join(threshold['families'])} "
+            f"cumulative_accuracy={threshold['cumulative_accuracy']:.2f}%"
+        )
     for row in report["families"][:10]:
-        print(f"  {row['family']}: {row['recoverable_errors']} recoverable errors")
+        splits = row["split_recoverable_errors"]
+        print(
+            f"  {row['family']}: {row['recoverable_errors']} recoverable errors "
+            f"(gain {row['accuracy_gain']:.2f} pts; "
+            f"digit {splits['digit']}, upper {splits['upper']}, lower {splits['lower']})"
+        )
 
 
 if __name__ == "__main__":

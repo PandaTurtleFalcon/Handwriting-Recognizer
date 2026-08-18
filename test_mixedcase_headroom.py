@@ -24,6 +24,26 @@ class MixedcaseHeadroomTests(unittest.TestCase):
         self.assertEqual(report["remaining_non_family_errors"], 1)
         self.assertEqual(report["splits"]["upper"]["recoverable_errors"], 1)
         self.assertEqual(report["splits"]["digit"]["recoverable_errors"], 1)
+        self.assertEqual(report["families"][0]["family"], "0Oo")
+        self.assertEqual(report["families"][0]["accuracy_gain"], 20.0)
+        self.assertEqual(report["families"][0]["split_recoverable_errors"]["digit"], 1)
+        self.assertEqual(report["cumulative_family_oracle"][0]["cumulative_accuracy"], 40.0)
+
+    def test_headroom_reports_minimum_family_set_to_reach_95(self) -> None:
+        """The report should identify the first cumulative oracle crossing 95%."""
+
+        expected = ["A"] * 80 + ["0"] * 10 + ["Z"] * 5 + ["B"] * 5
+        predicted = ["A"] * 80 + ["O"] * 10 + ["2"] * 5 + ["X"] * 5
+
+        report = headroom_report(
+            expected_labels=expected,
+            predicted_labels=predicted,
+            families=[frozenset("0Oo"), frozenset("2Zz")],
+        )
+
+        self.assertEqual(report["exact_accuracy"], 80.0)
+        self.assertEqual(report["families_to_reach_95"]["families"], ["0Oo", "2Zz"])
+        self.assertEqual(report["families_to_reach_95"]["cumulative_accuracy"], 95.0)
 
     def test_headroom_rejects_mismatched_lengths(self) -> None:
         """Expected and predicted labels must be aligned lists."""
