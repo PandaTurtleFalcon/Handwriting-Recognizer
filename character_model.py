@@ -89,6 +89,13 @@ AMBIGUITY_GROUPS = [
     frozenset("NnMm"),
     frozenset("Jj"),
 ]
+CHARACTER_CHECKPOINT_OBJECTIVES = {
+    "validation_accuracy",
+    "ambiguity_aware_validation_accuracy",
+    "digit_validation_accuracy",
+    "letter_validation_accuracy",
+    "punctuation_validation_accuracy",
+}
 
 
 @dataclass(frozen=True)
@@ -752,6 +759,33 @@ def evaluate_character_breakdown(
     }
 
 
+def character_checkpoint_score(metrics: dict[str, float], objective: str) -> float:
+    """Return the score used to choose the best character checkpoint."""
+
+    if objective not in CHARACTER_CHECKPOINT_OBJECTIVES:
+        raise ValueError(f"Unknown character checkpoint objective: {objective}")
+    return float(metrics.get(objective, 0.0))
+
+
+def character_checkpoint_meets_floors(
+    metrics: dict[str, float],
+    min_validation: float = 0.0,
+    min_ambiguity: float = 0.0,
+    min_digit: float = 0.0,
+    min_letter: float = 0.0,
+    min_punctuation: float = 0.0,
+) -> bool:
+    """Return whether a character checkpoint satisfies safety floors."""
+
+    return (
+        float(metrics.get("validation_accuracy", 0.0)) >= min_validation
+        and float(metrics.get("ambiguity_aware_validation_accuracy", 0.0)) >= min_ambiguity
+        and float(metrics.get("digit_validation_accuracy", 0.0)) >= min_digit
+        and float(metrics.get("letter_validation_accuracy", 0.0)) >= min_letter
+        and float(metrics.get("punctuation_validation_accuracy", 0.0)) >= min_punctuation
+    )
+
+
 def character_loss_weights(
     labels: list[str],
     punctuation_weight: float = 1.0,
@@ -843,9 +877,17 @@ def train_character_model(
     warm_start: bool = False,
     augment: bool = False,
     extra_roots: list[Path] | None = None,
+    checkpoint_objective: str = "validation_accuracy",
+    min_checkpoint_validation: float = 0.0,
+    min_checkpoint_ambiguity: float = 0.0,
+    min_checkpoint_digit: float = 0.0,
+    min_checkpoint_letter: float = 0.0,
+    min_checkpoint_punctuation: float = 0.0,
 ) -> list[CharacterEpochMetrics]:
     """Train the curated character model and save weights/labels/exemplars."""
 
+    if checkpoint_objective not in CHARACTER_CHECKPOINT_OBJECTIVES:
+        raise ValueError(f"Unknown character checkpoint objective: {checkpoint_objective}")
     if not dataset_root.exists():
         raise RuntimeError(f"Missing dataset at {dataset_root}")
 
@@ -880,12 +922,23 @@ def train_character_model(
 
     history: list[CharacterEpochMetrics] = []
     best_accuracy = 0.0
+    best_score = float("-inf")
     best_state = None
     best_breakdown: dict[str, float] = {}
     if warm_start:
-        best_breakdown = evaluate_character_breakdown(model, validation_loader, criterion, labels, device)
-        best_accuracy = best_breakdown["validation_accuracy"]
-        best_state = {key: value.detach().cpu() for key, value in model.state_dict().items()}
+        warm_start_breakdown = evaluate_character_breakdown(model, validation_loader, criterion, labels, device)
+        best_accuracy = warm_start_breakdown["validation_accuracy"]
+        if character_checkpoint_meets_floors(
+            warm_start_breakdown,
+            min_checkpoint_validation,
+            min_checkpoint_ambiguity,
+            min_checkpoint_digit,
+            min_checkpoint_letter,
+            min_checkpoint_punctuation,
+        ):
+            best_score = character_checkpoint_score(warm_start_breakdown, checkpoint_objective)
+            best_breakdown = {**warm_start_breakdown, "source": "warm_start_seed"}
+            best_state = {key: value.detach().cpu() for key, value in model.state_dict().items()}
 
     for epoch in range(1, epochs + 1):
         start = time.time()
@@ -925,7 +978,16 @@ def train_character_model(
             seconds=time.time() - start,
         )
         history.append(metrics)
-        if validation_accuracy > best_accuracy:
+        candidate_score = character_checkpoint_score(breakdown, checkpoint_objective)
+        if candidate_score > best_score and character_checkpoint_meets_floors(
+            breakdown,
+            min_checkpoint_validation,
+            min_checkpoint_ambiguity,
+            min_checkpoint_digit,
+            min_checkpoint_letter,
+            min_checkpoint_punctuation,
+        ):
+            best_score = candidate_score
             best_accuracy = validation_accuracy
             best_breakdown = breakdown
             best_state = {key: value.detach().cpu() for key, value in model.state_dict().items()}
@@ -955,6 +1017,7 @@ def train_character_model(
             "augment": augment,
             "image_size": IMAGE_SIZE,
             "normalization": {"mean": CHAR_MEAN, "std": CHAR_STD},
+            "checkpoint_objective": checkpoint_objective,
         },
         WEIGHTS_PATH,
     )
@@ -976,6 +1039,12 @@ def train_character_model(
                 "warm_start": warm_start,
                 "augment": augment,
                 "extra_roots": [str(path) for path in selected_extra_roots],
+                "checkpoint_objective": checkpoint_objective,
+                "min_checkpoint_validation": min_checkpoint_validation,
+                "min_checkpoint_ambiguity": min_checkpoint_ambiguity,
+                "min_checkpoint_digit": min_checkpoint_digit,
+                "min_checkpoint_letter": min_checkpoint_letter,
+                "min_checkpoint_punctuation": min_checkpoint_punctuation,
                 "ambiguity_groups": ["".join(sorted(group)) for group in AMBIGUITY_GROUPS],
                 "best_checkpoint": best_breakdown or {"validation_accuracy": best_accuracy},
                 "history": [asdict(item) for item in history],
@@ -2369,6 +2438,17 @@ def main() -> None:
     parser.add_argument("--warm-start", action="store_true")
     parser.add_argument("--augment", action="store_true")
     parser.add_argument("--extra-root", action="append", type=Path, default=[])
+    parser.add_argument(
+        "--checkpoint-objective",
+        choices=sorted(CHARACTER_CHECKPOINT_OBJECTIVES),
+        default="validation_accuracy",
+        help="Metric used to pick the saved character checkpoint.",
+    )
+    parser.add_argument("--min-checkpoint-validation", type=float, default=0.0)
+    parser.add_argument("--min-checkpoint-ambiguity", type=float, default=0.0)
+    parser.add_argument("--min-checkpoint-digit", type=float, default=0.0)
+    parser.add_argument("--min-checkpoint-letter", type=float, default=0.0)
+    parser.add_argument("--min-checkpoint-punctuation", type=float, default=0.0)
     args = parser.parse_args()
     train_character_model(
         epochs=args.epochs,
@@ -2386,6 +2466,12 @@ def main() -> None:
         warm_start=args.warm_start,
         augment=args.augment,
         extra_roots=args.extra_root,
+        checkpoint_objective=args.checkpoint_objective,
+        min_checkpoint_validation=args.min_checkpoint_validation,
+        min_checkpoint_ambiguity=args.min_checkpoint_ambiguity,
+        min_checkpoint_digit=args.min_checkpoint_digit,
+        min_checkpoint_letter=args.min_checkpoint_letter,
+        min_checkpoint_punctuation=args.min_checkpoint_punctuation,
     )
 
 

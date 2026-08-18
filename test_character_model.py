@@ -4,6 +4,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+import character_model
 from character_model import (
     _alnum_should_override,
     _combined_cache_path,
@@ -23,6 +24,8 @@ from character_model import (
     attach_character_pair_rules,
     attach_character_logit_bias,
     build_or_load_combined_cache,
+    character_checkpoint_meets_floors,
+    character_checkpoint_score,
     character_loss_weights,
     FocalCrossEntropyLoss,
     labels_match_with_ambiguity,
@@ -79,6 +82,77 @@ class CharacterPostprocessingTests(unittest.TestCase):
         self.assertEqual(validation_labels.count("B"), 2)
         self.assertEqual(validation_labels.count("C"), 2)
         self.assertEqual(set(first_train).isdisjoint(first_validation), True)
+
+    def test_character_checkpoint_score_supports_letter_objective(self) -> None:
+        """Character training should be able to save the best letter checkpoint."""
+
+        metrics = {
+            "validation_accuracy": 94.0,
+            "letter_validation_accuracy": 93.5,
+            "digit_validation_accuracy": 95.2,
+            "punctuation_validation_accuracy": 96.1,
+            "ambiguity_aware_validation_accuracy": 99.1,
+        }
+
+        self.assertEqual(character_checkpoint_score(metrics, "letter_validation_accuracy"), 93.5)
+        with self.assertRaises(ValueError):
+            character_checkpoint_score(metrics, "missing_metric")
+
+    def test_character_checkpoint_floors_guard_passing_splits(self) -> None:
+        """Letter-focused checkpoints should still preserve the other gates."""
+
+        metrics = {
+            "validation_accuracy": 94.2,
+            "letter_validation_accuracy": 93.7,
+            "digit_validation_accuracy": 95.1,
+            "punctuation_validation_accuracy": 96.0,
+            "ambiguity_aware_validation_accuracy": 99.1,
+        }
+
+        self.assertTrue(
+            character_checkpoint_meets_floors(
+                metrics,
+                min_validation=94.0,
+                min_ambiguity=99.0,
+                min_digit=95.0,
+                min_letter=93.5,
+                min_punctuation=95.9,
+            )
+        )
+        self.assertFalse(character_checkpoint_meets_floors(metrics, min_punctuation=96.1))
+
+    def test_character_cli_passes_checkpoint_objective_and_floors(self) -> None:
+        """The character trainer CLI should expose checkpoint gate controls."""
+
+        with (
+            patch(
+                "sys.argv",
+                [
+                    "character_model.py",
+                    "--checkpoint-objective",
+                    "letter_validation_accuracy",
+                    "--min-checkpoint-validation",
+                    "94.1",
+                    "--min-checkpoint-ambiguity",
+                    "99.0",
+                    "--min-checkpoint-digit",
+                    "95.0",
+                    "--min-checkpoint-letter",
+                    "93.5",
+                    "--min-checkpoint-punctuation",
+                    "96.0",
+                ],
+            ),
+            patch("character_model.train_character_model") as train,
+        ):
+            character_model.main()
+
+        self.assertEqual(train.call_args.kwargs["checkpoint_objective"], "letter_validation_accuracy")
+        self.assertEqual(train.call_args.kwargs["min_checkpoint_validation"], 94.1)
+        self.assertEqual(train.call_args.kwargs["min_checkpoint_ambiguity"], 99.0)
+        self.assertEqual(train.call_args.kwargs["min_checkpoint_digit"], 95.0)
+        self.assertEqual(train.call_args.kwargs["min_checkpoint_letter"], 93.5)
+        self.assertEqual(train.call_args.kwargs["min_checkpoint_punctuation"], 96.0)
 
     def test_labels_match_with_visual_ambiguity_groups(self) -> None:
         """Ambiguity-aware scoring should accept known handwriting lookalikes."""
