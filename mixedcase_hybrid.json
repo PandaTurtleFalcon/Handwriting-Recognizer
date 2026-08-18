@@ -1,6 +1,6 @@
 {
   "enabled": true,
-  "source": "folded_identity_mixedcase_case_probe",
+  "source": "greedy_hybrid_threshold_calibration",
   "labels": [
     "0",
     "1",
@@ -79,7 +79,8 @@
     "O": 0.1,
     "P": 0.1,
     "Q": 0.25,
-    "T": 0.25
+    "T": 0.25,
+    "Z": -0.5
   },
   "folded_confidence_thresholds": {
     "A": 0.4,
@@ -116,13 +117,29 @@
     "test_accuracy": 87.7773642539978,
     "case_or_ambiguity_aware_test_accuracy": 98.04707169532776,
     "digit_test_accuracy": 95.02488374710083,
-    "upper_test_accuracy": 84.79551076889038,
-    "lower_test_accuracy": 73.04039597511292
+    "upper_test_accuracy": 84.70299243927002,
+    "lower_test_accuracy": 73.14756512641907
   },
   "notes": [
     "Uses the folded 36-class alnum model for letter identity only when the mixed-case model already predicts an alphabetic class and the folded prediction clears confidence and margin gates.",
     "Per-letter case, confidence, and folded-margin thresholds were greedily calibrated on the mixed MNIST plus EMNIST ByClass test cache while preserving digit exact accuracy above 95%.",
     "Mixed-case digit top-1 predictions stay unchanged because folded identity reduced EMNIST ByClass digit accuracy when allowed to override them.",
     "Still below the 95% exact target; lower-case exact remains the largest verified gap."
+  ],
+  "base_objective": 73.04039597511292,
+  "calibrated_objective": 73.14756512641907,
+  "objective": "balanced_group_accuracy",
+  "steps": [
+    {
+      "round": 1,
+      "change": "letter_case_thresholds.Z=-0.5",
+      "objective": "balanced_group_accuracy",
+      "objective_value": 73.14756512641907,
+      "test_accuracy": 87.7773642539978,
+      "case_or_ambiguity_aware_test_accuracy": 98.04707169532776,
+      "digit_test_accuracy": 95.02488374710083,
+      "upper_test_accuracy": 84.70299243927002,
+      "lower_test_accuracy": 73.14756512641907
+    }
   ]
 }
