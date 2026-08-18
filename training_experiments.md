@@ -1239,3 +1239,9 @@ restored, so future improvement loops do not repeat known-bad blends.
   - Result: no model artifact changed. The current raw deployed checkpoint correctly fails `--require-target` on a 1024-example diagnostic slice (`80.47%` exact, upper `71.49%`), while the same checkpoint passes a same-slice `--require-baseline` comparison.
   - Verification: focused evaluator tests passed and the same-slice baseline gate check reported no failures.
   - Takeaway: future candidate runs now have a reliable non-deploying promotion gate before any heavier calibration, app-hardcase replay, or artifact replacement.
+
+- Rejected fresh wide-CNN mixed-case transfer candidate:
+  - Command shape: trained a two-epoch `widecnn` candidate into `tmp/candidates/` with folded-checkpoint transfer requested, augmentation, Chars74K, correction data, capped CVL top-family extras, weak visual-twin weighting, folded/type auxiliary losses, focal loss, and balanced-group checkpoint floors.
+  - Result: not promotable and no deployed artifact changed. The candidate never met save floors; epoch 2 reached only `54.85%` raw exact, `69.60%` digit, `56.40%` upper, and `64.98%` lower, leaving only a metrics JSON and no candidate weights.
+  - Verification: `tmp/candidates/mixedcase_wide_transfer_sp900_cvl_metrics.json` records `best_checkpoint.test_accuracy: 0.0`; `scripts/summarize_benchmarks.py --json` stayed at the deployed baseline.
+  - Takeaway: changing to a larger fresh representation without a longer/pretrained schedule is a dead end for the fast loop. The next high-yield attempt should either fine-tune the deployed architecture with candidate-only output plus calibration, or collect/export the missing real correction labels before another broad representation run.
