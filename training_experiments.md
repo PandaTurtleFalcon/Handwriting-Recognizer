@@ -604,6 +604,11 @@ restored, so future improvement loops do not repeat known-bad blends.
   - Verification: `python3 -m pytest -q test_context_rules.py test_summarize_benchmarks.py test_evaluate_hardcases.py` passed (`53` tests), `python3 scripts/evaluate_hardcases.py --case 'look behind you' --script-cases --json` returned `2/2` exact, and the full benchmark reports clean app `100.00% (45/45)` plus script app `95.56% (86/90)`.
   - Result: this widens coverage for the attached screenshot family, but does not claim model accuracy progress. Current character splits are digit `94.93%` and letter `92.67%`, so exact character recognition remains below the `95%` target.
 
+- Digit-clearing character calibration:
+  - Command shape: `python3 scripts/calibrate_character_logits.py --batch-size 4096 --greedy-labels '0Ool1I|/9qg5Ss2Zz' --greedy-rounds 5 --greedy-deltas=-0.06,-0.04,-0.02,0.02,0.04,0.06 --min-ambiguity 98.85 --min-punctuation 96.0 --require-app-gates`.
+  - Result: accepted two tiny character-bias steps (`9 +0.06`, `Z -0.06`), improving character exact from `93.52%` to `93.55%` and clearing character digit exact from `94.93%` to `95.11%`. App gates stayed green at clean `100.00% (45/45)` and script `95.56% (86/90)`.
+  - Remaining blocker: character letters are unchanged at `92.67%`; mixed-case exact and all mixed-case split gates are unchanged.
+
 ## Next Higher-Value Directions
 
 - Interrupted full calibration/analyzer startup probe:
