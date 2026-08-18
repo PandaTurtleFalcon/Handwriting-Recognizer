@@ -56,6 +56,12 @@ def _family_lookup(groups: list[frozenset[str]]) -> dict[tuple[str, str], str]:
     return lookup
 
 
+def _empty_split_counts() -> dict[str, int]:
+    """Return empty recoverable counts for character benchmark splits."""
+
+    return {"digit": 0, "letter": 0, "punctuation": 0}
+
+
 def headroom_report(
     expected_labels: list[str],
     predicted_labels: list[str],
@@ -70,6 +76,8 @@ def headroom_report(
     exact = 0
     ambiguity = 0
     family_recoverable: Counter[str] = Counter()
+    family_total: Counter[str] = Counter()
+    family_split_recoverable: dict[str, dict[str, int]] = {}
     split_total: Counter[str] = Counter()
     split_exact: Counter[str] = Counter()
     split_ambiguity: Counter[str] = Counter()
@@ -87,6 +95,8 @@ def headroom_report(
         split_ambiguity[split] += int(is_ambiguous_match)
         if family_name is not None and not is_exact:
             family_recoverable[family_name] += 1
+            family_total[family_name] += 1
+            family_split_recoverable.setdefault(family_name, _empty_split_counts())[split] += 1
             split_recoverable[split] += 1
 
     total = max(len(expected_labels), 1)
@@ -104,6 +114,34 @@ def headroom_report(
             "total": split_total[split],
         }
 
+    family_rows = []
+    cumulative_correct = exact
+    cumulative_rows = []
+    for family, count in family_recoverable.most_common():
+        split_recoverable = family_split_recoverable.get(family, _empty_split_counts())
+        cumulative_correct += count
+        cumulative_accuracy = percent(cumulative_correct)
+        row = {
+            "family": family,
+            "recoverable_errors": count,
+            "total_family_errors": family_total[family],
+            "error_percent": 100.0 * count / max(len(expected_labels) - exact, 1),
+            "accuracy_gain": percent(count),
+            "split_recoverable_errors": split_recoverable,
+        }
+        family_rows.append(row)
+        cumulative_rows.append(
+            {
+                "families": [str(item["family"]) for item in family_rows],
+                "family": family,
+                "cumulative_recoverable_errors": sum(int(item["recoverable_errors"]) for item in family_rows),
+                "cumulative_accuracy": cumulative_accuracy,
+                "reaches_95": cumulative_accuracy >= 95.0,
+            }
+        )
+
+    families_to_95 = next((row for row in cumulative_rows if bool(row["reaches_95"])), None)
+
     return {
         "total": len(expected_labels),
         "exact_accuracy": percent(exact),
@@ -111,14 +149,9 @@ def headroom_report(
         "visual_recoverable_errors": ambiguity - exact,
         "remaining_non_family_errors": len(expected_labels) - ambiguity,
         "splits": splits,
-        "families": [
-            {
-                "family": family,
-                "recoverable_errors": count,
-                "error_percent": 100.0 * count / max(len(expected_labels) - exact, 1),
-            }
-            for family, count in family_recoverable.most_common()
-        ],
+        "families": family_rows,
+        "cumulative_family_oracle": cumulative_rows,
+        "families_to_reach_95": families_to_95,
     }
 
 

@@ -22,6 +22,22 @@ class CharacterHeadroomTests(unittest.TestCase):
         self.assertEqual(report["remaining_non_family_errors"], 1)
         self.assertEqual(report["splits"]["digit"]["recoverable_errors"], 1)
         self.assertEqual(report["splits"]["punctuation"]["recoverable_errors"], 1)
+        self.assertEqual(report["families"][0]["accuracy_gain"], 25.0)
+        self.assertEqual(report["families"][0]["split_recoverable_errors"]["digit"], 1)
+        self.assertEqual(report["cumulative_family_oracle"][0]["cumulative_accuracy"], 50.0)
+        self.assertIsNone(report["families_to_reach_95"])
+
+    def test_headroom_reports_first_family_set_to_reach_95(self) -> None:
+        """The roadmap should identify the first cumulative family crossing 95."""
+
+        report = headroom_report(
+            expected_labels=["A"] * 19 + ["0"],
+            predicted_labels=["A"] * 19 + ["O"],
+            families=[frozenset("0Oo")],
+        )
+
+        self.assertEqual(report["families_to_reach_95"]["families"], ["0Oo"])
+        self.assertTrue(report["families_to_reach_95"]["reaches_95"])
 
     def test_headroom_rejects_mismatched_lengths(self) -> None:
         """Expected and predicted labels must be aligned lists."""
