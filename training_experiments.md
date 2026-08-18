@@ -959,6 +959,6 @@ restored, so future improvement loops do not repeat known-bad blends.
 
 - Rejected character warm-start with current deployed floors:
   - Command shape: backed up `character_cnn.pt`, `character_training_metrics.json`, `character_logit_bias.pt`, and `character_pair_rules.json` to `tmp/daily_training_backups/20260818T145517Z-character-warmstart-probe`, then ran one wide-CNN warm-start epoch with augmentation, HASY/correction/generated-punctuation extras, seed `707`, learning rate `0.0000015`, objective `letter_validation_accuracy`, and floors from the deployed character artifact stack.
-  - Result: rejected/restored. The epoch reported `93.04%` validation, below the deployed `94.1666%` validation floor, so no checkpoint or calibration artifact was accepted.
+  - Result: rejected/restored. The HASY-alias rerun reported real floor misses after the trainer diagnostic fix: validation `92.98%`, ambiguity-aware `99.04%`, digit `94.34%`, letter `92.14%`, and punctuation `95.71%`, all below the deployed floors.
   - Verification: artifacts were restored from the backup. Focused character tests passed (`45` tests), and the character module compiles.
   - Takeaway: the character model is also near a calibration/training plateau. A rejected floor-gate message exposed confusing trainer output, so the trainer now reports the specific floor names that blocked acceptance.

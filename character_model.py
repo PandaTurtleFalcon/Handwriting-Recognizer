@@ -810,6 +810,28 @@ def character_checkpoint_floor_failures(
     ]
 
 
+def character_checkpoint_rejection_message(
+    metrics: dict[str, float],
+    min_validation: float = 0.0,
+    min_ambiguity: float = 0.0,
+    min_digit: float = 0.0,
+    min_letter: float = 0.0,
+    min_punctuation: float = 0.0,
+) -> str:
+    """Return a readable checkpoint-floor rejection message."""
+
+    floor_failures = character_checkpoint_floor_failures(
+        metrics,
+        min_validation,
+        min_ambiguity,
+        min_digit,
+        min_letter,
+        min_punctuation,
+    )
+    floor_text = "; ".join(floor_failures) if floor_failures else "no checkpoint met the configured floors"
+    return f"Best character checkpoint was rejected by floors: {floor_text}"
+
+
 def character_loss_weights(
     labels: list[str],
     punctuation_weight: float = 1.0,
@@ -949,8 +971,12 @@ def train_character_model(
     best_score = float("-inf")
     best_state = None
     best_breakdown: dict[str, float] = {}
+    best_observed_score = float("-inf")
+    best_observed_breakdown: dict[str, float] = {}
     if warm_start:
         warm_start_breakdown = evaluate_character_breakdown(model, validation_loader, criterion, labels, device)
+        best_observed_score = character_checkpoint_score(warm_start_breakdown, checkpoint_objective)
+        best_observed_breakdown = warm_start_breakdown
         best_accuracy = warm_start_breakdown["validation_accuracy"]
         if character_checkpoint_meets_floors(
             warm_start_breakdown,
@@ -1003,6 +1029,9 @@ def train_character_model(
         )
         history.append(metrics)
         candidate_score = character_checkpoint_score(breakdown, checkpoint_objective)
+        if candidate_score > best_observed_score:
+            best_observed_score = candidate_score
+            best_observed_breakdown = breakdown
         if candidate_score > best_score and character_checkpoint_meets_floors(
             breakdown,
             min_checkpoint_validation,
@@ -1022,16 +1051,16 @@ def train_character_model(
         )
 
     if best_state is None:
-        floor_failures = character_checkpoint_floor_failures(
-            best_breakdown,
-            min_checkpoint_validation,
-            min_checkpoint_ambiguity,
-            min_checkpoint_digit,
-            min_checkpoint_letter,
-            min_checkpoint_punctuation,
+        raise RuntimeError(
+            character_checkpoint_rejection_message(
+                best_observed_breakdown,
+                min_checkpoint_validation,
+                min_checkpoint_ambiguity,
+                min_checkpoint_digit,
+                min_checkpoint_letter,
+                min_checkpoint_punctuation,
+            )
         )
-        floor_text = "; ".join(floor_failures) if floor_failures else "no checkpoint met the configured floors"
-        raise RuntimeError(f"Best character checkpoint was rejected by floors: {floor_text}")
     if best_accuracy < min_accuracy:
         raise RuntimeError(f"Best validation accuracy {best_accuracy:.2f}% is below {min_accuracy:.2f}%")
 

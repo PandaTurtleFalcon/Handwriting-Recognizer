@@ -27,6 +27,7 @@ from character_model import (
     build_or_load_combined_cache,
     character_checkpoint_floor_failures,
     character_checkpoint_meets_floors,
+    character_checkpoint_rejection_message,
     character_checkpoint_score,
     character_loss_weights,
     FocalCrossEntropyLoss,
@@ -147,6 +148,10 @@ class CharacterPostprocessingTests(unittest.TestCase):
                 "validation_accuracy 93.00% < 94.00%",
                 "digit_validation_accuracy 94.90% < 95.00%",
             ],
+        )
+        self.assertIn(
+            "validation_accuracy 93.00% < 94.00%",
+            character_checkpoint_rejection_message(metrics, min_validation=94.0),
         )
 
     def test_character_cli_passes_checkpoint_objective_and_floors(self) -> None:
