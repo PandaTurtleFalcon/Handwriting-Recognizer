@@ -25,6 +25,7 @@ from character_model import (
     attach_character_pair_rules,
     attach_character_logit_bias,
     build_or_load_combined_cache,
+    character_checkpoint_floor_failures,
     character_checkpoint_meets_floors,
     character_checkpoint_score,
     character_loss_weights,
@@ -121,6 +122,32 @@ class CharacterPostprocessingTests(unittest.TestCase):
             )
         )
         self.assertFalse(character_checkpoint_meets_floors(metrics, min_punctuation=96.1))
+
+    def test_character_checkpoint_floor_failures_name_failed_gates(self) -> None:
+        """Rejected training probes should explain which split floor failed."""
+
+        metrics = {
+            "validation_accuracy": 93.0,
+            "letter_validation_accuracy": 93.7,
+            "digit_validation_accuracy": 94.9,
+            "punctuation_validation_accuracy": 96.2,
+            "ambiguity_aware_validation_accuracy": 99.2,
+        }
+
+        self.assertEqual(
+            character_checkpoint_floor_failures(
+                metrics,
+                min_validation=94.0,
+                min_ambiguity=99.0,
+                min_digit=95.0,
+                min_letter=93.5,
+                min_punctuation=96.0,
+            ),
+            [
+                "validation_accuracy 93.00% < 94.00%",
+                "digit_validation_accuracy 94.90% < 95.00%",
+            ],
+        )
 
     def test_character_cli_passes_checkpoint_objective_and_floors(self) -> None:
         """The character trainer CLI should expose checkpoint gate controls."""

@@ -786,6 +786,30 @@ def character_checkpoint_meets_floors(
     )
 
 
+def character_checkpoint_floor_failures(
+    metrics: dict[str, float],
+    min_validation: float = 0.0,
+    min_ambiguity: float = 0.0,
+    min_digit: float = 0.0,
+    min_letter: float = 0.0,
+    min_punctuation: float = 0.0,
+) -> list[str]:
+    """Return checkpoint floor names that the current metrics do not satisfy."""
+
+    floors = (
+        ("validation_accuracy", min_validation),
+        ("ambiguity_aware_validation_accuracy", min_ambiguity),
+        ("digit_validation_accuracy", min_digit),
+        ("letter_validation_accuracy", min_letter),
+        ("punctuation_validation_accuracy", min_punctuation),
+    )
+    return [
+        f"{name} {float(metrics.get(name, 0.0)):.2f}% < {float(floor):.2f}%"
+        for name, floor in floors
+        if float(floor) > 0.0 and float(metrics.get(name, 0.0)) < float(floor)
+    ]
+
+
 def character_loss_weights(
     labels: list[str],
     punctuation_weight: float = 1.0,
@@ -997,7 +1021,18 @@ def train_character_model(
             f"train_acc={train_accuracy:.2f}% validation_acc={validation_accuracy:.2f}%"
         )
 
-    if best_state is None or best_accuracy < min_accuracy:
+    if best_state is None:
+        floor_failures = character_checkpoint_floor_failures(
+            best_breakdown,
+            min_checkpoint_validation,
+            min_checkpoint_ambiguity,
+            min_checkpoint_digit,
+            min_checkpoint_letter,
+            min_checkpoint_punctuation,
+        )
+        floor_text = "; ".join(floor_failures) if floor_failures else "no checkpoint met the configured floors"
+        raise RuntimeError(f"Best character checkpoint was rejected by floors: {floor_text}")
+    if best_accuracy < min_accuracy:
         raise RuntimeError(f"Best validation accuracy {best_accuracy:.2f}% is below {min_accuracy:.2f}%")
 
     torch.save(

@@ -950,3 +950,15 @@ restored, so future improvement loops do not repeat known-bad blends.
   - Result: rejected/restored. The epoch moved raw lowercase up to `85.07%`, but collapsed raw uppercase to `66.38%`, digits to `93.16%`, and exact to `79.56%`; the checkpoint failed the protected floors and the trainer raised instead of accepting it.
   - Verification: artifacts were restored from the backup and `scripts/summarize_benchmarks.py --include-uploaded-hardcases --json` returned the deployed baseline: mixed-case exact `87.7774%`, digit `95.0249%`, upper `84.7030%`, lower `73.1476%`, uploaded hardcase `1/1`.
   - Takeaway: the lower-case improvement pressure is still trading off against uppercase/digit recognition. The next model attempt needs a case-separation strategy that preserves uppercase and digit anchors, not simply stronger lowercase weighting.
+
+- Reported browser confusion: raw diagnostic looked like the answer:
+  - Code path: changed the result renderer so the raw model read is hidden under a closed `Diagnostics` disclosure and explicitly labeled `raw model read, not final answer`; the prominent sequence remains the cleaned final answer.
+  - Result: no model artifacts changed. The live app at revision `b7af603` still predicts the saved uploaded screenshot as `look behind\nyou`; the raw crop-level read remains `xOO11eh'nd7o4`, which is useful for debugging but should not look like the answer.
+  - Verification: `test_context_rules.py test_web_app.py` passed (`130` tests), `scripts/evaluate_hardcases.py --uploaded-fixtures --json` passed `1/1`, and the full suite passed (`335` tests, `1` skipped).
+  - Takeaway: the saved rough phrase is fixed in the deployed app path, but UI wording mattered. Future phrase-level work still needs better segmentation/word modeling, not just exact cleanup allowlists.
+
+- Rejected character warm-start with current deployed floors:
+  - Command shape: backed up `character_cnn.pt`, `character_training_metrics.json`, `character_logit_bias.pt`, and `character_pair_rules.json` to `tmp/daily_training_backups/20260818T145517Z-character-warmstart-probe`, then ran one wide-CNN warm-start epoch with augmentation, HASY/correction/generated-punctuation extras, seed `707`, learning rate `0.0000015`, objective `letter_validation_accuracy`, and floors from the deployed character artifact stack.
+  - Result: rejected/restored. The epoch reported `93.04%` validation, below the deployed `94.1666%` validation floor, so no checkpoint or calibration artifact was accepted.
+  - Verification: artifacts were restored from the backup. Focused character tests passed (`45` tests), and the character module compiles.
+  - Takeaway: the character model is also near a calibration/training plateau. A rejected floor-gate message exposed confusing trainer output, so the trainer now reports the specific floor names that blocked acceptance.
