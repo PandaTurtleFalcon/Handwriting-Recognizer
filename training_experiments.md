@@ -884,3 +884,19 @@ restored, so future improvement loops do not repeat known-bad blends.
   - Result: rejected/no-op. The deployed-style base was `87.5320%` exact (`97.7779%` case-or-visual, `95.0264%` digit, `84.0713%` upper, `72.7300%` lower), found `steps=[]`, and wrote no artifact.
   - Verification: `test_calibrate_mixedcase_logits.py` passed (`18 passed`), and the broader web/context/calibration suite passed (`157 passed`). `scripts/summarize_benchmarks.py --include-app-hardcases --json` still reports app hardcases at `100.00%` (`180/180`), with mixed-case exact and character-letter exact still below the 95% target.
   - Takeaway: pair-rule-aware per-label bias is also tapped out. The user-reported `xOOh:1i` phrase is covered by current context cleanup tests, so similar failures now point either to stale server code or a new raw-row variant that must be captured from the upload response.
+
+- Rejected mixed-case classifier-boundary extra-data probe:
+  - Command shape: backed up the five mixed-case artifacts, then warm-started the current mixed-case CNN for two epochs with frozen feature layers, Chars74K, USPS, NIST SD19, UJI full/hardcase/twin caches, HASY twin cache, UNIPEN mixed-case cache, augmentation, weak-family weighting, class-balance strength `0.20`, and strict deployed split floors.
+  - Result: rejected/restored. Epoch 1 reached `79.73%` exact (`98.93%` digits, `67.86%` upper, `84.89%` lower). Epoch 2 reached `79.39%` exact (`98.93%` digits, `67.35%` upper, `85.25%` lower). This repeated the old lower-up/upper-collapse pattern, so all mixed-case artifacts were restored from `tmp/daily_training_backups/20260818T123333Z-mixedcase-boundary-extra-probe`.
+  - Verification: post-restore benchmark summary returned the deployed baseline: mixed-case exact `87.7774%`, case-or-visual `98.0471%`, digit `95.0249%`, upper `84.7030%`, and lower `73.1476%`.
+  - Takeaway: broad external-data classifier tuning is still harmful even with frozen features. It appears to make lowercase more separable by sacrificing uppercase, not by improving exact family arbitration.
+
+- Rejected mixed-case folded-transfer twin-cache probe:
+  - Command shape: backed up the five mixed-case artifacts, then initialized the 62-class CNN from the folded alnum checkpoint with NIST SD19 plus only UJI/HASY twin-family caches, corrections enabled, weak-family weighting, folded/type auxiliary losses, and strict deployed split floors.
+  - Result: rejected/restored. Epoch 1 reached `52.86%` exact (`99.49%` digits, `80.98%` upper, `80.59%` lower). Epoch 2 reached `53.25%` exact (`99.48%` digits, `80.21%` upper, `80.42%` lower), then the trainer raised because no checkpoint met the acceptance floors. Artifacts were restored from `tmp/daily_training_backups/20260818T123702Z-mixedcase-transfer-twin-cache`.
+  - Takeaway: folded initialization balances upper/lower better but does not separate exact classes fast enough in a short bounded run. It is not deployable without a longer or differently supervised case-separation objective.
+
+- Rejected strict character letter-bias probe:
+  - Command shape: ran `scripts/calibrate_character_logits.py --greedy-labels 'Oo0lI1isScCvVuUPpXxZzGgqQ9Yy4Tt7JjKkFfWwMNmn' --greedy-label-groups letter --objective letter_validation_accuracy --include-pair-rules --dry-run` with floors at the current deployed character metrics.
+  - Result: rejected/no-op. Base character exact stayed `94.1666%`, letter exact stayed `93.5908%`, digit exact stayed `95.1090%`, punctuation exact stayed `96.0619%`, and the search found `steps=[]`.
+  - Takeaway: character logit-bias calibration is also exhausted under non-regression floors. The next meaningful character improvement should be a supervised model change or added labeled character data, not another per-label bias search.
