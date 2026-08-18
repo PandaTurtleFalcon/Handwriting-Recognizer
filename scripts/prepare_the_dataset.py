@@ -17,7 +17,7 @@ import csv
 import sys
 import urllib.request
 from pathlib import Path
-from typing import Iterable
+from collections.abc import Callable, Iterable
 
 import numpy as np
 import torch
@@ -33,6 +33,14 @@ from alnum_model import MIXEDCASE_LABELS, _foreground_tensor_from_image  # noqa:
 DEFAULT_SOURCE_URL = "https://media.githubusercontent.com/media/bartosgaye/thedataset/master/version4.csv"
 DEFAULT_RAW_PATH = PROJECT_DIR / "data" / "the_dataset" / "version4.csv"
 DEFAULT_OUTPUT_PATH = PROJECT_DIR / "data" / "the_dataset" / "the_version4_mixedcase.pt"
+ORIENTATION_TRANSFORMS: dict[str, Callable[[np.ndarray], np.ndarray]] = {
+    "transpose": lambda pixels: pixels.T,
+    "raw": lambda pixels: pixels,
+    "flipud": np.flipud,
+    "fliplr": np.fliplr,
+    "rot90": lambda pixels: np.rot90(pixels, 1),
+    "rot270": lambda pixels: np.rot90(pixels, 3),
+}
 
 
 def the_label_to_mixedcase_index(class_id: int) -> int | None:
@@ -47,9 +55,17 @@ def the_label_to_mixedcase_index(class_id: int) -> int | None:
     return MIXEDCASE_LABELS.index(label)
 
 
-def parse_the_rows(rows: Iterable[list[str]], limit: int | None = None) -> tuple[torch.Tensor, torch.Tensor]:
+def parse_the_rows(
+    rows: Iterable[list[str]],
+    limit: int | None = None,
+    orientation: str = "transpose",
+) -> tuple[torch.Tensor, torch.Tensor]:
     """Convert CSV rows into normalized image and target tensors."""
 
+    if orientation not in ORIENTATION_TRANSFORMS:
+        choices = ", ".join(sorted(ORIENTATION_TRANSFORMS))
+        raise ValueError(f"Unsupported orientation {orientation!r}; choose one of: {choices}")
+    transform = ORIENTATION_TRANSFORMS[orientation]
     images: list[torch.Tensor] = []
     targets: list[int] = []
     for row_number, row in enumerate(rows, start=1):
@@ -62,6 +78,7 @@ def parse_the_rows(rows: Iterable[list[str]], limit: int | None = None) -> tuple
         if target is None:
             continue
         pixels = np.asarray([float(value) for value in row[1:]], dtype=np.float32).reshape(28, 28)
+        pixels = transform(pixels)
         if float(pixels.max(initial=0.0)) <= 1.0:
             pixels = pixels * 255.0
         image = Image.fromarray(np.clip(pixels, 0, 255).astype(np.uint8), mode="L")
@@ -72,16 +89,27 @@ def parse_the_rows(rows: Iterable[list[str]], limit: int | None = None) -> tuple
     return torch.stack(images).float(), torch.tensor(targets, dtype=torch.long)
 
 
-def convert_the_csv(csv_path: Path, output_path: Path, limit: int | None = None) -> dict[str, object]:
+def convert_the_csv(
+    csv_path: Path,
+    output_path: Path,
+    limit: int | None = None,
+    orientation: str = "transpose",
+) -> dict[str, object]:
     """Read Version IV CSV and write an `images`/`targets` tensor cache."""
 
     with csv_path.open("r", newline="", encoding="utf-8") as handle:
-        images, targets = parse_the_rows(csv.reader(handle), limit=limit)
+        images, targets = parse_the_rows(csv.reader(handle), limit=limit, orientation=orientation)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     torch.save({"images": images, "targets": targets}, output_path)
     counts = torch.bincount(targets, minlength=len(MIXEDCASE_LABELS))
     present = {MIXEDCASE_LABELS[index]: int(count) for index, count in enumerate(counts.tolist()) if count}
-    return {"images": int(images.shape[0]), "classes": len(present), "per_class": present, "output": str(output_path)}
+    return {
+        "images": int(images.shape[0]),
+        "classes": len(present),
+        "orientation": orientation,
+        "per_class": present,
+        "output": str(output_path),
+    }
 
 
 def download_if_needed(source_url: str, csv_path: Path) -> bool:
@@ -103,12 +131,18 @@ def main() -> int:
     parser.add_argument("--download", action="store_true", help="Download Version IV from GitHub media first.")
     parser.add_argument("--url", default=DEFAULT_SOURCE_URL, help="Download URL for Version IV CSV.")
     parser.add_argument("--limit", type=int, default=None, help="Optional row limit for smoke tests/probes.")
+    parser.add_argument(
+        "--orientation",
+        choices=sorted(ORIENTATION_TRANSFORMS),
+        default="transpose",
+        help="Pixel orientation transform. Version IV rows render upright with transpose.",
+    )
     args = parser.parse_args()
 
     downloaded = download_if_needed(args.url, args.csv) if args.download else False
     if not args.csv.exists():
         raise SystemExit(f"CSV not found: {args.csv}. Run with --download or provide --csv.")
-    report = convert_the_csv(args.csv, args.output, limit=args.limit)
+    report = convert_the_csv(args.csv, args.output, limit=args.limit, orientation=args.orientation)
     action = "downloaded and converted" if downloaded else "converted"
     print(f"{action}: {report}")
     return 0

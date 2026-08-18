@@ -3,9 +3,10 @@ import tempfile
 import unittest
 from pathlib import Path
 
+import numpy as np
 import torch
 
-from scripts.prepare_the_dataset import convert_the_csv, parse_the_rows, the_label_to_mixedcase_index
+from scripts.prepare_the_dataset import ORIENTATION_TRANSFORMS, convert_the_csv, parse_the_rows, the_label_to_mixedcase_index
 
 
 class PrepareTheDatasetTests(unittest.TestCase):
@@ -30,6 +31,16 @@ class PrepareTheDatasetTests(unittest.TestCase):
         self.assertEqual(images.dtype, torch.float32)
         self.assertEqual(targets.tolist(), [36, 35])
 
+    def test_parse_rows_transposes_version_four_pixels_by_default(self) -> None:
+        pixels = np.zeros((28, 28), dtype=np.float32)
+        pixels[2, 25] = 1.0
+
+        transposed = ORIENTATION_TRANSFORMS["transpose"](pixels)
+        raw = ORIENTATION_TRANSFORMS["raw"](pixels)
+
+        self.assertEqual(float(transposed[25, 2]), 1.0)
+        self.assertEqual(float(raw[2, 25]), 1.0)
+
     def test_convert_csv_writes_cache_and_summary(self) -> None:
         with tempfile.TemporaryDirectory() as workspace:
             csv_path = Path(workspace) / "version4.csv"
@@ -46,6 +57,7 @@ class PrepareTheDatasetTests(unittest.TestCase):
 
         self.assertEqual(report["images"], 2)
         self.assertEqual(report["classes"], 2)
+        self.assertEqual(report["orientation"], "transpose")
         self.assertEqual(cache["targets"].tolist(), [36, 10])
 
     def test_parse_rows_rejects_bad_column_count(self) -> None:

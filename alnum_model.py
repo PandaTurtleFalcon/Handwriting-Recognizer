@@ -658,6 +658,17 @@ def load_mixedcase_extra_cache(root: Path) -> tuple[torch.Tensor, torch.Tensor]:
     return build_or_load_mixedcase_ascii_folder_cache(root)
 
 
+def limit_mixedcase_extra_cache(
+    images: torch.Tensor,
+    targets: torch.Tensor,
+    samples_per_class: int | None,
+    seed: int,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """Optionally cap an extra mixed-case dataset per class."""
+
+    return _limit_per_class(images, targets, samples_per_class, seed)
+
+
 def build_or_load_emnist_byclass_folded_cache(train: bool) -> tuple[torch.Tensor, torch.Tensor]:
     """Load EMNIST ByClass, folding lowercase samples into uppercase labels.
 
@@ -1293,6 +1304,7 @@ def make_mixedcase_loaders(
     nist_samples_per_class: int = 1200,
     include_corrections: bool = False,
     mixedcase_extra_roots: list[Path] | None = None,
+    mixedcase_extra_samples_per_class: int | None = None,
     augment: bool = False,
 ) -> tuple[DataLoader, DataLoader, DataLoader, DataLoader, DataLoader, np.ndarray]:
     """Build loaders for the 62-class digit/upper/lower recognizer."""
@@ -1338,8 +1350,14 @@ def make_mixedcase_loaders(
             correction_images, correction_targets = corrections
             train_parts.append(_mixedcase_train_dataset(correction_images, correction_targets, augment))
             train_target_parts.append(correction_targets)
-    for extra_root in mixedcase_extra_roots or []:
+    for extra_index, extra_root in enumerate(mixedcase_extra_roots or []):
         extra_images, extra_targets = load_mixedcase_extra_cache(extra_root)
+        extra_images, extra_targets = limit_mixedcase_extra_cache(
+            extra_images,
+            extra_targets,
+            mixedcase_extra_samples_per_class,
+            seed + 1000 + extra_index,
+        )
         train_parts.append(_mixedcase_train_dataset(extra_images, extra_targets, augment))
         train_target_parts.append(extra_targets)
 
@@ -1849,6 +1867,7 @@ def save_mixedcase_checkpoint(
     warm_start: bool = False,
     per_class_accuracy: dict[str, float] | None = None,
     mixedcase_extra_roots: list[Path] | None = None,
+    mixedcase_extra_samples_per_class: int | None = None,
     augment: bool = False,
     upper_loss_weight: float = 1.0,
     lower_loss_weight: float = 1.0,
@@ -1904,6 +1923,7 @@ def save_mixedcase_checkpoint(
                 "min_checkpoint_upper": min_checkpoint_upper,
                 "min_checkpoint_lower": min_checkpoint_lower,
                 "mixedcase_extra_roots": [str(path) for path in (mixedcase_extra_roots or [])],
+                "mixedcase_extra_samples_per_class": mixedcase_extra_samples_per_class,
                 "normalization": {"mean": EMNIST_MEAN, "std": EMNIST_STD},
             },
             MIXEDCASE_WEIGHTS_PATH,
@@ -1941,6 +1961,7 @@ def save_mixedcase_checkpoint(
                 "min_checkpoint_upper": min_checkpoint_upper,
                 "min_checkpoint_lower": min_checkpoint_lower,
                 "mixedcase_extra_roots": [str(path) for path in (mixedcase_extra_roots or [])],
+                "mixedcase_extra_samples_per_class": mixedcase_extra_samples_per_class,
                 "per_class_accuracy": per_class_accuracy or {},
                 "best_checkpoint": best_metrics or {"test_accuracy": best_accuracy},
                 "history": history,
@@ -1967,6 +1988,7 @@ def train_mixedcase(
     include_corrections: bool = False,
     warm_start: bool = False,
     mixedcase_extra_roots: list[Path] | None = None,
+    mixedcase_extra_samples_per_class: int | None = None,
     augment: bool = False,
     upper_loss_weight: float = 1.0,
     lower_loss_weight: float = 1.0,
@@ -2011,6 +2033,7 @@ def train_mixedcase(
         nist_samples_per_class,
         include_corrections,
         mixedcase_extra_roots,
+        mixedcase_extra_samples_per_class,
         augment,
     )
     print(
@@ -2172,6 +2195,7 @@ def train_mixedcase(
             warm_start,
             best_per_class_accuracy,
             mixedcase_extra_roots,
+            mixedcase_extra_samples_per_class,
             augment,
             upper_loss_weight,
             lower_loss_weight,
@@ -2428,6 +2452,12 @@ def main() -> None:
         help="ASCII-code image-folder dataset to append to mixed-case training data.",
     )
     parser.add_argument(
+        "--mixedcase-extra-samples-per-class",
+        type=int,
+        default=None,
+        help="Optional per-class cap for each --mixedcase-extra-root dataset.",
+    )
+    parser.add_argument(
         "--mixedcase-upper-loss-weight",
         type=float,
         default=1.0,
@@ -2538,6 +2568,7 @@ def main() -> None:
             include_corrections=args.include_corrections,
             warm_start=args.warm_start,
             mixedcase_extra_roots=args.mixedcase_extra_root,
+            mixedcase_extra_samples_per_class=args.mixedcase_extra_samples_per_class,
             augment=args.augment,
             upper_loss_weight=args.mixedcase_upper_loss_weight,
             lower_loss_weight=args.mixedcase_lower_loss_weight,

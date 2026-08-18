@@ -25,6 +25,7 @@ from alnum_model import (
     evaluate_mixedcase_breakdown,
     freeze_feature_layers,
     initialize_mixedcase_from_folded_checkpoint,
+    limit_mixedcase_extra_cache,
     load_correction_cache,
     load_mixedcase_extra_cache,
     mixedcase_auxiliary_loss,
@@ -275,6 +276,17 @@ class ExtraAlnumDatasetTests(unittest.TestCase):
 
             with self.assertRaises(RuntimeError):
                 load_mixedcase_extra_cache(cache_path)
+
+    def test_limit_mixedcase_extra_cache_caps_each_class(self) -> None:
+        images = torch.arange(6 * 28 * 28, dtype=torch.float32).reshape(6, 1, 28, 28)
+        targets = torch.tensor([10, 10, 10, 36, 36, 36], dtype=torch.long)
+
+        limited_images, limited_targets = limit_mixedcase_extra_cache(images, targets, 2, seed=7)
+
+        self.assertEqual(tuple(limited_images.shape), (4, 1, 28, 28))
+        counts = torch.bincount(limited_targets, minlength=len(MIXEDCASE_LABELS))
+        self.assertEqual(counts[10].item(), 2)
+        self.assertEqual(counts[36].item(), 2)
 
     def test_freeze_feature_layers_keeps_only_final_classifier_trainable(self) -> None:
         model = MODEL_CLASSES["widecnn"](num_classes=len(MIXEDCASE_LABELS))
