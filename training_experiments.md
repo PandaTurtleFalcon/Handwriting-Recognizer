@@ -767,3 +767,14 @@ restored, so future improvement loops do not repeat known-bad blends.
   - Code path: extended `scripts/calibrate_mixedcase_logits.py --pair-rules` to honor the existing `--objective` flag, require each accepted greedy rule to improve that objective, and report/store objective baselines. Added tests for lowercase-targeted optimization and for rejecting a rule that improves total exact accuracy while regressing lowercase accuracy.
   - Probe results: lowercase-objective pair rules found `0.00%` improvement with the existing floors. Uppercase-objective rules could improve upper exact by `+0.05%`, but lowered total exact and lowercase. Overall-exact rules could improve raw pair-rule exact by `+0.015%`, but shaved lowercase, so no mixed-case artifact was written.
   - Verification: `test_calibrate_mixedcase_logits.py` passed (`9 passed`). Current deployed metrics remain unchanged: mixed-case exact `87.78%`, case-or-visual `98.05%`, digit `95.02%`, upper `84.80%`, lower `73.04%`.
+
+- Rejected lowercase-weighted mixed-case warm-start probes:
+  - Command shape 1: backed up `mixedcase_cnn.pt`, `mixedcase_training_metrics.json`, `mixedcase_logit_bias.pt`, `mixedcase_pair_rules.json`, and `mixedcase_hybrid.json`, then ran one warm-start epoch with `learning_rate=0.000003`, weak labels `Oo0Il1isScCmMuUvV`, weak loss `1.35`, upper loss `1.04`, lower loss `1.12`, folded loss `0.04`, type loss `0.08`, NIST SD19 `800` samples/class, and `samples_per_class=3500`.
+  - Result 1: raw mixed-case exact regressed to `77.02%`; digits were `97.95%`, lower improved to `86.85%`, but upper collapsed to `65.35%`. Artifacts were restored.
+  - Command shape 2: repeated a gentler one-epoch probe with `learning_rate=0.000001`, weak loss `1.10`, upper/lower loss `1.05`, folded loss `0.04`, and type loss `0.12`.
+  - Result 2: raw exact still regressed to `76.93%`; digits were `98.07%`, lower was `86.41%`, but upper collapsed to `67.29%`. Artifacts were restored and the deployed summary returned to mixed-case exact `87.78%`, case-or-visual `98.05%`, digit `95.02%`, upper `84.80%`, lower `73.04%`.
+  - Takeaway: the current training mixture can push lowercase up, but it does so by sacrificing uppercase exactness. The next training attempt should use a case-balanced or two-head objective rather than simple lowercase/weak-label weighting.
+
+- Mixed-case checkpoint objective guard:
+  - Code path: `alnum_model.py --mixed-case` now supports `--mixedcase-checkpoint-objective` with `balanced_group_accuracy`, plus minimum checkpoint floors for case-or-visual, digit, uppercase, and lowercase accuracy. This lets future training runs preserve a checkpoint that improves the weakest split while rejecting epochs like the lowercase-weighted probes above that collapse uppercase.
+  - Verification: `test_extra_alnum_datasets.py` covers balanced scoring and floor rejection, and `alnum_model.py --help` exposes the new CLI flags.

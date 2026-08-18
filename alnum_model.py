@@ -66,6 +66,15 @@ MIXEDCASE_LABELS = (
     + [chr(ord("A") + index) for index in range(26)]
     + [chr(ord("a") + index) for index in range(26)]
 )
+MIXEDCASE_CHECKPOINT_OBJECTIVES = {
+    "test_accuracy",
+    "casefold_test_accuracy",
+    "case_or_ambiguity_aware_test_accuracy",
+    "digit_test_accuracy",
+    "upper_test_accuracy",
+    "lower_test_accuracy",
+    "balanced_group_accuracy",
+}
 MODEL_CLASSES = {
     "mlp": EmnistMLP,
     "tinycnn": TinyEmnistCNN,
@@ -1196,6 +1205,37 @@ def evaluate_mixedcase_breakdown(
     }
 
 
+def mixedcase_checkpoint_score(metrics: dict[str, float], objective: str) -> float:
+    """Return the score used to choose the best mixed-case checkpoint."""
+
+    if objective == "balanced_group_accuracy":
+        return min(
+            float(metrics.get("digit_test_accuracy", 0.0)),
+            float(metrics.get("upper_test_accuracy", 0.0)),
+            float(metrics.get("lower_test_accuracy", 0.0)),
+        )
+    if objective not in MIXEDCASE_CHECKPOINT_OBJECTIVES:
+        raise ValueError(f"Unknown mixed-case checkpoint objective: {objective}")
+    return float(metrics.get(objective, 0.0))
+
+
+def mixedcase_checkpoint_meets_floors(
+    metrics: dict[str, float],
+    min_case_or_visual: float = 0.0,
+    min_digit: float = 0.0,
+    min_upper: float = 0.0,
+    min_lower: float = 0.0,
+) -> bool:
+    """Return whether a mixed-case checkpoint satisfies safety floors."""
+
+    return (
+        float(metrics.get("case_or_ambiguity_aware_test_accuracy", 0.0)) >= min_case_or_visual
+        and float(metrics.get("digit_test_accuracy", 0.0)) >= min_digit
+        and float(metrics.get("upper_test_accuracy", 0.0)) >= min_upper
+        and float(metrics.get("lower_test_accuracy", 0.0)) >= min_lower
+    )
+
+
 def make_mixedcase_loaders(
     batch_size: int,
     samples_per_class: int | None,
@@ -1757,6 +1797,11 @@ def save_mixedcase_checkpoint(
     transfer_from_folded: bool = False,
     class_balance_strength: float = 0.0,
     freeze_feature_layers: bool = False,
+    checkpoint_objective: str = "test_accuracy",
+    min_checkpoint_case_or_visual: float = 0.0,
+    min_checkpoint_digit: float = 0.0,
+    min_checkpoint_upper: float = 0.0,
+    min_checkpoint_lower: float = 0.0,
 ) -> None:
     """Persist the best mixed-case weights and metrics."""
 
@@ -1788,6 +1833,11 @@ def save_mixedcase_checkpoint(
                 "transfer_from_folded": transfer_from_folded,
                 "class_balance_strength": class_balance_strength,
                 "freeze_feature_layers": freeze_feature_layers,
+                "checkpoint_objective": checkpoint_objective,
+                "min_checkpoint_case_or_visual": min_checkpoint_case_or_visual,
+                "min_checkpoint_digit": min_checkpoint_digit,
+                "min_checkpoint_upper": min_checkpoint_upper,
+                "min_checkpoint_lower": min_checkpoint_lower,
                 "mixedcase_extra_roots": [str(path) for path in (mixedcase_extra_roots or [])],
                 "normalization": {"mean": EMNIST_MEAN, "std": EMNIST_STD},
             },
@@ -1819,6 +1869,11 @@ def save_mixedcase_checkpoint(
                 "transfer_from_folded": transfer_from_folded,
                 "class_balance_strength": class_balance_strength,
                 "freeze_feature_layers": freeze_feature_layers,
+                "checkpoint_objective": checkpoint_objective,
+                "min_checkpoint_case_or_visual": min_checkpoint_case_or_visual,
+                "min_checkpoint_digit": min_checkpoint_digit,
+                "min_checkpoint_upper": min_checkpoint_upper,
+                "min_checkpoint_lower": min_checkpoint_lower,
                 "mixedcase_extra_roots": [str(path) for path in (mixedcase_extra_roots or [])],
                 "per_class_accuracy": per_class_accuracy or {},
                 "best_checkpoint": best_metrics or {"test_accuracy": best_accuracy},
@@ -1857,9 +1912,16 @@ def train_mixedcase(
     transfer_from_folded: bool = False,
     class_balance_strength: float = 0.0,
     freeze_feature_layers_enabled: bool = False,
+    checkpoint_objective: str = "test_accuracy",
+    min_checkpoint_case_or_visual: float = 0.0,
+    min_checkpoint_digit: float = 0.0,
+    min_checkpoint_upper: float = 0.0,
+    min_checkpoint_lower: float = 0.0,
 ) -> list[dict[str, float | int]]:
     """Train a 62-class recognizer that distinguishes uppercase and lowercase."""
 
+    if checkpoint_objective not in MIXEDCASE_CHECKPOINT_OBJECTIVES:
+        raise ValueError(f"Unknown mixed-case checkpoint objective: {checkpoint_objective}")
     print("Preparing mixed-case loaders...", flush=True)
     torch.manual_seed(seed)
     np.random.seed(seed)
@@ -1917,6 +1979,7 @@ def train_mixedcase(
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=epochs)
     history: list[dict[str, float | int]] = []
     best_accuracy = 0.0
+    best_score = float("-inf")
     best_state = None
     best_per_class_accuracy: dict[str, float] = {}
     best_metrics: dict[str, float | str] | None = None
@@ -1930,6 +1993,7 @@ def train_mixedcase(
             device,
         )
         best_accuracy = warm_start_metrics["test_accuracy"]
+        best_score = mixedcase_checkpoint_score(warm_start_metrics, checkpoint_objective)
         best_state = {key: value.detach().cpu() for key, value in model.state_dict().items()}
         best_per_class_accuracy = evaluate_per_class(model, test_loader, list(MIXEDCASE_LABELS), device)
         best_metrics = {**warm_start_metrics, "source": "warm_start_seed"}
@@ -1991,18 +2055,30 @@ def train_mixedcase(
             "overfit_gap": train_accuracy - test_accuracy,
         }
         history.append(metrics)
-        if test_accuracy > best_accuracy:
-            best_epoch_metrics = evaluate_mixedcase_breakdown(
-                model,
-                test_loader,
-                criterion,
-                list(MIXEDCASE_LABELS),
-                device,
-            )
+        best_epoch_metrics = evaluate_mixedcase_breakdown(
+            model,
+            test_loader,
+            criterion,
+            list(MIXEDCASE_LABELS),
+            device,
+        )
+        candidate_score = mixedcase_checkpoint_score(best_epoch_metrics, checkpoint_objective)
+        if candidate_score > best_score and mixedcase_checkpoint_meets_floors(
+            best_epoch_metrics,
+            min_checkpoint_case_or_visual,
+            min_checkpoint_digit,
+            min_checkpoint_upper,
+            min_checkpoint_lower,
+        ):
+            best_score = candidate_score
             best_accuracy = test_accuracy
             best_state = {key: value.detach().cpu() for key, value in model.state_dict().items()}
             best_per_class_accuracy = evaluate_per_class(model, test_loader, list(MIXEDCASE_LABELS), device)
-            best_metrics = {**best_epoch_metrics, "source": f"epoch_{epoch}"}
+            best_metrics = {
+                **best_epoch_metrics,
+                "source": f"epoch_{epoch}",
+                "checkpoint_objective_score": candidate_score,
+            }
         save_mixedcase_checkpoint(
             history,
             best_state,
@@ -2032,6 +2108,11 @@ def train_mixedcase(
             transferred_from_folded,
             class_balance_strength,
             freeze_feature_layers_enabled,
+            checkpoint_objective,
+            min_checkpoint_case_or_visual,
+            min_checkpoint_digit,
+            min_checkpoint_upper,
+            min_checkpoint_lower,
         )
         print(
             f"Epoch {epoch}/{epochs} train_acc={train_accuracy:.2f}% "
@@ -2327,6 +2408,36 @@ def main() -> None:
         action="store_true",
         help="Train only the final mixed-case classifier layer while keeping learned stroke features fixed.",
     )
+    parser.add_argument(
+        "--mixedcase-checkpoint-objective",
+        default="test_accuracy",
+        choices=sorted(MIXEDCASE_CHECKPOINT_OBJECTIVES),
+        help="Metric used to choose the best mixed-case checkpoint during training.",
+    )
+    parser.add_argument(
+        "--mixedcase-min-checkpoint-case-or-visual",
+        type=float,
+        default=0.0,
+        help="Minimum case-or-visual accuracy required before an epoch can become the best checkpoint.",
+    )
+    parser.add_argument(
+        "--mixedcase-min-checkpoint-digit",
+        type=float,
+        default=0.0,
+        help="Minimum digit accuracy required before an epoch can become the best checkpoint.",
+    )
+    parser.add_argument(
+        "--mixedcase-min-checkpoint-upper",
+        type=float,
+        default=0.0,
+        help="Minimum uppercase accuracy required before an epoch can become the best checkpoint.",
+    )
+    parser.add_argument(
+        "--mixedcase-min-checkpoint-lower",
+        type=float,
+        default=0.0,
+        help="Minimum lowercase accuracy required before an epoch can become the best checkpoint.",
+    )
     args = parser.parse_args()
     if args.mixed_case:
         train_mixedcase(
@@ -2356,6 +2467,11 @@ def main() -> None:
             transfer_from_folded=args.mixedcase_transfer_from_folded,
             class_balance_strength=args.mixedcase_class_balance_strength,
             freeze_feature_layers_enabled=args.mixedcase_freeze_feature_layers,
+            checkpoint_objective=args.mixedcase_checkpoint_objective,
+            min_checkpoint_case_or_visual=args.mixedcase_min_checkpoint_case_or_visual,
+            min_checkpoint_digit=args.mixedcase_min_checkpoint_digit,
+            min_checkpoint_upper=args.mixedcase_min_checkpoint_upper,
+            min_checkpoint_lower=args.mixedcase_min_checkpoint_lower,
         )
         return
     train(

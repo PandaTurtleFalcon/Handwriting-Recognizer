@@ -27,6 +27,8 @@ from alnum_model import (
     load_correction_cache,
     load_mixedcase_extra_cache,
     mixedcase_auxiliary_loss,
+    mixedcase_checkpoint_meets_floors,
+    mixedcase_checkpoint_score,
     mixedcase_folded_logits,
     mixedcase_folded_targets,
     mixedcase_loss_weights,
@@ -322,6 +324,39 @@ class ExtraAlnumDatasetTests(unittest.TestCase):
         self.assertLess(weights[0].item(), weights[1].item())
         self.assertAlmostEqual(weights[0].item(), 0.7905694, places=5)
         self.assertAlmostEqual(weights[1].item(), 1.5811388, places=5)
+
+    def test_mixedcase_checkpoint_score_can_use_balanced_group_accuracy(self) -> None:
+        """Balanced checkpoint selection should optimize the weakest split."""
+
+        metrics = {
+            "test_accuracy": 90.0,
+            "digit_test_accuracy": 98.0,
+            "upper_test_accuracy": 84.0,
+            "lower_test_accuracy": 73.0,
+        }
+
+        self.assertEqual(mixedcase_checkpoint_score(metrics, "test_accuracy"), 90.0)
+        self.assertEqual(mixedcase_checkpoint_score(metrics, "balanced_group_accuracy"), 73.0)
+
+    def test_mixedcase_checkpoint_floors_reject_group_regressions(self) -> None:
+        """Checkpoint floors should stop lowercase gains that collapse uppercase."""
+
+        metrics = {
+            "case_or_ambiguity_aware_test_accuracy": 98.1,
+            "digit_test_accuracy": 97.9,
+            "upper_test_accuracy": 67.2,
+            "lower_test_accuracy": 86.4,
+        }
+
+        self.assertFalse(
+            mixedcase_checkpoint_meets_floors(
+                metrics,
+                min_case_or_visual=98.0,
+                min_digit=95.0,
+                min_upper=84.0,
+                min_lower=73.0,
+            )
+        )
 
     def test_mixedcase_ambiguity_groups_match_known_lookalikes(self) -> None:
         self.assertTrue(mixedcase_labels_match_with_ambiguity("S", "s"))
