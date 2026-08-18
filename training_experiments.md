@@ -1155,3 +1155,9 @@ restored, so future improvement loops do not repeat known-bad blends.
   - Result: no model artifact changed. The scan found only `1` unique usable character checkpoint and `27` duplicate checkpoint hashes, so there is no complementary saved character model to ensemble against the deployed stack.
   - Verification: `test_character_checkpoint_ensemble.py` passed (`5 passed`), and the probe output was saved to `tmp/character_checkpoint_ensemble_probe.json`.
   - Takeaway: ensemble work is only worth revisiting after a future training run preserves a genuinely different checkpoint. Current backups are mostly snapshots of the same deployed character model.
+
+- Rejected character test-time shift averaging:
+  - Code path: ran an inline no-artifact validation probe that averaged deployed character logits across small translated tensor variants (`cross1`, `diag1`, and `cross2`) before taking argmax.
+  - Result: no artifact changed. Baseline exact was `94.1477%`; one-pixel cross averaging fell to `92.8619%`, diagonal one-pixel averaging fell to `92.3608%`, and two-pixel cross averaging fell to `92.4364%`. Digit, letter, and punctuation splits all regressed.
+  - Verification: the probe used the deployed character model, current metric extra roots, and the same stratified validation split as the character diagnostics.
+  - Takeaway: naive TTA is harmful because the current checkpoint is sensitive to centering and shift averaging blurs already-narrow visual-twin margins. Future inference-side work should use learned confidence/geometry gates, not unconditional crop shifts.
