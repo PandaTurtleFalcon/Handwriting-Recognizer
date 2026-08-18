@@ -108,12 +108,20 @@ def _test_tensors() -> tuple[torch.Tensor, torch.Tensor]:
     return torch.cat([mnist_images, byclass_images]), torch.cat([mnist_targets, byclass_targets])
 
 
-def _model_outputs(batch_size: int) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, list[str]]:
+def _model_outputs(
+    batch_size: int,
+    mixedcase_weights_path: Path = MIXEDCASE_WEIGHTS_PATH,
+    folded_weights_path: Path = WEIGHTS_PATH,
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, list[str]]:
     """Return calibrated mixed logits, folded logits, targets, and labels."""
 
     device = get_device()
-    mixed_model, mixed_labels = load_mixedcase_model(device=device, hybrid_path=None)
-    folded_model, folded_labels = load_alnum_model(device=device)
+    mixed_model, mixed_labels = load_mixedcase_model(
+        weights_path=mixedcase_weights_path,
+        device=device,
+        hybrid_path=None,
+    )
+    folded_model, folded_labels = load_alnum_model(folded_weights_path, device=device)
     if mixed_model is None or folded_model is None or mixed_labels is None or folded_labels is None:
         raise RuntimeError("Mixed-case or folded alnum checkpoint is missing.")
     if list(mixed_labels) != list(MIXEDCASE_LABELS) or list(folded_labels) != list(LABELS):
@@ -277,6 +285,8 @@ def _candidate_artifacts(
 
 def calibrate_hybrid(
     output_path: Path = MIXEDCASE_HYBRID_PATH,
+    mixedcase_weights_path: Path = MIXEDCASE_WEIGHTS_PATH,
+    folded_weights_path: Path = WEIGHTS_PATH,
     batch_size: int = 4096,
     labels_to_tune: str = "ABCDEFGHIJKLMNOPQRSTUVWXYZ",
     case_thresholds: tuple[float, ...] = (-2.0, -1.5, -1.0, -0.5, -0.25, -0.1, 0.0, 0.1, 0.25, 0.5, 1.0, 1.5, 2.0),
@@ -294,7 +304,11 @@ def calibrate_hybrid(
 ) -> dict[str, object]:
     """Greedily tune hybrid thresholds while preserving metric floors."""
 
-    mixed_outputs, folded_outputs, targets, labels = _model_outputs(batch_size)
+    mixed_outputs, folded_outputs, targets, labels = _model_outputs(
+        batch_size,
+        mixedcase_weights_path=mixedcase_weights_path,
+        folded_weights_path=folded_weights_path,
+    )
     artifact = _load_hybrid_artifact(output_path)
     base_predictions = hybrid_predictions(mixed_outputs, folded_outputs, artifact)
     base_metrics = hybrid_metrics(base_predictions, targets, labels)
@@ -359,8 +373,8 @@ def calibrate_hybrid(
                 "enabled": True,
                 "source": "greedy_hybrid_threshold_calibration",
                 "labels": labels,
-                "mixedcase_checkpoint_sha256": _file_sha256(MIXEDCASE_WEIGHTS_PATH),
-                "folded_checkpoint_sha256": _file_sha256(WEIGHTS_PATH),
+                "mixedcase_checkpoint_sha256": _file_sha256(mixedcase_weights_path),
+                "folded_checkpoint_sha256": _file_sha256(folded_weights_path),
                 "mixedcase_logit_bias_sha256": _file_sha256(MIXEDCASE_LOGIT_BIAS_PATH),
                 "mixedcase_pair_rules_sha256": _file_sha256(MIXEDCASE_PAIR_RULES_PATH),
                 "base_objective": _objective(base_metrics, objective),
@@ -382,6 +396,8 @@ def calibrate_hybrid(
         "steps": steps,
         "wrote": wrote,
         "output_path": str(output_path),
+        "mixedcase_weights_path": str(mixedcase_weights_path),
+        "folded_weights_path": str(folded_weights_path),
     }
 
 
@@ -421,6 +437,8 @@ def main() -> None:
 
     parser = argparse.ArgumentParser(description="Calibrate the mixed-case hybrid threshold artifact.")
     parser.add_argument("--output-path", type=Path, default=MIXEDCASE_HYBRID_PATH)
+    parser.add_argument("--mixedcase-weights-path", type=Path, default=MIXEDCASE_WEIGHTS_PATH)
+    parser.add_argument("--folded-weights-path", type=Path, default=WEIGHTS_PATH)
     parser.add_argument("--batch-size", type=int, default=4096)
     parser.add_argument("--labels", default="ABCDEFGHIJKLMNOPQRSTUVWXYZ")
     parser.add_argument("--case-thresholds", default="-2,-1.5,-1,-0.5,-0.25,-0.1,0,0.1,0.25,0.5,1,1.5,2")
@@ -449,6 +467,8 @@ def main() -> None:
 
     report = calibrate_hybrid(
         output_path=args.output_path,
+        mixedcase_weights_path=args.mixedcase_weights_path,
+        folded_weights_path=args.folded_weights_path,
         batch_size=args.batch_size,
         labels_to_tune=args.labels,
         case_thresholds=_float_tuple(args.case_thresholds),

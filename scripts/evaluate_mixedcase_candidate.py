@@ -17,6 +17,7 @@ if str(PROJECT_DIR) not in sys.path:
     sys.path.insert(0, str(PROJECT_DIR))
 
 from alnum_model import (  # noqa: E402
+    MIXEDCASE_HYBRID_PATH,
     MIXEDCASE_LABELS,
     MIXEDCASE_WEIGHTS_PATH,
     MODEL_CLASSES,
@@ -74,6 +75,7 @@ def evaluate_candidate(
     mode: str = "raw",
     sample_limit: int | None = None,
     allow_deployed_calibration: bool = False,
+    hybrid_artifact_path: Path | None = None,
 ) -> dict[str, object]:
     """Evaluate one candidate checkpoint and return benchmark-style metrics."""
 
@@ -88,13 +90,27 @@ def evaluate_candidate(
     model = load_candidate_checkpoint(checkpoint_path, device)
     images, targets = candidate_test_tensors(sample_limit=sample_limit)
     if mode == "hybrid":
-        if checkpoint_path.resolve() != MIXEDCASE_WEIGHTS_PATH.resolve() and not allow_deployed_calibration:
+        artifact_path = hybrid_artifact_path
+        if artifact_path is None and checkpoint_path.resolve() == MIXEDCASE_WEIGHTS_PATH.resolve():
+            artifact_path = MIXEDCASE_HYBRID_PATH
+        if artifact_path is None and not allow_deployed_calibration:
             raise RuntimeError(
-                "Hybrid candidate evaluation would reuse deployed mixed-case calibration artifacts. "
-                "Use --mode raw for candidate checkpoints, or pass --allow-deployed-calibration "
-                "only for an explicit diagnostic."
+                "Hybrid candidate evaluation needs a candidate-specific hybrid artifact. "
+                "Use --mode raw, pass --hybrid-artifact-path, or pass --allow-deployed-calibration "
+                "only for an explicit diagnostic using deployed calibration."
             )
-        metrics = hybrid_stack_metrics(model, images, targets, device, batch_size, apply_calibration=True)
+        if artifact_path is None:
+            artifact_path = MIXEDCASE_HYBRID_PATH
+        uses_deployed_checkpoint = checkpoint_path.resolve() == MIXEDCASE_WEIGHTS_PATH.resolve()
+        metrics = hybrid_stack_metrics(
+            model,
+            images,
+            targets,
+            device,
+            batch_size,
+            apply_calibration=uses_deployed_checkpoint or allow_deployed_calibration,
+            hybrid_artifact_path=artifact_path,
+        )
     elif mode == "raw":
         loader = DataLoader(TensorDataset(images, targets), batch_size=batch_size, shuffle=False)
         criterion = nn.CrossEntropyLoss()
@@ -109,6 +125,7 @@ def evaluate_candidate(
     return {
         "checkpoint_path": str(checkpoint_path),
         "mode": mode,
+        "hybrid_artifact_path": str(hybrid_artifact_path) if hybrid_artifact_path is not None else None,
         "sample_limit": sample_limit,
         "total_examples": int(targets.numel()),
         "metrics": metrics,
@@ -240,6 +257,12 @@ def main() -> None:
         action="store_true",
         help="Allow hybrid diagnostics for non-deployed checkpoints using deployed calibration artifacts.",
     )
+    parser.add_argument(
+        "--hybrid-artifact-path",
+        type=Path,
+        default=None,
+        help="Candidate-specific hybrid artifact to use for --mode hybrid.",
+    )
     parser.add_argument("--sample-limit", type=int, default=None)
     parser.add_argument("--target", type=float, default=95.0)
     parser.add_argument("--baseline-json", type=Path, default=None)
@@ -270,6 +293,7 @@ def main() -> None:
         mode=args.mode,
         sample_limit=args.sample_limit,
         allow_deployed_calibration=args.allow_deployed_calibration,
+        hybrid_artifact_path=args.hybrid_artifact_path,
     )
     target_rows = gate_rows(report["metrics"], args.target)
     baseline_metrics = read_baseline_metrics(args.baseline_json)

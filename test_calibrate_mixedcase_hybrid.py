@@ -135,6 +135,46 @@ class MixedcaseHybridCalibrationTests(unittest.TestCase):
         self.assertEqual(report["calibrated_objective"], report["base_objective"])
         self.assertFalse(output_path.exists())
 
+    def test_calibrate_hybrid_accepts_candidate_checkpoint_paths(self) -> None:
+        """Candidate calibration should not be forced through deployed weights."""
+
+        mixed_outputs = torch.full((1, len(MIXEDCASE_LABELS)), -10.0)
+        folded_outputs = torch.full((1, len(LABELS)), -10.0)
+        labels = list(MIXEDCASE_LABELS)
+        target = labels.index("A")
+        mixed_outputs[0, target] = 5.0
+        folded_outputs[0, LABELS.index("A")] = 5.0
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            mixed_path = Path(temp_dir) / "candidate.pt"
+            folded_path = Path(temp_dir) / "folded.pt"
+            output_path = Path(temp_dir) / "candidate_hybrid.json"
+            with patch(
+                "scripts.calibrate_mixedcase_hybrid._model_outputs",
+                return_value=(mixed_outputs, folded_outputs, torch.tensor([target]), labels),
+            ) as model_outputs:
+                report = calibrate_hybrid(
+                    output_path=output_path,
+                    mixedcase_weights_path=mixed_path,
+                    folded_weights_path=folded_path,
+                    batch_size=4,
+                    labels_to_tune="A",
+                    case_thresholds=(),
+                    confidence_thresholds=(),
+                    margin_thresholds=(),
+                    rounds=0,
+                    min_improvement=0.0,
+                    write=False,
+                )
+
+        model_outputs.assert_called_once_with(
+            4,
+            mixedcase_weights_path=mixed_path,
+            folded_weights_path=folded_path,
+        )
+        self.assertEqual(report["mixedcase_weights_path"], str(mixed_path))
+        self.assertEqual(report["folded_weights_path"], str(folded_path))
+
 
 if __name__ == "__main__":
     unittest.main()

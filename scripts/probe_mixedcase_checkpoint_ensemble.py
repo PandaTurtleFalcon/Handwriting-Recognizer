@@ -17,6 +17,7 @@ if str(PROJECT_DIR) not in sys.path:
     sys.path.insert(0, str(PROJECT_DIR))
 
 from alnum_model import (  # noqa: E402
+    MIXEDCASE_HYBRID_PATH,
     MIXEDCASE_LABELS,
     MIXEDCASE_LOGIT_BIAS_PATH,
     MIXEDCASE_PAIR_RULES_PATH,
@@ -139,6 +140,7 @@ def hybrid_stack_metrics(
     device: torch.device,
     batch_size: int,
     apply_calibration: bool = True,
+    hybrid_artifact_path: Path = MIXEDCASE_HYBRID_PATH,
 ) -> dict[str, float]:
     """Evaluate mixed logits after the deployed folded-hybrid decision layer."""
 
@@ -146,7 +148,7 @@ def hybrid_stack_metrics(
     folded_expected = [str(index) for index in range(10)] + [chr(ord("A") + index) for index in range(26)]
     if folded_model is None or list(folded_labels or []) != folded_expected:
         raise RuntimeError("Folded alnum model is required for hybrid ensemble probing.")
-    artifact = _load_hybrid_artifact()
+    artifact = _load_hybrid_artifact(hybrid_artifact_path)
     bias = load_current_logit_bias(device) if apply_calibration else None
     pair_rules = _load_existing_pair_rules(MIXEDCASE_PAIR_RULES_PATH, list(MIXEDCASE_LABELS)) if apply_calibration else []
     loader = DataLoader(TensorDataset(images, targets), batch_size=batch_size, shuffle=False)

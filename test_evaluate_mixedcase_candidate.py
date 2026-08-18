@@ -170,8 +170,44 @@ class MixedcaseCandidateEvaluatorTests(unittest.TestCase):
                 ),
                 patch("scripts.evaluate_mixedcase_candidate.load_candidate_checkpoint", return_value=FixedModel()),
             ):
-                with self.assertRaisesRegex(RuntimeError, "deployed mixed-case calibration"):
+                with self.assertRaisesRegex(RuntimeError, "candidate-specific hybrid artifact"):
                     evaluate_candidate(checkpoint_path, device_name="cpu", mode="hybrid")
+
+    def test_hybrid_mode_uses_explicit_candidate_artifact_path(self) -> None:
+        class FixedModel(torch.nn.Module):
+            def forward(self, inputs: torch.Tensor) -> torch.Tensor:
+                return torch.zeros((inputs.size(0), len(MIXEDCASE_LABELS)))
+
+        with tempfile.TemporaryDirectory() as directory:
+            checkpoint_path = Path(directory) / "candidate.pt"
+            artifact_path = Path(directory) / "candidate_hybrid.json"
+            with (
+                patch(
+                    "scripts.evaluate_mixedcase_candidate.candidate_test_tensors",
+                    return_value=(torch.zeros((1, 1, 28, 28)), torch.zeros(1, dtype=torch.long)),
+                ),
+                patch("scripts.evaluate_mixedcase_candidate.load_candidate_checkpoint", return_value=FixedModel()),
+                patch(
+                    "scripts.evaluate_mixedcase_candidate.hybrid_stack_metrics",
+                    return_value={
+                        "test_accuracy": 1.0,
+                        "case_or_ambiguity_aware_test_accuracy": 1.0,
+                        "digit_test_accuracy": 1.0,
+                        "upper_test_accuracy": 1.0,
+                        "lower_test_accuracy": 1.0,
+                    },
+                ) as stack_metrics,
+            ):
+                report = evaluate_candidate(
+                    checkpoint_path,
+                    device_name="cpu",
+                    mode="hybrid",
+                    hybrid_artifact_path=artifact_path,
+                )
+
+        self.assertEqual(report["hybrid_artifact_path"], str(artifact_path))
+        self.assertEqual(stack_metrics.call_args.kwargs["hybrid_artifact_path"], artifact_path)
+        self.assertFalse(stack_metrics.call_args.kwargs["apply_calibration"])
 
 
 if __name__ == "__main__":
