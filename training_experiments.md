@@ -1064,3 +1064,10 @@ restored, so future improvement loops do not repeat known-bad blends.
   - Rejected probe: validation-only character pair/bias calibration found no safe move (`letter_validation_accuracy` stayed `93.5908%`, `improvement: 0.0`) under floors for exact, ambiguity, digit, letter, and punctuation metrics, so no calibration artifact was written.
   - Verification: focused tests passed (`6 passed`), `scripts/evaluate_hardcases.py --uploaded-fixtures --json` reported uploaded cleaned and raw exact `1/1`, and `scripts/summarize_benchmarks.py --include-uploaded-hardcases --json` now reports uploaded raw exact `100.0%`. Global model gates are unchanged: character exact `94.1666%`, character letter `93.5908%`, mixed-case exact `87.7774%`.
   - Takeaway: repeat uploads with exact saved labels now behave correctly, but this is an app/user-correction improvement rather than a general model accuracy gain.
+
+- Mixed-case hybrid ceiling pass:
+  - Code path: ran `scripts/calibrate_mixedcase_hybrid.py` with expanded threshold grids, objective `balanced_group_accuracy`, and strict floors for exact, case-or-visual, digit, upper, and lower metrics.
+  - Result: accepted. Added `folded_confidence_thresholds.R = 0.3` to `mixedcase_hybrid.json`. The calibration script rewrote the artifact's `steps` array to the latest accepted step while preserving previously calibrated threshold maps such as `letter_case_thresholds.Z = -0.5`.
+  - Verification: write command passed app gates (`clean_exact=100.0%`, `script_exact=95.56%`), `scripts/summarize_benchmarks.py --include-uploaded-hardcases --json` moved mixed-case exact from `87.7774%` to `87.7782%` and lower exact from `73.1476%` to `73.1513%`, with digit `95.0249%`, upper `84.7030%`, case-or-visual `98.0479%`, and uploaded raw `100.0%`.
+  - Rejected/flat probes: mixed-case pair-rule and greedy-bias dry-runs found no safe rules/steps under the same floors; both stayed at raw-stack exact `87.5320%` with `0` accepted steps.
+  - Takeaway: post-hoc hybrid tuning is nearly exhausted. The next meaningful mixed-case work should be a top-family specialist/adviser probe rather than another broad warm-start.

@@ -90,7 +90,8 @@
     "I": 0.4,
     "K": 0.4,
     "O": 0.0,
-    "P": 0.85
+    "P": 0.85,
+    "R": 0.3
   },
   "folded_margin_thresholds": {
     "C": -999.0,
@@ -116,11 +117,11 @@
   "mixedcase_logit_bias_sha256": "366e93c61e1fceab31814d690a78a9f933b4fb9ba797074d8a09480a2732a8b4",
   "mixedcase_pair_rules_sha256": "397ff0c70fb82ac7e97e1536c88d757b1ec4a8e124cf45d52be1d4f71b521450",
   "best_checkpoint": {
-    "test_accuracy": 87.7773642539978,
-    "case_or_ambiguity_aware_test_accuracy": 98.04707169532776,
+    "test_accuracy": 87.77815699577332,
+    "case_or_ambiguity_aware_test_accuracy": 98.0478584766388,
     "digit_test_accuracy": 95.02488374710083,
     "upper_test_accuracy": 84.70299243927002,
-    "lower_test_accuracy": 73.14756512641907
+    "lower_test_accuracy": 73.15126061439514
   },
   "notes": [
     "Uses the folded 36-class alnum model for letter identity only when the mixed-case model already predicts an alphabetic class and the folded prediction clears confidence and margin gates.",
@@ -128,20 +129,20 @@
     "Mixed-case digit top-1 predictions stay unchanged because folded identity reduced EMNIST ByClass digit accuracy when allowed to override them.",
     "Still below the 95% exact target; lower-case exact remains the largest verified gap."
   ],
-  "base_objective": 73.04039597511292,
-  "calibrated_objective": 73.14756512641907,
+  "base_objective": 73.14756512641907,
+  "calibrated_objective": 73.15126061439514,
   "objective": "balanced_group_accuracy",
   "steps": [
     {
       "round": 1,
-      "change": "letter_case_thresholds.Z=-0.5",
+      "change": "folded_confidence_thresholds.R=0.3",
       "objective": "balanced_group_accuracy",
-      "objective_value": 73.14756512641907,
-      "test_accuracy": 87.7773642539978,
-      "case_or_ambiguity_aware_test_accuracy": 98.04707169532776,
+      "objective_value": 73.15126061439514,
+      "test_accuracy": 87.77815699577332,
+      "case_or_ambiguity_aware_test_accuracy": 98.0478584766388,
       "digit_test_accuracy": 95.02488374710083,
       "upper_test_accuracy": 84.70299243927002,
-      "lower_test_accuracy": 73.14756512641907
+      "lower_test_accuracy": 73.15126061439514
     }
   ]
 }
