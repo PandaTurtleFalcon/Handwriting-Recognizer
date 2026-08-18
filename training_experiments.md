@@ -1032,3 +1032,9 @@ restored, so future improvement loops do not repeat known-bad blends.
   - Result: no model artifacts changed. The current app displays `look behind\nyou`, while raw recognition remains `lOokbeh'ndyo4`, so the immediate browser confusion is fixed without claiming the base recognizer solved the phrase.
   - Verification: `test_web_app.py test_context_rules.py test_evaluate_hardcases.py` passed (`147 passed`), `scripts/evaluate_hardcases.py --uploaded-fixtures --json` reported cleaned uploaded hardcase `1/1` and raw `0/1`, and `scripts/summarize_benchmarks.py --include-uploaded-hardcases --json` kept the deployed baseline.
   - Takeaway: final vs raw output is now harder to confuse in the website, and the revision badge should reveal stale server/browser state faster.
+
+- CVL large-download resume guard:
+  - Code path: changed `scripts/download_cvl_dataset.py` to resume an existing `.part` file with an HTTP `Range` request when the server returns partial content, and to overwrite the partial file when the server ignores Range and returns a full response.
+  - Result: no dataset or model artifact changed by this patch. The current full CVL archive download is still running under ignored `data/cvl/cvl-database-1-1.zip.part`, but future retries should not waste an already-downloaded multi-GB partial file when the server supports resume.
+  - Verification: `test_download_cvl_dataset.py test_prepare_cvl_letters.py test_web_app.py` passed (`110 passed`).
+  - Takeaway: the CVL acquisition path is less fragile before running the next mixed-case letter-crop experiment.

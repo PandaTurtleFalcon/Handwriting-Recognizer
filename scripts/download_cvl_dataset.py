@@ -10,10 +10,13 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import shutil
 import sys
 import urllib.request
 import zipfile
 from dataclasses import dataclass
+from http import HTTPStatus
+from http.client import HTTPResponse
 from pathlib import Path
 from typing import Any
 
@@ -107,6 +110,40 @@ def archive_is_complete(path: Path, archive: CvlArchive) -> bool:
     return expected_md5 is None or file_md5(path) == expected_md5
 
 
+def _response_status(response: HTTPResponse) -> int:
+    """Return a urllib response status code across Python response types."""
+
+    status = getattr(response, "status", None)
+    if status is not None:
+        return int(status)
+    getcode = getattr(response, "getcode", None)
+    if callable(getcode):
+        return int(getcode())
+    return int(HTTPStatus.OK)
+
+
+def _download_to_temporary(
+    url: str,
+    temporary: Path,
+    opener=urllib.request.urlopen,
+) -> None:
+    """Download a URL to a `.part` file, resuming when the server allows it."""
+
+    existing_size = temporary.stat().st_size if temporary.exists() else 0
+    headers = {"Range": f"bytes={existing_size}-"} if existing_size > 0 else {}
+    request = urllib.request.Request(url, headers=headers)
+    with opener(request, timeout=30) as response:
+        status = _response_status(response)
+        if existing_size > 0 and status == HTTPStatus.PARTIAL_CONTENT:
+            mode = "ab"
+        elif status == HTTPStatus.OK:
+            mode = "wb"
+        else:
+            raise RuntimeError(f"Download failed with HTTP status {status}.")
+        with temporary.open(mode) as handle:
+            shutil.copyfileobj(response, handle, length=1024 * 1024)
+
+
 def download_archive(archive: CvlArchive, output_root: Path) -> Path:
     """Download one CVL archive unless a verified copy already exists."""
 
@@ -115,7 +152,7 @@ def download_archive(archive: CvlArchive, output_root: Path) -> Path:
     if archive_is_complete(destination, archive):
         return destination
     temporary = destination.with_suffix(destination.suffix + ".part")
-    urllib.request.urlretrieve(archive.url, temporary)
+    _download_to_temporary(archive.url, temporary)
     if archive.size and temporary.stat().st_size != archive.size:
         raise RuntimeError(f"Downloaded {archive.key} has unexpected size: {temporary.stat().st_size}")
     expected_md5 = archive.md5
