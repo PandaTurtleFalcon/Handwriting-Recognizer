@@ -938,3 +938,9 @@ restored, so future improvement loops do not repeat known-bad blends.
   - Result: rejected as "new data" because it is already the base character dataset, not an unused source.
   - Source: https://github.com/sueiras/handwritting_characters_database
   - Takeaway: next dataset work should target a genuinely distinct source or more user-labeled crops for visual families, not re-import the existing curated UNIPEN/Sueiras-style root.
+
+- Rejected mixed-case checkpoint-ensemble route:
+  - Code path: added `scripts/probe_mixedcase_checkpoint_ensemble.py`, a non-deploying probe that can evaluate raw mixed-case checkpoints or two-checkpoint averaged-logit ensembles through the same deployed bias, pair-rule, and folded-hybrid serving order.
+  - Result: rejected/no candidate. A hash scan found only `1` unique mixed-case checkpoint among `35` current and backup `mixedcase_cnn.pt` files (`34` duplicate checkpoint hashes), so there is no complementary saved checkpoint to ensemble.
+  - Verification: `scripts/probe_mixedcase_checkpoint_ensemble.py --candidate-limit 16 --batch-size 8192 --min-delta 0.01` reported baseline exact `87.7774%`, `unique_checkpoint_count=1`, `candidate_count=0`, and no accepted improvement. `test_mixedcase_checkpoint_ensemble.py`, `test_mixedcase_feature_reranker.py`, and `test_mixedcase_headroom.py` passed together (`6 passed`).
+  - Takeaway: ensemble work needs genuinely different future checkpoints saved before it can move mixed-case exact. Current backups are snapshots of the same model, not independent models.
