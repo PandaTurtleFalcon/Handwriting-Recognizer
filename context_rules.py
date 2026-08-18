@@ -145,7 +145,9 @@ def _clean_common_words(text: str) -> tuple[str, list[str]]:
 
     replacements = {
         "Heiio": "Hello",
+        "HeiiO": "Hello",
         "heiio": "hello",
+        "heiiO": "hello",
         "He11o": "Hello",
         "he11o": "hello",
         "He110": "Hello",
@@ -180,6 +182,7 @@ def _clean_common_words(text: str) -> tuple[str, list[str]]:
         "PP": "Pp",
         "2ZZ": "2Zz",
         "TT7": "Tt7",
+        "TtT": "Tt7",
         "zT": "27",
         "z7": "27",
         "2P": "27",
@@ -239,9 +242,9 @@ def _clean_numeric_group_edges(text: str) -> tuple[str, list[str]]:
 
 
 def _drop_stray_greeting_punctuation_row(rows: list[str]) -> tuple[list[str], list[str]]:
-    """Drop the isolated colon row produced by a known Hi correction case."""
+    """Drop an isolated punctuation row produced by a known Hi correction case."""
 
-    if len(rows) == 2 and rows[0] == "Hi" and rows[1] == ":":
+    if len(rows) == 2 and rows[0] == "Hi" and rows[1] in {":", "."}:
         return ["Hi"], ["Dropped an isolated punctuation row after the greeting 'Hi'."]
     return rows, []
 

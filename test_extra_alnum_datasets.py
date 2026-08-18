@@ -11,12 +11,14 @@ from PIL import Image, ImageDraw
 
 from alnum_model import (
     AugmentedTensorDataset,
+    HybridMixedcaseModel,
     LABELS,
     MIXEDCASE_LABELS,
     MODEL_CLASSES,
     _chars74k_sample_label,
     _mixedcase_train_dataset,
     _nist_sd19_label_from_hex,
+    attach_mixedcase_hybrid,
     attach_mixedcase_pair_rules,
     build_or_load_mixedcase_ascii_folder_cache,
     evaluate_mixedcase_breakdown,
@@ -43,6 +45,66 @@ def tiny_transform(image: Image.Image) -> torch.Tensor:
 
 class ExtraAlnumDatasetTests(unittest.TestCase):
     """Regression tests for optional local alphanumeric datasets."""
+
+    def test_hybrid_mixedcase_uses_folded_identity_for_letters_only(self) -> None:
+        class FixedModel(nn.Module):
+            def __init__(self, outputs: torch.Tensor) -> None:
+                super().__init__()
+                self.outputs = outputs
+
+            def forward(self, inputs: torch.Tensor) -> torch.Tensor:
+                return self.outputs[: inputs.size(0)].clone()
+
+        mixed_outputs = torch.full((3, len(MIXEDCASE_LABELS)), -10.0)
+        mixed_outputs[0, 5] = 8.0
+        mixed_outputs[1, MIXEDCASE_LABELS.index("a")] = 2.0
+        mixed_outputs[1, MIXEDCASE_LABELS.index("A")] = 4.0
+        mixed_outputs[2, MIXEDCASE_LABELS.index("b")] = 4.0
+        mixed_outputs[2, MIXEDCASE_LABELS.index("B")] = 2.0
+        folded_outputs = torch.full((3, len(LABELS)), -10.0)
+        folded_outputs[0, LABELS.index("7")] = 9.0
+        folded_outputs[1, LABELS.index("A")] = 9.0
+        folded_outputs[2, LABELS.index("B")] = 9.0
+
+        model = HybridMixedcaseModel(FixedModel(mixed_outputs), FixedModel(folded_outputs))
+        predictions = model(torch.zeros(3, 1, 28, 28)).argmax(dim=1).tolist()
+
+        self.assertEqual(MIXEDCASE_LABELS[predictions[0]], "5")
+        self.assertEqual(MIXEDCASE_LABELS[predictions[1]], "A")
+        self.assertEqual(MIXEDCASE_LABELS[predictions[2]], "b")
+
+    def test_attach_mixedcase_hybrid_rejects_stale_checkpoint_hashes(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            mixed_weights = root / "mixed.pt"
+            folded_weights = root / "folded.pt"
+            hybrid_path = root / "mixedcase_hybrid.json"
+            mixed_weights.write_bytes(b"current mixed")
+            folded_weights.write_bytes(b"current folded")
+            hybrid_path.write_text(
+                json.dumps(
+                    {
+                        "enabled": True,
+                        "labels": MIXEDCASE_LABELS,
+                        "mixedcase_checkpoint_sha256": "stale",
+                        "folded_checkpoint_sha256": "stale",
+                        "best_checkpoint": {"test_accuracy": 99.0},
+                    }
+                ),
+                encoding="utf-8",
+            )
+            model = nn.Identity()
+
+            wrapped = attach_mixedcase_hybrid(
+                model,
+                list(MIXEDCASE_LABELS),
+                torch.device("cpu"),
+                hybrid_path,
+                mixed_weights,
+                folded_weights,
+            )
+
+        self.assertIs(wrapped, model)
 
     def test_loads_image_folder_classes_into_label_indices(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

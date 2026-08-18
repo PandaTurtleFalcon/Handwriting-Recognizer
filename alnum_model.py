@@ -60,6 +60,7 @@ MIXEDCASE_WEIGHTS_PATH = PROJECT_DIR / "mixedcase_cnn.pt"
 MIXEDCASE_METRICS_PATH = PROJECT_DIR / "mixedcase_training_metrics.json"
 MIXEDCASE_LOGIT_BIAS_PATH = PROJECT_DIR / "mixedcase_logit_bias.pt"
 MIXEDCASE_PAIR_RULES_PATH = PROJECT_DIR / "mixedcase_pair_rules.json"
+MIXEDCASE_HYBRID_PATH = PROJECT_DIR / "mixedcase_hybrid.json"
 MIXEDCASE_LABELS = (
     [str(index) for index in range(10)]
     + [chr(ord("A") + index) for index in range(26)]
@@ -1382,6 +1383,7 @@ def load_mixedcase_model(
     device: torch.device | None = None,
     logit_bias_path: Path | None = MIXEDCASE_LOGIT_BIAS_PATH,
     pair_rules_path: Path | None = MIXEDCASE_PAIR_RULES_PATH,
+    hybrid_path: Path | None = MIXEDCASE_HYBRID_PATH,
 ) -> tuple[nn.Module, list[str]] | tuple[None, None]:
     """Load the trained mixed-case recognizer if its checkpoint exists."""
 
@@ -1399,7 +1401,86 @@ def load_mixedcase_model(
         attach_mixedcase_logit_bias(model, labels, selected_device, logit_bias_path, weights_path)
     if pair_rules_path is not None:
         attach_mixedcase_pair_rules(model, labels, selected_device, pair_rules_path, weights_path)
+    if hybrid_path is not None:
+        model = attach_mixedcase_hybrid(
+            model,
+            labels,
+            selected_device,
+            hybrid_path,
+            weights_path,
+            WEIGHTS_PATH,
+        )
     return model, labels
+
+
+class HybridMixedcaseModel(nn.Module):
+    """Use folded alnum identity plus mixed-case upper/lower logits for letters."""
+
+    def __init__(
+        self,
+        mixedcase_model: nn.Module,
+        folded_model: nn.Module,
+        letter_case_threshold: float = 0.0,
+    ) -> None:
+        super().__init__()
+        self.mixedcase_model = mixedcase_model
+        self.folded_model = folded_model
+        self.letter_case_threshold = float(letter_case_threshold)
+
+    def forward(self, inputs: torch.Tensor) -> torch.Tensor:
+        mixed_outputs = self.mixedcase_model(inputs)
+        folded_outputs = self.folded_model(inputs)
+        folded_predictions = folded_outputs.argmax(dim=1)
+        outputs = mixed_outputs.clone()
+        row_max = outputs.max(dim=1).values + 1e-4
+        for letter_index in range(26):
+            folded_index = 10 + letter_index
+            upper_index = 10 + letter_index
+            lower_index = 36 + letter_index
+            identity_mask = folded_predictions == folded_index
+            if not bool(identity_mask.any()):
+                continue
+            lower_margin = mixed_outputs[:, lower_index] - mixed_outputs[:, upper_index]
+            lower_mask = identity_mask & (lower_margin >= self.letter_case_threshold)
+            upper_mask = identity_mask & ~lower_mask
+            outputs[upper_mask, upper_index] = row_max[upper_mask]
+            outputs[lower_mask, lower_index] = row_max[lower_mask]
+        return outputs
+
+
+def attach_mixedcase_hybrid(
+    model: nn.Module,
+    labels: list[str],
+    device: torch.device,
+    hybrid_path: Path = MIXEDCASE_HYBRID_PATH,
+    mixedcase_weights_path: Path = MIXEDCASE_WEIGHTS_PATH,
+    folded_weights_path: Path = WEIGHTS_PATH,
+) -> nn.Module:
+    """Wrap a mixed-case model with folded identity inference when configured."""
+
+    if not hybrid_path.exists():
+        return model
+    try:
+        artifact = json.loads(hybrid_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return model
+    if not artifact.get("enabled", True) or list(labels) != list(MIXEDCASE_LABELS):
+        return model
+    if not _artifact_hash_matches(artifact, "mixedcase_checkpoint_sha256", mixedcase_weights_path):
+        return model
+    if not _artifact_hash_matches(artifact, "folded_checkpoint_sha256", folded_weights_path):
+        return model
+    folded_model, folded_labels = load_alnum_model(folded_weights_path, device=device)
+    if folded_model is None or list(folded_labels) != list(LABELS):
+        return model
+    wrapped = HybridMixedcaseModel(
+        model,
+        folded_model,
+        letter_case_threshold=float(artifact.get("letter_case_threshold", 0.0)),
+    )
+    wrapped.eval()
+    wrapped.mixedcase_hybrid = artifact  # type: ignore[attr-defined]
+    return wrapped
 
 
 def attach_mixedcase_logit_bias(
@@ -1490,9 +1571,15 @@ def attach_mixedcase_pair_rules(
 def _artifact_matches_checkpoint(artifact: object, weights_path: Path) -> bool:
     """Reject fingerprinted calibration artifacts for a different checkpoint."""
 
+    return _artifact_hash_matches(artifact, "checkpoint_sha256", weights_path)
+
+
+def _artifact_hash_matches(artifact: object, key: str, weights_path: Path) -> bool:
+    """Return whether an artifact hash field matches a checkpoint path."""
+
     if not isinstance(artifact, dict):
         return False
-    expected = artifact.get("checkpoint_sha256")
+    expected = artifact.get(key)
     if not expected:
         return True
     return expected == _file_sha256(weights_path)

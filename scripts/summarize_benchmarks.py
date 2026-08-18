@@ -58,6 +58,7 @@ def summarize_saved_metrics(project_dir: Path = PROJECT_DIR, target: float = 95.
     character_metrics = _read_json(project_dir / "character_training_metrics.json")
     mixed_calibration = _read_mixedcase_calibration(project_dir)
     mixed_pair_rules = _read_mixedcase_pair_rules(project_dir)
+    mixed_hybrid = _read_mixedcase_hybrid(project_dir)
     character_calibration = _read_character_calibration(project_dir)
     character_pair_rules = _read_character_pair_rules(project_dir)
 
@@ -69,6 +70,8 @@ def summarize_saved_metrics(project_dir: Path = PROJECT_DIR, target: float = 95.
         mixed_best = mixed_calibration
     if mixed_pair_rules is not None:
         mixed_best = mixed_pair_rules
+    if mixed_hybrid is not None:
+        mixed_best = mixed_hybrid
     if character_calibration is not None:
         character_best = character_calibration
     if character_pair_rules is not None:
@@ -136,6 +139,29 @@ def _read_mixedcase_pair_rules(project_dir: Path) -> dict[str, object] | None:
     return best if isinstance(best, dict) else None
 
 
+def _read_mixedcase_hybrid(project_dir: Path) -> dict[str, object] | None:
+    """Return mixed-case hybrid metrics when both checkpoint hashes match."""
+
+    hybrid_path = project_dir / "mixedcase_hybrid.json"
+    if not hybrid_path.exists():
+        return None
+    try:
+        from alnum_model import MIXEDCASE_LABELS
+    except ImportError:
+        return None
+    artifact = _read_json(hybrid_path)
+    if not isinstance(artifact, dict) or not artifact.get("enabled", True):
+        return None
+    if list(artifact.get("labels", [])) != list(MIXEDCASE_LABELS):
+        return None
+    if not _artifact_hash_matches(artifact, "mixedcase_checkpoint_sha256", project_dir / "mixedcase_cnn.pt"):
+        return None
+    if not _artifact_hash_matches(artifact, "folded_checkpoint_sha256", project_dir / "alnum_cnn.pt"):
+        return None
+    best = artifact.get("best_checkpoint")
+    return best if isinstance(best, dict) else None
+
+
 def _read_character_calibration(project_dir: Path) -> dict[str, object] | None:
     """Return calibrated character metrics when the optional artifact matches."""
 
@@ -184,9 +210,15 @@ def _read_character_pair_rules(project_dir: Path) -> dict[str, object] | None:
 def _artifact_matches_checkpoint(artifact: object, weights_path: Path) -> bool:
     """Return whether a fingerprinted calibration artifact matches weights."""
 
+    return _artifact_hash_matches(artifact, "checkpoint_sha256", weights_path)
+
+
+def _artifact_hash_matches(artifact: object, key: str, weights_path: Path) -> bool:
+    """Return whether one named artifact digest matches a weights file."""
+
     if not isinstance(artifact, dict):
         return False
-    expected = artifact.get("checkpoint_sha256")
+    expected = artifact.get(key)
     if not expected:
         return True
     return expected == _file_sha256(weights_path)

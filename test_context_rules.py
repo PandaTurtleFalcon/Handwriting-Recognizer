@@ -188,7 +188,9 @@ class ContextRulesTests(unittest.TestCase):
         """Whole-row common words can use strong visual-lookalike cleanup."""
 
         self.assertEqual(cleanup_context("Heiio").display, "Hello")
+        self.assertEqual(cleanup_context("HeiiO").display, "Hello")
         self.assertEqual(cleanup_context("heiio").display, "hello")
+        self.assertEqual(cleanup_context("heiiO").display, "hello")
         self.assertEqual(cleanup_context("He11o").display, "Hello")
         self.assertEqual(cleanup_context("he110").display, "hello")
         self.assertEqual(cleanup_context("H'11o").display, "Hello")
@@ -218,6 +220,7 @@ class ContextRulesTests(unittest.TestCase):
         self.assertEqual(cleanup_context("PP").display, "Pp")
         self.assertEqual(cleanup_context("2ZZ").display, "2Zz")
         self.assertEqual(cleanup_context("TT7").display, "Tt7")
+        self.assertEqual(cleanup_context("TtT").display, "Tt7")
         self.assertEqual(cleanup_context("z7").display, "27")
         self.assertEqual(cleanup_context("2P").display, "27")
         self.assertEqual(cleanup_context("A1bz").display, "A1b2")
@@ -340,6 +343,15 @@ class ContextRulesTests(unittest.TestCase):
         """The saved Hi correction should drop its stray punctuation-only row."""
 
         cleanup = cleanup_context("H1:", ["H1", ":"])
+
+        self.assertEqual(cleanup.display, "Hi")
+        self.assertEqual(cleanup.rows, ["Hi"])
+        self.assertTrue(any("punctuation row" in note for note in cleanup.notes))
+
+    def test_drops_isolated_period_after_hi_row(self) -> None:
+        """The saved Hi correction can also segment the stray dot as a period."""
+
+        cleanup = cleanup_context("H1.", ["H1", "."])
 
         self.assertEqual(cleanup.display, "Hi")
         self.assertEqual(cleanup.rows, ["Hi"])

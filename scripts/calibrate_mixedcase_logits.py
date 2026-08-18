@@ -36,7 +36,12 @@ def _mixedcase_logits(batch_size: int) -> tuple[torch.Tensor, torch.Tensor, torc
     """Return deployed logits, test targets, training targets, and labels."""
 
     device = get_device()
-    model, labels = load_mixedcase_model(device=device, logit_bias_path=None, pair_rules_path=None)
+    model, labels = load_mixedcase_model(
+        device=device,
+        logit_bias_path=None,
+        pair_rules_path=None,
+        hybrid_path=None,
+    )
     if model is None or labels is None:
         raise RuntimeError("mixedcase_cnn.pt is missing or could not be loaded.")
     mnist_test_images, mnist_test_targets = build_or_load_mnist_cache(train=False)

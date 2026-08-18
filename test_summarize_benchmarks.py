@@ -1,4 +1,5 @@
 import json
+import hashlib
 import tempfile
 import unittest
 from pathlib import Path
@@ -16,6 +17,77 @@ from scripts.summarize_benchmarks import (
 
 class BenchmarkSummaryTests(unittest.TestCase):
     """Regression tests for saved benchmark gate summaries."""
+
+    def test_summarizes_matching_mixedcase_hybrid_metrics(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            mixed_weights = root / "mixedcase_cnn.pt"
+            folded_weights = root / "alnum_cnn.pt"
+            mixed_weights.write_bytes(b"mixed checkpoint")
+            folded_weights.write_bytes(b"folded checkpoint")
+            (root / "training_metrics.json").write_text(json.dumps({"best_checkpoint": {"test_accuracy": 99.0}}))
+            (root / "alnum_training_metrics.json").write_text(json.dumps({"best_checkpoint": {"test_accuracy": 96.0}}))
+            (root / "mixedcase_training_metrics.json").write_text(
+                json.dumps({"best_checkpoint": {"test_accuracy": 80.0, "case_or_ambiguity_aware_test_accuracy": 97.0}})
+            )
+            (root / "character_training_metrics.json").write_text(json.dumps({"best_checkpoint": {"validation_accuracy": 90.0}}))
+            (root / "mixedcase_hybrid.json").write_text(
+                json.dumps(
+                    {
+                        "enabled": True,
+                        "labels": [str(index) for index in range(10)]
+                        + [chr(ord("A") + index) for index in range(26)]
+                        + [chr(ord("a") + index) for index in range(26)],
+                        "mixedcase_checkpoint_sha256": hashlib.sha256(b"mixed checkpoint").hexdigest(),
+                        "folded_checkpoint_sha256": hashlib.sha256(b"folded checkpoint").hexdigest(),
+                        "best_checkpoint": {
+                            "test_accuracy": 91.25,
+                            "case_or_ambiguity_aware_test_accuracy": 98.25,
+                            "digit_test_accuracy": 95.0,
+                            "upper_test_accuracy": 92.0,
+                            "lower_test_accuracy": 80.0,
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            report = summarize_saved_metrics(root, target=95.0)
+
+        by_name = {str(item["name"]): item for item in report}
+        self.assertEqual(by_name["mixedcase_exact"]["value"], 91.25)
+        self.assertEqual(by_name["mixedcase_case_or_visual"]["value"], 98.25)
+
+    def test_summarizes_stale_mixedcase_hybrid_as_base_metrics(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            (root / "mixedcase_cnn.pt").write_bytes(b"mixed checkpoint")
+            (root / "alnum_cnn.pt").write_bytes(b"folded checkpoint")
+            (root / "training_metrics.json").write_text(json.dumps({"best_checkpoint": {"test_accuracy": 99.0}}))
+            (root / "alnum_training_metrics.json").write_text(json.dumps({"best_checkpoint": {"test_accuracy": 96.0}}))
+            (root / "mixedcase_training_metrics.json").write_text(
+                json.dumps({"best_checkpoint": {"test_accuracy": 80.0, "case_or_ambiguity_aware_test_accuracy": 97.0}})
+            )
+            (root / "character_training_metrics.json").write_text(json.dumps({"best_checkpoint": {"validation_accuracy": 90.0}}))
+            (root / "mixedcase_hybrid.json").write_text(
+                json.dumps(
+                    {
+                        "enabled": True,
+                        "labels": [str(index) for index in range(10)]
+                        + [chr(ord("A") + index) for index in range(26)]
+                        + [chr(ord("a") + index) for index in range(26)],
+                        "mixedcase_checkpoint_sha256": "stale",
+                        "folded_checkpoint_sha256": "stale",
+                        "best_checkpoint": {"test_accuracy": 91.25},
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            report = summarize_saved_metrics(root, target=95.0)
+
+        by_name = {str(item["name"]): item for item in report}
+        self.assertEqual(by_name["mixedcase_exact"]["value"], 80.0)
 
     def test_summarizes_pass_fail_saved_metrics(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
