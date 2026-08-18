@@ -47,6 +47,14 @@ restored, so future improvement loops do not repeat known-bad blends.
 
 ## Restored Experiments
 
+- Rejected full-UNIPEN frozen mixed-case scout:
+  - Command shape: backed up `mixedcase_cnn.pt`, `mixedcase_training_metrics.json`, and `mixedcase_logit_bias.pt`, then ran `python3 alnum_model.py --mixed-case --model cnn --warm-start --epochs 1 --batch-size 256 --samples-per-class 2500 --min-accuracy 0 --learning-rate 0.000001 --seed 5201 --mixedcase-label-smoothing 0.01 --mixedcase-weak-labels '1lIi0Oo9qg5Ss2ZzUuVvMmNnCcPpFfkKXxWwYy4Tt7Jj' --mixedcase-weak-loss-weight 1.02 --mixedcase-lower-loss-weight 1.005 --mixedcase-upper-loss-weight 1.0 --mixedcase-type-loss-weight 0.005 --mixedcase-class-balance-strength 0.02 --mixedcase-freeze-feature-layers --mixedcase-extra-root data/unipen_chars/curated --device mps`.
+  - Result: rejected and restored. Raw mixed-case exact only reached `80.65%` and the full calibrated/app summary regressed script app exact to `94.44% (85/90)`, below target, while deployed calibrated exact stayed `87.46%`.
+
+- Rejected real twin-subset frozen mixed-case scout:
+  - Command shape: backed up mixed-case artifacts, then ran `python3 alnum_model.py --mixed-case --model cnn --warm-start --samples-per-class 3500 --include-nist-sd19 --nist-samples-per-class 800 --include-corrections --mixedcase-extra-root data/extra_hasyv2/character_ascii_twin_subset --mixedcase-extra-root data/uji_pen_v2/twin_subset_ascii --mixedcase-freeze-feature-layers --epochs 1 --batch-size 256 --learning-rate 0.00002 --min-accuracy 0 --seed 2026 --device mps`.
+  - Result: rejected and restored. Raw exact fell to `75.31%` (`digits 98.79%`, `upper 67.48%`, `lower 87.44%`), showing this extra-root mix over-corrects toward lowercase and does not solve exact mixed-case recognition.
+
 - Rejected digit-preserving mixed-case calibration probe:
   - Command shape: `python3 scripts/calibrate_mixedcase_logits.py --greedy-labels '0123456789OIlSsoZzqgB' --objective digit_test_accuracy --min-test 87.45834091970583 --min-case-or-visual 97.77712688900675 --min-digit 94.92034512205895 --min-upper 84.07133286543737 --min-lower 72.65235226726782 --dry-run`
   - Result: no safe logit-bias step was found (`digit_test_accuracy` stayed `94.9203%` and `test_accuracy` stayed `87.4583%`), so no artifact was written.
