@@ -5,9 +5,11 @@ from unittest.mock import patch
 import torch
 
 from scripts.probe_mixedcase_feature_reranker import FamilyProbe
+from scripts.probe_mixedcase_feature_reranker import _final_gate_rejection
 from scripts.probe_mixedcase_feature_reranker import _fit_tensors
 from scripts.probe_mixedcase_feature_reranker import _is_promotable
 from scripts.probe_mixedcase_feature_reranker import geometry_features
+from scripts.probe_mixedcase_feature_reranker import parse_family_names
 from scripts.probe_mixedcase_feature_reranker import selected_families
 from scripts.probe_mixedcase_feature_reranker import train_family_probe
 from scripts.probe_mixedcase_feature_reranker import run_probe
@@ -35,6 +37,21 @@ class MixedcaseFeatureRerankerTests(unittest.TestCase):
         self.assertEqual(len(families), 3)
         self.assertTrue(all(len(family) > 1 for family in families))
         self.assertTrue(all(0 <= index < 62 for family in families for index in family))
+
+    def test_selected_families_can_use_explicit_family_names(self) -> None:
+        """Roadmap probes should be able to target non-prefix ambiguity families."""
+
+        families = selected_families(family_names=("MNmn", "9qg"))
+
+        self.assertEqual(len(families), 2)
+        self.assertEqual(len(families[0]), 4)
+        self.assertEqual(len(families[1]), 3)
+
+    def test_parse_family_names_returns_none_for_blank(self) -> None:
+        """The CLI should preserve default family behavior when the flag is blank."""
+
+        self.assertIsNone(parse_family_names(""))
+        self.assertEqual(parse_family_names("1Iil, 0Oo"), ("1Iil", "0Oo"))
 
     def test_fit_tensors_appends_capped_extra_roots(self) -> None:
         """Optional adviser data should be capped before joining fit tensors."""
@@ -99,6 +116,27 @@ class MixedcaseFeatureRerankerTests(unittest.TestCase):
         self.assertFalse(_is_promotable(base, candidate))
         self.assertTrue(_is_promotable(base, safe_candidate))
 
+    def test_final_gate_rejects_protected_test_regression(self) -> None:
+        """Family adapters should be rejected when final test split accuracy regresses."""
+
+        base = {
+            "test_accuracy": 87.0,
+            "case_or_ambiguity_aware_test_accuracy": 98.0,
+            "digit_test_accuracy": 95.0,
+            "upper_test_accuracy": 85.0,
+            "lower_test_accuracy": 73.0,
+        }
+        upper_regression = {**base, "test_accuracy": 87.2, "upper_test_accuracy": 84.9}
+        tiny_gain = {**base, "test_accuracy": 87.005}
+        safe = {**base, "test_accuracy": 87.02}
+
+        self.assertEqual(
+            _final_gate_rejection(base, upper_regression, min_delta=0.01),
+            "final_upper_test_accuracy_regressed",
+        )
+        self.assertEqual(_final_gate_rejection(base, tiny_gain, min_delta=0.01), "final_delta_below_floor")
+        self.assertIsNone(_final_gate_rejection(base, safe, min_delta=0.01))
+
     def test_run_probe_reports_adapter_shape_and_promotion_state(self) -> None:
         """Probe JSON should expose enough fields for automation to reject regressions."""
 
@@ -131,10 +169,12 @@ class MixedcaseFeatureRerankerTests(unittest.TestCase):
                 min_family_delta=0.0,
                 seed=3,
                 hidden_units=7,
+                family_names=("AB",),
             )
 
         self.assertEqual(report["hidden_units"], 7)
         self.assertEqual(report["confirmation_ratio"], 0.5)
+        self.assertEqual(report["family_names"], ["AB"])
         self.assertEqual(report["selection_samples"], 1)
         self.assertEqual(report["confirmation_samples"], 2)
         self.assertEqual(report["test_delta"], 0.0)

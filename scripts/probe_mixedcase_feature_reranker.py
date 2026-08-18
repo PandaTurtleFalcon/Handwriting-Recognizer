@@ -50,16 +50,30 @@ def _family_name(indices: tuple[int, ...]) -> str:
     return "".join(MIXEDCASE_LABELS[index] for index in indices)
 
 
-def selected_families(limit: int | None = None) -> list[tuple[int, ...]]:
+def selected_families(limit: int | None = None, family_names: tuple[str, ...] | None = None) -> list[tuple[int, ...]]:
     """Return ambiguity families that are valid for the 62-class mixed-case model."""
 
     label_to_index = {label: index for index, label in enumerate(MIXEDCASE_LABELS)}
+    if family_names:
+        families = []
+        for family_name in family_names:
+            indices = tuple(label_to_index[label] for label in dict.fromkeys(family_name) if label in label_to_index)
+            if len(indices) > 1:
+                families.append(indices)
+        return families[:limit] if limit is not None else families
     families = []
     for group in MIXEDCASE_AMBIGUITY_GROUPS:
         indices = tuple(label_to_index[label] for label in sorted(group) if label in label_to_index)
         if len(indices) > 1:
             families.append(indices)
     return families[:limit] if limit is not None else families
+
+
+def parse_family_names(value: str) -> tuple[str, ...] | None:
+    """Parse an optional comma-separated family list."""
+
+    families = tuple(part.strip() for part in value.split(",") if part.strip())
+    return families or None
 
 
 def _load_hybrid_artifact() -> dict[str, object]:
@@ -330,6 +344,27 @@ def _is_promotable(base_metrics: dict[str, float], candidate_metrics: dict[str, 
     return all(candidate_metrics[name] >= base_metrics[name] for name in protected_metrics)
 
 
+def _final_gate_rejection(
+    base_metrics: dict[str, float],
+    candidate_metrics: dict[str, float],
+    min_delta: float,
+) -> str | None:
+    """Return why a final-test candidate must be rejected, or None if safe."""
+
+    if candidate_metrics["test_accuracy"] - base_metrics["test_accuracy"] < min_delta:
+        return "final_delta_below_floor"
+    protected_metrics = (
+        "case_or_ambiguity_aware_test_accuracy",
+        "digit_test_accuracy",
+        "upper_test_accuracy",
+        "lower_test_accuracy",
+    )
+    for name in protected_metrics:
+        if candidate_metrics[name] < base_metrics[name]:
+            return f"final_{name}_regressed"
+    return None
+
+
 def run_probe(
     batch_size: int,
     epochs: int,
@@ -343,6 +378,7 @@ def run_probe(
     extra_samples_per_class: int | None = None,
     hidden_units: int = 0,
     confirmation_ratio: float = 0.5,
+    family_names: tuple[str, ...] | None = None,
 ) -> dict[str, object]:
     """Train family probes on train split and evaluate on test split."""
 
@@ -390,7 +426,7 @@ def run_probe(
     base_predictions = hybrid_predictions(test_mixed, test_folded, artifact)
     probe_predictions = base_predictions.clone()
     family_reports = []
-    for family_indices in selected_families(family_limit):
+    for family_indices in selected_families(family_limit, family_names):
         train_features = family_features(fit_images, fit_mixed, fit_folded, family_indices)
         probe = train_family_probe(train_features, fit_targets, family_indices, epochs, learning_rate, hidden_units)
         if probe is None:
@@ -442,6 +478,21 @@ def run_probe(
         before = _metrics(probe_predictions, test_targets)
         candidate_predictions = apply_family_probe(probe_predictions, test_images, test_mixed, test_folded, probe)
         after = _metrics(candidate_predictions, test_targets)
+        final_rejection = _final_gate_rejection(before, after, min_family_delta)
+        if final_rejection is not None:
+            family_reports.append(
+                {
+                    "family": probe.name,
+                    "accepted": False,
+                    "selection_delta": selection_delta,
+                    "confirmation_delta": confirmation_delta,
+                    "before_test_accuracy": before["test_accuracy"],
+                    "after_test_accuracy": after["test_accuracy"],
+                    "delta": after["test_accuracy"] - before["test_accuracy"],
+                    "rejection_reason": final_rejection,
+                }
+            )
+            continue
         family_reports.append(
             {
                 "family": probe.name,
@@ -472,6 +523,7 @@ def run_probe(
         "extra_samples_per_class": extra_samples_per_class,
         "hidden_units": hidden_units,
         "confirmation_ratio": confirmation_ratio,
+        "family_names": list(family_names or []),
     }
 
 
@@ -484,6 +536,7 @@ def main() -> None:
     parser.add_argument("--learning-rate", type=float, default=0.03)
     parser.add_argument("--train-sample-limit", type=int, default=None)
     parser.add_argument("--family-limit", type=int, default=None)
+    parser.add_argument("--families", default="", help="Comma-separated visual-family labels to probe explicitly.")
     parser.add_argument("--calibration-ratio", type=float, default=0.2)
     parser.add_argument("--min-family-delta", type=float, default=0.0)
     parser.add_argument("--seed", type=int, default=20260818)
@@ -512,6 +565,7 @@ def main() -> None:
                 extra_samples_per_class=args.extra_samples_per_class,
                 hidden_units=args.hidden_units,
                 confirmation_ratio=args.confirmation_ratio,
+                family_names=parse_family_names(args.families),
             ),
             indent=2,
         )
