@@ -609,6 +609,10 @@ restored, so future improvement loops do not repeat known-bad blends.
   - Result: accepted two tiny character-bias steps (`9 +0.06`, `Z -0.06`), improving character exact from `93.52%` to `93.55%` and clearing character digit exact from `94.93%` to `95.11%`. App gates stayed green at clean `100.00% (45/45)` and script `95.56% (86/90)`.
   - Remaining blocker: character letters are unchanged at `92.67%`; mixed-case exact and all mixed-case split gates are unchanged.
 
+- Gentle lowercase-preserving mixed-case fine-tune:
+  - Command shape: backed up `mixedcase_cnn.pt`, `mixedcase_training_metrics.json`, and `mixedcase_logit_bias.pt`, then ran one frozen-feature warm-start epoch with `python3 alnum_model.py --mixed-case --model cnn --warm-start --epochs 1 --batch-size 256 --samples-per-class 2500 --min-accuracy 0 --learning-rate 0.0000015 --seed 4103 --mixedcase-label-smoothing 0.01 --mixedcase-weak-labels 'ocsumlfqpi' --mixedcase-weak-loss-weight 1.03 --mixedcase-lower-loss-weight 1.015 --mixedcase-upper-loss-weight 1.0 --mixedcase-type-loss-weight 0.01 --mixedcase-class-balance-strength 0.04 --mixedcase-freeze-feature-layers --device mps`.
+  - Result: rejected. The epoch improved raw lowercase exact to `84.67%`, but aggregate raw mixed-case exact fell to `79.89%` and uppercase fell to `70.48%`. The backed-up mixed-case model, metrics, and bias artifact were restored, and the full benchmark returned to deployed mixed-case exact `87.44%` with clean/script app gates still green.
+
 ## Next Higher-Value Directions
 
 - Interrupted full calibration/analyzer startup probe:
