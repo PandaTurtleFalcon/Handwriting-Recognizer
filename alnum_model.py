@@ -1421,24 +1421,36 @@ class HybridMixedcaseModel(nn.Module):
         mixedcase_model: nn.Module,
         folded_model: nn.Module,
         letter_case_threshold: float = 0.0,
+        folded_confidence_threshold: float = 0.0,
+        folded_margin_threshold: float = 0.0,
     ) -> None:
         super().__init__()
         self.mixedcase_model = mixedcase_model
         self.folded_model = folded_model
         self.letter_case_threshold = float(letter_case_threshold)
+        self.folded_confidence_threshold = float(folded_confidence_threshold)
+        self.folded_margin_threshold = float(folded_margin_threshold)
 
     def forward(self, inputs: torch.Tensor) -> torch.Tensor:
         mixed_outputs = self.mixedcase_model(inputs)
         folded_outputs = self.folded_model(inputs)
         mixed_predictions = mixed_outputs.argmax(dim=1)
         folded_predictions = folded_outputs.argmax(dim=1)
+        folded_confidence = folded_outputs.softmax(dim=1).max(dim=1).values
+        folded_top2 = folded_outputs.topk(2, dim=1).values
+        folded_margin = folded_top2[:, 0] - folded_top2[:, 1]
         outputs = mixed_outputs.clone()
         row_max = outputs.max(dim=1).values + 1e-4
+        eligible_mask = (
+            (mixed_predictions >= 10)
+            & (folded_confidence >= self.folded_confidence_threshold)
+            & (folded_margin >= self.folded_margin_threshold)
+        )
         for letter_index in range(26):
             folded_index = 10 + letter_index
             upper_index = 10 + letter_index
             lower_index = 36 + letter_index
-            identity_mask = (mixed_predictions >= 10) & (folded_predictions == folded_index)
+            identity_mask = eligible_mask & (folded_predictions == folded_index)
             if not bool(identity_mask.any()):
                 continue
             lower_margin = mixed_outputs[:, lower_index] - mixed_outputs[:, upper_index]
@@ -1478,6 +1490,8 @@ def attach_mixedcase_hybrid(
         model,
         folded_model,
         letter_case_threshold=float(artifact.get("letter_case_threshold", 0.0)),
+        folded_confidence_threshold=float(artifact.get("folded_confidence_threshold", 0.0)),
+        folded_margin_threshold=float(artifact.get("folded_margin_threshold", 0.0)),
     )
     wrapped.eval()
     wrapped.mixedcase_hybrid = artifact  # type: ignore[attr-defined]

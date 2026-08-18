@@ -73,6 +73,30 @@ class ExtraAlnumDatasetTests(unittest.TestCase):
         self.assertEqual(MIXEDCASE_LABELS[predictions[1]], "A")
         self.assertEqual(MIXEDCASE_LABELS[predictions[2]], "b")
 
+    def test_hybrid_mixedcase_respects_folded_confidence_gate(self) -> None:
+        class FixedModel(nn.Module):
+            def __init__(self, outputs: torch.Tensor) -> None:
+                super().__init__()
+                self.outputs = outputs
+
+            def forward(self, inputs: torch.Tensor) -> torch.Tensor:
+                return self.outputs[: inputs.size(0)].clone()
+
+        mixed_outputs = torch.full((1, len(MIXEDCASE_LABELS)), -10.0)
+        mixed_outputs[0, MIXEDCASE_LABELS.index("Q")] = 9.0
+        folded_outputs = torch.zeros((1, len(LABELS)))
+        folded_outputs[0, LABELS.index("A")] = 0.1
+        model = HybridMixedcaseModel(
+            FixedModel(mixed_outputs),
+            FixedModel(folded_outputs),
+            folded_confidence_threshold=0.25,
+            folded_margin_threshold=0.5,
+        )
+
+        prediction = model(torch.zeros(1, 1, 28, 28)).argmax(dim=1).item()
+
+        self.assertEqual(MIXEDCASE_LABELS[prediction], "Q")
+
     def test_attach_mixedcase_hybrid_rejects_stale_checkpoint_hashes(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)

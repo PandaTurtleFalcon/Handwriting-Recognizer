@@ -696,6 +696,11 @@ restored, so future improvement loops do not repeat known-bad blends.
   - Hybrid result: the naive all-glyph folded-identity hybrid fell to `53.72%` exact because folded identity rewrote many EMNIST ByClass digit samples as letters. The safe deployable hybrid only lets folded identity override when the mixed-case model already predicts an alphabetic class, improving verified mixed-case exact from `87.53%` to `87.69%` and case-or-visual from `97.78%` to `98.02%`; digit exact stays `95.02%`, upper exact is `84.39%`, and lower exact is `73.10%`.
   - Remaining blocker: this is a small real improvement, not the earlier oracle-like `91.28%` probe. Lowercase exact remains the largest mixed-case gap, and should not be hidden by the hybrid artifact.
 
+- Mixed-case hybrid confidence-gate sweep:
+  - Command shape: cached base mixed-case logits plus folded alnum logits, then swept folded confidence thresholds `0.0..0.99`, folded top-2 margin thresholds `-999..4.0`, and case thresholds `-2..2`, while requiring digit exact `>=95.0%` and case-or-visual `>=97.78%`.
+  - Result: selected `folded_confidence_threshold=0.25`, `folded_margin_threshold=0.5`, and `letter_case_threshold=0.0`. This improves the deployable hybrid from `87.69%` to `87.70%` exact and from `73.10%` to `73.14%` lowercase exact, while keeping digit exact at `95.02%`. Case-or-visual is still passing at `98.00%`.
+  - Remaining blocker: pair-rule continuation found no useful additional mixed-case rules, and this threshold gain is tiny. The next high-value work likely needs better real lowercase training data or a changed model objective for the `1/I/l/i`, `0/O/o`, `5/S/s`, and lowercase/uppercase twin families.
+
 ## Next Higher-Value Directions
 
 - Interrupted full calibration/analyzer startup probe:
