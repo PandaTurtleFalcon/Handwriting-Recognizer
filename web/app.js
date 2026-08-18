@@ -717,9 +717,12 @@ function renderRows(result, panel) {
       : rawSequence;
     const cleanedRows = rows.length > 0 ? rows.map((row) => text(row)).join(" / ") : displaySequence;
     if (rawRows !== cleanedRows) {
-      const rawWrap = makeElement("div", "context-output raw-output");
-      rawWrap.append(makeElement("code", "row-chip", `raw model read (diagnostic): ${rawRows}`));
-      rawWrap.append(makeElement("code", "row-chip final-answer-chip", `final answer: ${cleanedRows}`));
+      const rawWrap = makeElement("details", "raw-output");
+      rawWrap.append(makeElement("summary", "", "Model diagnostics"));
+      const rawBody = makeElement("div", "context-output raw-output-body");
+      rawBody.append(makeElement("code", "row-chip", `raw model read: ${rawRows}`));
+      rawBody.append(makeElement("code", "row-chip final-answer-chip", `final answer: ${cleanedRows}`));
+      rawWrap.append(rawBody);
       panel.append(rawWrap);
     }
   }
@@ -933,7 +936,10 @@ async function checkHealth() {
     if (!response.ok || !payload.ok) {
       throw new Error("offline");
     }
-    serverPill.textContent = `${payload.recognizer || "model"} live`;
+    const revision = text(payload.revision);
+    serverPill.textContent = revision
+      ? `${payload.recognizer || "model"} live @ ${revision}`
+      : `${payload.recognizer || "model"} live`;
     serverPill.classList.add("live");
     modelNote.textContent = "Upload handwriting images and correct any result for retraining.";
   } catch {

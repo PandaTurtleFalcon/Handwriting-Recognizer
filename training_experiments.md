@@ -1026,3 +1026,9 @@ restored, so future improvement loops do not repeat known-bad blends.
   - Result: extracted the small parser archive locally to `data/cvl/DkGtDbXmlReader-src`; no multi-GB image archive or model artifact changed.
   - Verification: `test_prepare_cvl_letters.py test_download_cvl_dataset.py` passed (`14` tests), `scripts/download_cvl_dataset.py --archive parser --extract` extracted `148` files, and parser sample XML files now parse cleanly while yielding `0` trainable words because they contain layout regions without transcriptions.
   - Takeaway: the CVL path is ready for the large archive: download with extraction, then run the letter-crop importer over the extracted data.
+
+- Static UI revision/debug clarity for reported `look behind you` screenshot:
+  - Code path: replayed the exact saved screenshot fixture from `Screenshots - Misc`; the fixture matches `data/app_hardcase_fixtures/look_behind_you_reported.png`. Updated the static HTML/JS result renderer so raw model output is hidden behind a `Model diagnostics` disclosure, and the live server pill includes the active git revision.
+  - Result: no model artifacts changed. The current app displays `look behind\nyou`, while raw recognition remains `lOokbeh'ndyo4`, so the immediate browser confusion is fixed without claiming the base recognizer solved the phrase.
+  - Verification: `test_web_app.py test_context_rules.py test_evaluate_hardcases.py` passed (`147 passed`), `scripts/evaluate_hardcases.py --uploaded-fixtures --json` reported cleaned uploaded hardcase `1/1` and raw `0/1`, and `scripts/summarize_benchmarks.py --include-uploaded-hardcases --json` kept the deployed baseline.
+  - Takeaway: final vs raw output is now harder to confuse in the website, and the revision badge should reveal stale server/browser state faster.

@@ -174,6 +174,24 @@ class WebAppRenderingTests(unittest.TestCase):
         self.assertIn("Saved", html)
         self.assertIn("You can edit it again.", html)
 
+    def test_static_ui_keeps_raw_output_in_diagnostics(self) -> None:
+        """Raw model text should not look like the final browser answer."""
+
+        script = Path("web/app.js").read_text(encoding="utf-8")
+
+        self.assertIn('makeElement("details", "raw-output")', script)
+        self.assertIn('makeElement("summary", "", "Model diagnostics")', script)
+        self.assertIn("raw model read:", script)
+        self.assertIn("final answer:", script)
+
+    def test_static_ui_shows_serving_revision(self) -> None:
+        """The browser should expose the active server revision."""
+
+        script = Path("web/app.js").read_text(encoding="utf-8")
+
+        self.assertIn("payload.revision", script)
+        self.assertIn("live @", script)
+
     def test_render_page_shows_digit_specialist_accuracy(self) -> None:
         """The badge should expose separate specialist metrics."""
 
