@@ -166,6 +166,42 @@ class CharacterCandidateEvaluatorTests(unittest.TestCase):
                 with self.assertRaisesRegex(RuntimeError, "deployed character calibration"):
                     evaluate_candidate(checkpoint_path, device_name="cpu", mode="calibrated")
 
+    def test_calibrated_mode_uses_candidate_artifacts_without_deployed_calibration(self) -> None:
+        class FixedModel(torch.nn.Module):
+            def forward(self, inputs: torch.Tensor) -> torch.Tensor:
+                return torch.tensor([[1.0, 0.0], [0.0, 1.0]], dtype=torch.float32)
+
+        with tempfile.TemporaryDirectory() as directory:
+            checkpoint_path = Path(directory) / "candidate.pt"
+            bias_path = Path(directory) / "candidate_bias.pt"
+            rules_path = Path(directory) / "candidate_rules.json"
+            images = torch.zeros((2, 1, 28, 28), dtype=torch.float32)
+            targets = torch.tensor([0, 1], dtype=torch.long)
+            labels = ["A", "B"]
+            with (
+                patch(
+                    "scripts.evaluate_character_candidate.candidate_validation_tensors",
+                    return_value=(images, targets, labels),
+                ),
+                patch("scripts.evaluate_character_candidate.load_candidate_checkpoint", return_value=FixedModel()),
+                patch("scripts.evaluate_character_candidate.attach_character_logit_bias") as attach_bias,
+                patch("scripts.evaluate_character_candidate.attach_character_pair_rules") as attach_rules,
+                patch("scripts.evaluate_character_candidate.calibrated_predictions") as predictions,
+            ):
+                predictions.return_value = targets
+                report = evaluate_candidate(
+                    checkpoint_path,
+                    device_name="cpu",
+                    mode="calibrated",
+                    logit_bias_path=bias_path,
+                    pair_rules_path=rules_path,
+                )
+
+            self.assertEqual(report["metrics"]["validation_accuracy"], 100.0)
+            attach_bias.assert_called_once()
+            attach_rules.assert_called_once()
+            self.assertFalse(predictions.call_args.kwargs["apply_calibration"])
+
 
 if __name__ == "__main__":
     unittest.main()

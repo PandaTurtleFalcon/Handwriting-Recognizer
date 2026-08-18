@@ -145,6 +145,8 @@ class CharacterCalibrationCliTests(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as temp_dir:
             output_path = Path(temp_dir) / "character_pair_rules.json"
+            weights_path = Path(temp_dir) / "candidate.pt"
+            bias_path = Path(temp_dir) / "candidate_bias.pt"
             output = StringIO()
             with (
                 patch(
@@ -154,6 +156,10 @@ class CharacterCalibrationCliTests(unittest.TestCase):
                         "--pair-rules",
                         "--output-path",
                         str(output_path),
+                        "--weights-path",
+                        str(weights_path),
+                        "--bias-path",
+                        str(bias_path),
                         "--pair-source-groups",
                         "letter",
                         "--pair-target-groups",
@@ -179,12 +185,16 @@ class CharacterCalibrationCliTests(unittest.TestCase):
 
             self.assertEqual(calibrate.call_args.kwargs["source_groups"], ("letter",))
             self.assertEqual(calibrate.call_args.kwargs["target_groups"], ("letter", "punctuation"))
+            self.assertEqual(calibrate.call_args.kwargs["weights_path"], weights_path)
+            self.assertEqual(calibrate.call_args.kwargs["bias_path"], bias_path)
 
     def test_cli_passes_greedy_label_group_filter(self) -> None:
         """Greedy bias searches can ignore labels outside requested groups."""
 
         with tempfile.TemporaryDirectory() as temp_dir:
             output_path = Path(temp_dir) / "character_logit_bias.pt"
+            weights_path = Path(temp_dir) / "candidate.pt"
+            rules_path = Path(temp_dir) / "candidate_rules.json"
             output = StringIO()
             with (
                 patch(
@@ -197,6 +207,10 @@ class CharacterCalibrationCliTests(unittest.TestCase):
                         "letter",
                         "--output-path",
                         str(output_path),
+                        "--weights-path",
+                        str(weights_path),
+                        "--pair-rules-path",
+                        str(rules_path),
                         "--dry-run",
                     ],
                 ),
@@ -217,6 +231,45 @@ class CharacterCalibrationCliTests(unittest.TestCase):
                 main()
 
             self.assertEqual(calibrate.call_args.kwargs["label_groups"], ("letter",))
+            self.assertEqual(calibrate.call_args.kwargs["weights_path"], weights_path)
+            self.assertEqual(calibrate.call_args.kwargs["pair_rules_path"], rules_path)
+
+    def test_cli_passes_weights_path_to_prior_calibration(self) -> None:
+        """Train-prior calibration can target a non-deployed checkpoint."""
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            output_path = Path(temp_dir) / "character_logit_bias.pt"
+            weights_path = Path(temp_dir) / "candidate.pt"
+            output = StringIO()
+            with (
+                patch(
+                    "sys.argv",
+                    [
+                        "calibrate_character_logits.py",
+                        "--output-path",
+                        str(output_path),
+                        "--weights-path",
+                        str(weights_path),
+                        "--dry-run",
+                    ],
+                ),
+                patch(
+                    "scripts.calibrate_character_logits.calibrate_character_logits",
+                    return_value={
+                        "base_accuracy": 93.0,
+                        "calibrated_accuracy": 93.1,
+                        "best_scale": 0.2,
+                        "improvement": 0.1,
+                        "best_checkpoint": {"validation_accuracy": 93.1},
+                        "wrote": False,
+                        "output_path": str(output_path),
+                    },
+                ) as calibrate,
+                patch("sys.stdout", output),
+            ):
+                main()
+
+            self.assertEqual(calibrate.call_args.kwargs["weights_path"], weights_path)
 
     def test_parse_label_groups_rejects_unknown_group(self) -> None:
         """Group filters should fail fast on misspelled buckets."""

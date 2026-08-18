@@ -19,6 +19,8 @@ if str(PROJECT_DIR) not in sys.path:
 from character_model import (  # noqa: E402
     CHARACTER_MODEL_TYPES,
     WEIGHTS_PATH,
+    attach_character_logit_bias,
+    attach_character_pair_rules,
     evaluate_character_breakdown,
 )
 from mnist_model import get_device  # noqa: E402
@@ -76,6 +78,8 @@ def evaluate_candidate(
     mode: str = "calibrated",
     sample_limit: int | None = None,
     allow_deployed_calibration: bool = False,
+    logit_bias_path: Path | None = None,
+    pair_rules_path: Path | None = None,
 ) -> dict[str, object]:
     """Evaluate one candidate checkpoint and return benchmark-style metrics."""
 
@@ -90,13 +94,27 @@ def evaluate_candidate(
     images, targets, labels = candidate_validation_tensors(sample_limit=sample_limit)
     model = load_candidate_checkpoint(checkpoint_path, labels, device)
     if mode == "calibrated":
-        if checkpoint_path.resolve() != WEIGHTS_PATH.resolve() and not allow_deployed_calibration:
+        is_deployed_checkpoint = checkpoint_path.resolve() == WEIGHTS_PATH.resolve()
+        has_candidate_calibration = logit_bias_path is not None or pair_rules_path is not None
+        if not is_deployed_checkpoint and not allow_deployed_calibration and not has_candidate_calibration:
             raise RuntimeError(
                 "Calibrated candidate evaluation would reuse deployed character calibration artifacts. "
-                "Use --mode raw for candidate checkpoints, or pass --allow-deployed-calibration "
-                "only for an explicit diagnostic."
+                "Use --mode raw, pass candidate --logit-bias-path/--pair-rules-path artifacts, "
+                "or pass --allow-deployed-calibration only for an explicit diagnostic."
             )
-        predictions = calibrated_predictions(model, images, labels, device, batch_size, apply_calibration=True)
+        if logit_bias_path is not None:
+            attach_character_logit_bias(model, labels, device, logit_bias_path, checkpoint_path)
+        if pair_rules_path is not None:
+            attach_character_pair_rules(model, labels, device, pair_rules_path, checkpoint_path)
+        use_deployed_calibration = not has_candidate_calibration and (is_deployed_checkpoint or allow_deployed_calibration)
+        predictions = calibrated_predictions(
+            model,
+            images,
+            labels,
+            device,
+            batch_size,
+            apply_calibration=use_deployed_calibration,
+        )
         metrics = _metrics(predictions, targets, labels)
     elif mode == "raw":
         loader = DataLoader(TensorDataset(images, targets), batch_size=batch_size, shuffle=False)
@@ -239,6 +257,8 @@ def main() -> None:
         help="Allow calibrated diagnostics for non-deployed checkpoints using deployed calibration artifacts.",
     )
     parser.add_argument("--sample-limit", type=int, default=None)
+    parser.add_argument("--logit-bias-path", type=Path, default=None)
+    parser.add_argument("--pair-rules-path", type=Path, default=None)
     parser.add_argument("--target", type=float, default=95.0)
     parser.add_argument("--baseline-json", type=Path, default=None)
     parser.add_argument("--baseline-tolerance", type=float, default=0.0)
@@ -268,6 +288,8 @@ def main() -> None:
         mode=args.mode,
         sample_limit=args.sample_limit,
         allow_deployed_calibration=args.allow_deployed_calibration,
+        logit_bias_path=args.logit_bias_path,
+        pair_rules_path=args.pair_rules_path,
     )
     target_rows = gate_rows(report["metrics"], args.target)
     baseline_metrics = read_baseline_metrics(args.baseline_json)

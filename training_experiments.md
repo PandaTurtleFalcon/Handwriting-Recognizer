@@ -1297,3 +1297,9 @@ restored, so future improvement loops do not repeat known-bad blends.
   - Code path: added a conservative `_clean_intraword_spaces()` pass in `context_rules.py` that removes spaces only when the compact row is already an allowlisted hardcase/common-word shape.
   - Result: the stricter all-font plus script app sweep improved from `98.2222%` exact to `100.0%` exact/ambiguity-aware on `225` generated hardcases. Deployed model metrics are unchanged; this improves app-level recognition only.
   - Verification: `test_context_rules.py test_evaluate_hardcases.py` passed (`55 passed`), `context_rules.py` and `scripts/evaluate_hardcases.py` compiled, `git diff --check` passed, and the explicit all-font/script evaluator reported zero failures.
+
+- Rejected candidate-specific character calibration:
+  - Code path: extended `scripts/calibrate_character_logits.py` with `--weights-path`, `--bias-path`, and `--pair-rules-path`, and extended `scripts/evaluate_character_candidate.py` with `--logit-bias-path` and `--pair-rules-path`. This lets non-deployed character checkpoints be calibrated and evaluated with artifacts fingerprinted to that checkpoint instead of borrowing deployed calibration.
+  - Candidate result: the existing `tmp/character_candidates/character_wide_lr5e7.pt` checkpoint improved from `92.9753%` raw validation to `93.4859%` with candidate-specific prior calibration, but it still failed the deployed calibrated baseline (`94.1666%` validation, `95.1090%` digit, `93.5908%` letter, `96.0619%` punctuation).
+  - Verification: focused calibration/evaluator tests passed, the rejected candidate evaluation wrote `tmp/character_candidates/character_lr5e7_candidate_eval.json`, and no deployed model artifact changed.
+  - Takeaway: candidate-specific calibration is now usable for future character experiments, but this checkpoint remains weaker than production and should not be promoted.

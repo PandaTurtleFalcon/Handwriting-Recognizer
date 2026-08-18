@@ -56,11 +56,19 @@ def _parse_label_groups(value: str) -> tuple[str, ...] | None:
     return groups
 
 
-def _validation_logits(batch_size: int) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, list[str]]:
+def _validation_logits(
+    batch_size: int,
+    weights_path: Path = WEIGHTS_PATH,
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, list[str]]:
     """Return logits, validation targets, training targets, and labels."""
 
     device = get_device()
-    model, labels = load_character_model(device=device, logit_bias_path=None, pair_rules_path=None)
+    model, labels = load_character_model(
+        weights_path=weights_path,
+        device=device,
+        logit_bias_path=None,
+        pair_rules_path=None,
+    )
     images, targets, cache_labels = build_or_load_combined_cache(DATASET_ROOT, _metric_extra_roots())
     if list(cache_labels) != list(labels):
         raise RuntimeError("Character cache labels do not match deployed checkpoint labels.")
@@ -83,12 +91,12 @@ def _validation_logits(batch_size: int) -> tuple[torch.Tensor, torch.Tensor, tor
     return torch.cat(outputs), torch.cat(validation_targets), train_target_tensor, list(labels)
 
 
-def _checkpoint_sha256() -> str | None:
+def _checkpoint_sha256(weights_path: Path = WEIGHTS_PATH) -> str | None:
     """Return the character checkpoint fingerprint for calibration artifacts."""
 
     try:
         digest = hashlib.sha256()
-        with WEIGHTS_PATH.open("rb") as handle:
+        with weights_path.open("rb") as handle:
             for chunk in iter(lambda: handle.read(1024 * 1024), b""):
                 digest.update(chunk)
         return digest.hexdigest()
@@ -153,6 +161,8 @@ def _breakdown(
 
 def calibrate_character_pair_rules(
     output_path: Path = PAIR_RULES_PATH,
+    weights_path: Path = WEIGHTS_PATH,
+    bias_path: Path = LOGIT_BIAS_PATH,
     batch_size: int = 2048,
     families: tuple[str, ...] = ("0Oo", "1Ili|!/", "5Ss", "2Zz", "9qg", "UuVv", "NnMm", "Cc", "Pp", "Ff"),
     thresholds: tuple[float, ...] = (-2.5, -2.0, -1.75, -1.5, -1.25, -1.0, -0.85, -0.7, -0.5, -0.32, -0.18),
@@ -170,8 +180,8 @@ def calibrate_character_pair_rules(
 ) -> dict[str, object]:
     """Greedily tune ordered pairwise visual-twin rules for character logits."""
 
-    logits, targets, _train_targets, labels = _validation_logits(batch_size)
-    starting_bias = _load_existing_bias(LOGIT_BIAS_PATH, labels)
+    logits, targets, _train_targets, labels = _validation_logits(batch_size, weights_path)
+    starting_bias = _load_existing_bias(bias_path, labels)
     scores = logits + starting_bias
     raw_predictions = scores.argmax(dim=1)
     existing_rules = _load_existing_pair_rules(output_path, labels)
@@ -260,7 +270,7 @@ def calibrate_character_pair_rules(
                 {
                     "labels": labels,
                     "rules": steps,
-                    "checkpoint_sha256": _checkpoint_sha256(),
+                    "checkpoint_sha256": _checkpoint_sha256(weights_path),
                     "base_accuracy": base_breakdown["validation_accuracy"],
                     "calibrated_accuracy": best_breakdown["validation_accuracy"],
                     "base_objective": base_breakdown[objective],
@@ -344,6 +354,7 @@ def _load_existing_pair_rules(output_path: Path, labels: list[str]) -> list[dict
 
 def calibrate_character_logits(
     output_path: Path = LOGIT_BIAS_PATH,
+    weights_path: Path = WEIGHTS_PATH,
     batch_size: int = 2048,
     max_scale: float = 1.5,
     step: float = 0.05,
@@ -353,7 +364,7 @@ def calibrate_character_logits(
 ) -> dict[str, object]:
     """Fit a simple train-prior logit bias and optionally save it."""
 
-    logits, targets, train_targets, labels = _validation_logits(batch_size)
+    logits, targets, train_targets, labels = _validation_logits(batch_size, weights_path)
     counts = torch.bincount(train_targets, minlength=len(labels)).float().clamp_min(1.0)
     log_prior = torch.log(counts / counts.sum())
     centered_prior = log_prior - log_prior.mean()
@@ -382,7 +393,7 @@ def calibrate_character_logits(
             {
                 "labels": labels,
                 "bias": bias,
-                "checkpoint_sha256": _checkpoint_sha256(),
+                "checkpoint_sha256": _checkpoint_sha256(weights_path),
                 "scale": best_scale,
                 "base_accuracy": base_accuracy,
                 "calibrated_accuracy": best_accuracy,
@@ -421,6 +432,8 @@ def _load_existing_bias(output_path: Path, labels: list[str]) -> torch.Tensor:
 
 def calibrate_character_greedy_bias(
     output_path: Path = LOGIT_BIAS_PATH,
+    weights_path: Path = WEIGHTS_PATH,
+    pair_rules_path: Path = PAIR_RULES_PATH,
     batch_size: int = 2048,
     labels_to_tune: str = "",
     deltas: tuple[float, ...] = (-0.12, -0.08, -0.04, 0.04, 0.08, 0.12),
@@ -438,9 +451,9 @@ def calibrate_character_greedy_bias(
 ) -> dict[str, object]:
     """Greedily tune tiny per-label bias changes from the current artifact."""
 
-    logits, targets, _train_targets, labels = _validation_logits(batch_size)
+    logits, targets, _train_targets, labels = _validation_logits(batch_size, weights_path)
     starting_bias = _load_existing_bias(output_path, labels)
-    pair_rules = _load_existing_pair_rules(PAIR_RULES_PATH, labels) if include_pair_rules else []
+    pair_rules = _load_existing_pair_rules(pair_rules_path, labels) if include_pair_rules else []
     base_scores = logits + starting_bias
     base_predictions = _apply_pair_rules_to_predictions(base_scores, base_scores.argmax(dim=1), labels, pair_rules)
     base_breakdown = _breakdown(base_predictions, targets, labels)
@@ -505,7 +518,7 @@ def calibrate_character_greedy_bias(
             {
                 "labels": labels,
                 "bias": best_bias,
-                "checkpoint_sha256": _checkpoint_sha256(),
+                "checkpoint_sha256": _checkpoint_sha256(weights_path),
                 "scale": "greedy-per-label",
                 "base_accuracy": base_breakdown["validation_accuracy"],
                 "calibrated_accuracy": best_breakdown["validation_accuracy"],
@@ -515,7 +528,7 @@ def calibrate_character_greedy_bias(
                 "best_checkpoint": best_breakdown,
                 "source": "greedy_per_label_validation_probe",
                 "includes_pair_rules": include_pair_rules,
-                "pair_rules_sha256": _file_sha256(PAIR_RULES_PATH) if include_pair_rules else None,
+                "pair_rules_sha256": _file_sha256(pair_rules_path) if include_pair_rules else None,
                 "tuned_labels": [labels[index] for index in tuned_indices],
                 "steps": steps,
             },
@@ -567,6 +580,24 @@ def main() -> None:
 
     parser = argparse.ArgumentParser(description="Calibrate character-model logits with train-prior bias.")
     parser.add_argument("--output-path", type=Path, default=LOGIT_BIAS_PATH)
+    parser.add_argument(
+        "--weights-path",
+        type=Path,
+        default=WEIGHTS_PATH,
+        help="Character checkpoint to calibrate; defaults to the deployed checkpoint.",
+    )
+    parser.add_argument(
+        "--bias-path",
+        type=Path,
+        default=LOGIT_BIAS_PATH,
+        help="Existing bias artifact used as the starting bias for pair-rule tuning.",
+    )
+    parser.add_argument(
+        "--pair-rules-path",
+        type=Path,
+        default=PAIR_RULES_PATH,
+        help="Existing pair-rule artifact used when --include-pair-rules is set.",
+    )
     parser.add_argument("--batch-size", type=int, default=2048)
     parser.add_argument("--max-scale", type=float, default=1.5)
     parser.add_argument("--step", type=float, default=0.05)
@@ -646,6 +677,8 @@ def main() -> None:
         target_groups = _parse_label_groups(args.pair_target_groups)
         report = calibrate_character_pair_rules(
             output_path=args.output_path,
+            weights_path=args.weights_path,
+            bias_path=args.bias_path,
             batch_size=args.batch_size,
             families=families,
             thresholds=thresholds,
@@ -666,6 +699,8 @@ def main() -> None:
         label_groups = _parse_label_groups(args.greedy_label_groups)
         report = calibrate_character_greedy_bias(
             output_path=args.output_path,
+            weights_path=args.weights_path,
+            pair_rules_path=args.pair_rules_path,
             batch_size=args.batch_size,
             labels_to_tune=args.greedy_labels,
             deltas=deltas,
@@ -684,6 +719,7 @@ def main() -> None:
     else:
         report = calibrate_character_logits(
             output_path=args.output_path,
+            weights_path=args.weights_path,
             batch_size=args.batch_size,
             max_scale=args.max_scale,
             step=args.step,
