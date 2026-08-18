@@ -238,7 +238,7 @@ class WebAppRenderingTests(unittest.TestCase):
                         stack = main.load_character_recognizer_stack(object())
 
         self.assertEqual(stack, (character_model, ["H"], letter_model, ["H"], mixedcase_model, ["H", "i"]))
-        self.assertIsNone(mixed_loader.call_args.kwargs["logit_bias_path"])
+        self.assertNotIn("logit_bias_path", mixed_loader.call_args.kwargs)
         folded_loader.assert_not_called()
 
     def test_classify_files_applies_context_cleanup_to_display(self) -> None:

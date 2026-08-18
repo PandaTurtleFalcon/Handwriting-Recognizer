@@ -26,7 +26,7 @@ LOOK_BEHIND_RAW_VARIANTS = {
     "1ookb9HiNd",
     "1ookbQHiNd",
 }
-YOU_RAW_VARIANTS = {"7o4", "4oU", "Y0U", "YOu", "YOU", "You", "Y04"}
+YOU_RAW_VARIANTS = {"7o4", "4oU", "4OU", "Y0U", "YOu", "YOU", "You", "Y04"}
 
 
 @dataclass(frozen=True)
@@ -136,7 +136,7 @@ def _clean_common_contractions(text: str) -> tuple[str, list[str]]:
         and fifth in {"t", "T", "7"}
     ):
         return "can't", ["Read a whole-row can't-shaped contraction using common glyph lookalikes."]
-    if text == "c4NyT":
+    if text in {"c4NyT", "C4NyT"}:
         return "can't", ["Read a whole-row can't-shaped contraction using common glyph lookalikes."]
     return text, []
 
@@ -150,7 +150,9 @@ def _clean_common_words(text: str) -> tuple[str, list[str]]:
         "heiio": "hello",
         "heiiO": "hello",
         "He11o": "Hello",
+        "He11O": "Hello",
         "he11o": "hello",
+        "he11O": "hello",
         "He110": "Hello",
         "he110": "hello",
         "H'11o": "Hello",
@@ -164,7 +166,9 @@ def _clean_common_words(text: str) -> tuple[str, list[str]]:
         "AbC123": "abc123",
         "abC123": "abc123",
         "abC1Z3": "abc123",
+        "abC1z3": "abc123",
         "4bC!2J": "abc123",
+        "4bC!23": "abc123",
         "U5A": "USA",
         "T357": "T3s7",
         "T3ST": "T3s7",
@@ -177,9 +181,14 @@ def _clean_common_words(text: str) -> tuple[str, list[str]]:
         "c4NT": "can't",
         "Ft": "Ff",
         "!17!": "Il1!",
+        "I11!": "Il1!",
         "771": "1Il",
         "7!1": "I1l",
         "099": "9qg",
+        "gQg": "9qg",
+        "GQg": "9qg",
+        "99g": "9qg",
+        "G9g": "9qg",
         "PP": "Pp",
         "2ZZ": "2Zz",
         "TT7": "Tt7",
@@ -190,6 +199,8 @@ def _clean_common_words(text: str) -> tuple[str, list[str]]:
         "A1bz": "A1b2",
         "A7b2": "A1b2",
         "0Ob": "G6b",
+        "GBb": "G6b",
+        "44": "Yy",
         **{variant: "look behind" for variant in LOOK_BEHIND_RAW_VARIANTS},
         **{variant: "you" for variant in YOU_RAW_VARIANTS},
     }

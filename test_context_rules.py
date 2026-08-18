@@ -175,6 +175,7 @@ class ContextRulesTests(unittest.TestCase):
         cleanup = cleanup_context("c4NyT")
 
         self.assertEqual(cleanup.display, "can't")
+        self.assertEqual(cleanup_context("C4NyT").display, "can't")
 
     def test_common_contraction_cleanup_rejects_longer_words(self) -> None:
         """Contraction cleanup should stay whole-row specific."""
@@ -192,7 +193,9 @@ class ContextRulesTests(unittest.TestCase):
         self.assertEqual(cleanup_context("heiio").display, "hello")
         self.assertEqual(cleanup_context("heiiO").display, "hello")
         self.assertEqual(cleanup_context("He11o").display, "Hello")
+        self.assertEqual(cleanup_context("He11O").display, "Hello")
         self.assertEqual(cleanup_context("he110").display, "hello")
+        self.assertEqual(cleanup_context("he11O").display, "hello")
         self.assertEqual(cleanup_context("H'11o").display, "Hello")
         self.assertEqual(cleanup_context("\"'11O").display, "hello")
         self.assertEqual(cleanup_context("H911O").display, "Hello")
@@ -202,7 +205,9 @@ class ContextRulesTests(unittest.TestCase):
         self.assertEqual(cleanup_context("HQ11o").display, "hello")
         self.assertEqual(cleanup_context("Abc123").display, "abc123")
         self.assertEqual(cleanup_context("abC1Z3").display, "abc123")
+        self.assertEqual(cleanup_context("abC1z3").display, "abc123")
         self.assertEqual(cleanup_context("4bC!2J").display, "abc123")
+        self.assertEqual(cleanup_context("4bC!23").display, "abc123")
         self.assertEqual(cleanup_context("U5A").display, "USA")
         self.assertEqual(cleanup_context("T357").display, "T3s7")
         self.assertEqual(cleanup_context("T3ST").display, "T3s7")
@@ -214,9 +219,14 @@ class ContextRulesTests(unittest.TestCase):
         self.assertEqual(cleanup_context("c4NT").display, "can't")
         self.assertEqual(cleanup_context("Ft").display, "Ff")
         self.assertEqual(cleanup_context("!17!").display, "Il1!")
+        self.assertEqual(cleanup_context("I11!").display, "Il1!")
         self.assertEqual(cleanup_context("771").display, "1Il")
         self.assertEqual(cleanup_context("7!1").display, "I1l")
         self.assertEqual(cleanup_context("099").display, "9qg")
+        self.assertEqual(cleanup_context("gQg").display, "9qg")
+        self.assertEqual(cleanup_context("GQg").display, "9qg")
+        self.assertEqual(cleanup_context("99g").display, "9qg")
+        self.assertEqual(cleanup_context("G9g").display, "9qg")
         self.assertEqual(cleanup_context("PP").display, "Pp")
         self.assertEqual(cleanup_context("2ZZ").display, "2Zz")
         self.assertEqual(cleanup_context("TT7").display, "Tt7")
@@ -226,6 +236,8 @@ class ContextRulesTests(unittest.TestCase):
         self.assertEqual(cleanup_context("A1bz").display, "A1b2")
         self.assertEqual(cleanup_context("A7b2").display, "A1b2")
         self.assertEqual(cleanup_context("0Ob").display, "G6b")
+        self.assertEqual(cleanup_context("GBb").display, "G6b")
+        self.assertEqual(cleanup_context("44").display, "Yy")
         self.assertEqual(cleanup_context("xOO11eh'nd").display, "look behind")
         self.assertEqual(cleanup_context("xOOh:1i").display, "look behind")
         self.assertEqual(cleanup_context("iookbehind").display, "look behind")
@@ -239,6 +251,7 @@ class ContextRulesTests(unittest.TestCase):
         self.assertEqual(cleanup_context("Y0U").display, "you")
         self.assertEqual(cleanup_context("YOu").display, "you")
         self.assertEqual(cleanup_context("Y04").display, "you")
+        self.assertEqual(cleanup_context("4OU").display, "you")
         self.assertEqual(cleanup_context("You").display, "you")
 
     def test_rough_look_behind_you_rows_clean_independently(self) -> None:
