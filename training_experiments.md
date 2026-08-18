@@ -1264,3 +1264,10 @@ restored, so future improvement loops do not repeat known-bad blends.
   - Code path: added `--baseline-objective`, `--baseline-min-delta`, and `--require-improvement` to both character and mixed-case candidate evaluators so equal-to-baseline candidates can fail unless they improve the chosen objective.
   - Verification: evaluator tests passed (`111 passed`), compile checks passed, and a same-checkpoint smoke correctly failed `--require-improvement --baseline-objective letter_validation_accuracy --baseline-min-delta 0.01`.
   - Takeaway: the current character micro-finetune recipe is flat after calibration. Future candidate runs should require positive objective movement before spending time on app-hardcase replay or artifact promotion.
+
+- Rejected top-confusion character reranker and pair-rule probes:
+  - Evidence: current character confusions are concentrated in `S/s`, `O/o/0`, `l/1/I/|`, `c/C`, `v/V`, `u/U`, `p/P`, and `x/X`; letters remain the closest failing gate at `93.5908%`.
+  - Family reranker probe: `scripts/probe_character_family_reranker.py --families 'Ss,0Oo,1Iil|,cC' --source-groups letter` rejected every family. `c/C` reduced validation from `94.1477%` to `94.0910%`; the other families failed selection validation.
+  - Pair-rule probe: `scripts/calibrate_character_logits.py --pair-rules --dry-run --objective letter_validation_accuracy --pair-source-groups letter` with strict deployed floors finished at the same deployed calibrated best (`94.1666%` validation, `93.5908%` letter), so it failed the required-improvement standard.
+  - Verification: `scripts/summarize_benchmarks.py --json` stayed unchanged and no deployment artifact changed.
+  - Takeaway: the obvious top-family character post-hoc space is exhausted. The next useful character path needs more real correction crops for those visual-twin labels or a candidate model that beats the calibrated baseline before pair-rule/app-hardcase replay.
