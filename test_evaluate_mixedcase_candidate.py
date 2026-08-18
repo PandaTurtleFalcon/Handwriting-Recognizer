@@ -1,0 +1,77 @@
+import tempfile
+import unittest
+from pathlib import Path
+from unittest.mock import patch
+
+import torch
+
+from alnum_model import MIXEDCASE_LABELS
+from scripts.evaluate_mixedcase_candidate import (
+    candidate_test_tensors,
+    gate_rows,
+    load_candidate_checkpoint,
+)
+
+
+class MixedcaseCandidateEvaluatorTests(unittest.TestCase):
+    """Focused tests for candidate-only mixed-case checkpoint evaluation."""
+
+    def test_gate_rows_reports_main_mixedcase_gates(self) -> None:
+        rows = gate_rows(
+            {
+                "test_accuracy": 96.0,
+                "case_or_ambiguity_aware_test_accuracy": 99.0,
+                "digit_test_accuracy": 95.0,
+                "upper_test_accuracy": 94.9,
+                "lower_test_accuracy": 95.1,
+            },
+            target=95.0,
+        )
+
+        by_name = {row["name"]: row for row in rows}
+        self.assertTrue(by_name["test_accuracy"]["passed"])
+        self.assertTrue(by_name["digit_test_accuracy"]["passed"])
+        self.assertFalse(by_name["upper_test_accuracy"]["passed"])
+        self.assertEqual(by_name["upper_test_accuracy"]["value"], 94.9)
+
+    def test_candidate_test_tensors_can_sample_deterministically(self) -> None:
+        mnist_images = torch.arange(6, dtype=torch.float32).view(6, 1, 1, 1)
+        mnist_targets = torch.arange(6)
+        byclass_images = torch.arange(6, 12, dtype=torch.float32).view(6, 1, 1, 1)
+        byclass_targets = torch.arange(6, 12)
+
+        with (
+            patch(
+                "scripts.evaluate_mixedcase_candidate.build_or_load_mnist_cache",
+                return_value=(mnist_images, mnist_targets),
+            ),
+            patch(
+                "scripts.evaluate_mixedcase_candidate.build_or_load_emnist_byclass_mixedcase_cache",
+                return_value=(byclass_images, byclass_targets),
+            ),
+        ):
+            first_images, first_targets = candidate_test_tensors(sample_limit=5, seed=7)
+            second_images, second_targets = candidate_test_tensors(sample_limit=5, seed=7)
+
+        self.assertEqual(first_targets.tolist(), second_targets.tolist())
+        self.assertEqual(first_images.flatten().tolist(), second_images.flatten().tolist())
+        self.assertEqual(int(first_targets.numel()), 5)
+
+    def test_load_candidate_checkpoint_rejects_wrong_labels(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            checkpoint_path = Path(directory) / "bad.pt"
+            torch.save(
+                {
+                    "labels": list(MIXEDCASE_LABELS[:-1]),
+                    "model_type": "cnn",
+                    "model_state_dict": {},
+                },
+                checkpoint_path,
+            )
+
+            with self.assertRaisesRegex(RuntimeError, "label order"):
+                load_candidate_checkpoint(checkpoint_path, torch.device("cpu"))
+
+
+if __name__ == "__main__":
+    unittest.main()

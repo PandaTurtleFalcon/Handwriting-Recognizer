@@ -1226,3 +1226,10 @@ restored, so future improvement loops do not repeat known-bad blends.
   - Result: no model artifact changed. This removes the misleading workflow where a candidate-only training command could appear benchmark-gated while actually reading the old deployed metrics.
   - Verification: added regression tests for candidate output path forwarding, custom checkpoint persistence, and rejecting candidate output paths with deployed benchmark gates.
   - Takeaway: the next mixed-case push should train candidates offline, run a candidate-specific evaluator/calibration step, and only promote into deployed paths after saved benchmarks prove it beats the current stack.
+
+- Rejected small candidate-only mixed-case warm-start:
+  - Code path: added `scripts/evaluate_mixedcase_candidate.py`, a direct checkpoint evaluator for candidate mixed-case weights that reports exact, case-or-visual, digit, upper, lower, and balanced-group gates without deploying the file.
+  - Command shape: trained a one-epoch warm-start candidate with `--samples-per-class 500`, learning rate `0.000002`, balanced-group objective, and output paths under `tmp/candidates/`.
+  - Result: not promotable and no deployed artifact changed. The epoch reported raw exact `80.21%`, digit `99.11%`, upper `71.31%`, and lower `84.22%`; the saved candidate evaluated on a 4096-example diagnostic slice at `80.22%` exact with upper only `71.36%`.
+  - Verification: focused candidate evaluator tests passed, the candidate evaluator smoke command completed, and `scripts/summarize_benchmarks.py --json` confirmed deployed metrics stayed unchanged.
+  - Takeaway: tiny low-learning-rate warm starts are not enough; the next candidate should change representation or data balance more substantially, then use this evaluator before any calibration/promotion attempt.
