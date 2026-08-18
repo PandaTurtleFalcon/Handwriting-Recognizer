@@ -231,8 +231,9 @@ def train_family_probe(
     family_indices: tuple[int, ...],
     epochs: int,
     learning_rate: float,
+    hidden_units: int = 0,
 ) -> FamilyProbe | None:
-    """Train one small linear classifier for a visual family."""
+    """Train one small classifier for a visual family."""
 
     target_to_local = {target: index for index, target in enumerate(family_indices)}
     mask = torch.zeros_like(targets, dtype=torch.bool)
@@ -241,7 +242,14 @@ def train_family_probe(
     if int(mask.sum().item()) < len(family_indices) * 8:
         return None
     local_targets = torch.tensor([target_to_local[int(target)] for target in targets[mask].tolist()], dtype=torch.long)
-    model = nn.Linear(features.shape[1], len(family_indices))
+    if hidden_units > 0:
+        model = nn.Sequential(
+            nn.Linear(features.shape[1], hidden_units),
+            nn.ReLU(),
+            nn.Linear(hidden_units, len(family_indices)),
+        )
+    else:
+        model = nn.Linear(features.shape[1], len(family_indices))
     optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate, weight_decay=0.001)
     criterion = nn.CrossEntropyLoss()
     train_features = features[mask]
@@ -308,6 +316,20 @@ def _metrics(predictions: torch.Tensor, targets: torch.Tensor) -> dict[str, floa
     }
 
 
+def _is_promotable(base_metrics: dict[str, float], candidate_metrics: dict[str, float]) -> bool:
+    """Return whether a probe improved exact accuracy without split regressions."""
+
+    protected_metrics = (
+        "case_or_ambiguity_aware_test_accuracy",
+        "digit_test_accuracy",
+        "upper_test_accuracy",
+        "lower_test_accuracy",
+    )
+    if candidate_metrics["test_accuracy"] <= base_metrics["test_accuracy"]:
+        return False
+    return all(candidate_metrics[name] >= base_metrics[name] for name in protected_metrics)
+
+
 def run_probe(
     batch_size: int,
     epochs: int,
@@ -319,6 +341,7 @@ def run_probe(
     seed: int,
     extra_roots: list[Path] | None = None,
     extra_samples_per_class: int | None = None,
+    hidden_units: int = 0,
 ) -> dict[str, object]:
     """Train family probes on train split and evaluate on test split."""
 
@@ -351,7 +374,7 @@ def run_probe(
     family_reports = []
     for family_indices in selected_families(family_limit):
         train_features = family_features(fit_images, fit_mixed, fit_folded, family_indices)
-        probe = train_family_probe(train_features, fit_targets, family_indices, epochs, learning_rate)
+        probe = train_family_probe(train_features, fit_targets, family_indices, epochs, learning_rate, hidden_units)
         if probe is None:
             continue
         calibration_candidate = apply_family_probe(
@@ -387,9 +410,13 @@ def run_probe(
             }
         )
         probe_predictions = candidate_predictions
+    base_metrics = _metrics(base_predictions, test_targets)
+    reranked_metrics = _metrics(probe_predictions, test_targets)
     return {
-        "base": _metrics(base_predictions, test_targets),
-        "reranked": _metrics(probe_predictions, test_targets),
+        "base": base_metrics,
+        "reranked": reranked_metrics,
+        "promotable": _is_promotable(base_metrics, reranked_metrics),
+        "test_delta": reranked_metrics["test_accuracy"] - base_metrics["test_accuracy"],
         "families": family_reports,
         "train_samples": int(train_targets.numel()),
         "fit_samples": int(fit_targets.numel()),
@@ -397,6 +424,7 @@ def run_probe(
         "test_samples": int(test_targets.numel()),
         "extra_roots": [str(path) for path in (extra_roots or [])],
         "extra_samples_per_class": extra_samples_per_class,
+        "hidden_units": hidden_units,
     }
 
 
@@ -414,6 +442,7 @@ def main() -> None:
     parser.add_argument("--seed", type=int, default=20260818)
     parser.add_argument("--extra-root", action="append", type=Path, default=[])
     parser.add_argument("--extra-samples-per-class", type=int, default=None)
+    parser.add_argument("--hidden-units", type=int, default=0)
     args = parser.parse_args()
     print(
         json.dumps(
@@ -428,6 +457,7 @@ def main() -> None:
                 seed=args.seed,
                 extra_roots=args.extra_root,
                 extra_samples_per_class=args.extra_samples_per_class,
+                hidden_units=args.hidden_units,
             ),
             indent=2,
         )

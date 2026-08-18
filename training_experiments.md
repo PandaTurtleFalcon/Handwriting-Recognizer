@@ -990,3 +990,21 @@ restored, so future improvement loops do not repeat known-bad blends.
   - Result: no model artifacts changed. The saved uploaded screenshot now replays with raw rows `["lOok beh'nd", "yo4"]` instead of a fully glued top row, and still cleans to `look behind\nyou`.
   - Verification: `test_context_rules.py test_web_app.py` passed (`134` tests), `scripts/evaluate_hardcases.py --uploaded-fixtures --json` reported cleaned uploaded hardcase `1/1`, and `scripts/summarize_benchmarks.py --include-uploaded-hardcases --json` returned the same deployed model baseline.
   - Takeaway: this is a real app-level reading improvement for multi-word uploads, but it does not solve the raw character model's exact mixed-case/letter failures. The raw uploaded diagnostic remains `0/1`, which is correct until the underlying crops are classified exactly.
+
+- Rejected UJI hardcase character warm-start:
+  - Command shape: backed up character artifacts to `tmp/daily_training_backups/20260818T154610Z-character-uji-hardcase-probe`, then ran `character_model.py --model widecnn --warm-start --epochs 2 --batch-size 256 --learning-rate 0.000001 --label-smoothing 0.012 --punctuation-loss-weight 1.01 --weak-labels 'Oo0Il1isScCzZvV-.|/' --weak-loss-weight 1.04 --seed 2424` with current HASY/corrections/generated-punctuation extras plus `data/uji_pen_v2/hardcase_ascii`, using `letter_validation_accuracy` as the checkpoint objective and deployed character floors.
+  - Result: rejected/no artifact write. The best observed checkpoint fell to validation `89.02%`, ambiguity-aware `96.68%`, digit `91.88%`, letter `90.56%`, and punctuation `81.29%`, all below the deployed calibrated stack.
+  - Verification: `scripts/summarize_benchmarks.py --include-uploaded-hardcases --json` returned the deployed baseline after the failed run.
+  - Takeaway: the full UJI hardcase folder is too distribution-shifting for a direct warm-start. Future UJI/CVL work should feed a gated family-specialist adapter or carefully capped twin-family crop cache, not the whole hardcase slice as ordinary training data.
+
+- Rejected nonlinear mixed-case family-adapter probe:
+  - Code path: extended `scripts/probe_mixedcase_feature_reranker.py` with `--hidden-units`, letting each visual family use a small MLP adapter over the existing mixed-case logits, folded logits, and geometry features while keeping the probe non-deploying.
+  - Command shape: `scripts/probe_mixedcase_feature_reranker.py --batch-size 8192 --train-sample-limit 30000 --family-limit 4 --epochs 80 --learning-rate 0.003 --calibration-ratio 0.25 --min-family-delta 0.02 --hidden-units 32`.
+  - Result: rejected. The adapter accepted `5Ss` on calibration (`+0.0800`), but held-out test exact regressed from `87.7774%` to `87.7402%`; upper fell from `84.7030%` to `84.5977%`, and lower fell from `73.1476%` to `73.0810%`. The probe now reports `promotable=false` plus `test_delta=-0.0372` to make this failure machine-readable.
+  - Verification: `test_mixedcase_feature_reranker.py` passed (`7` tests).
+  - Takeaway: a nonlinear adapter is implementable in the current harness, but it needs stronger validation/calibration before serving. The next adapter iteration should require held-out improvement per family or a second validation split, and CVL-derived twin-family crops are still the best new-data candidate from research.
+
+- Dataset research: CVL local-only letter-crop route:
+  - Research: CVL provides English/German handwritten pages from `310` writers with word bounding boxes; the published license is CC BY-NC 3.0, and punctuation is not included in its word-level ground-truth viewer example.
+  - Source: https://cvl.tuwien.ac.at/research/cvl-databases/an-off-line-database-for-writer-retrieval-writer-identification-and-word-spotting/ and https://creativecommons.org/licenses/by-nc/3.0/
+  - Takeaway: CVL is a plausible local-only source for writer-diverse letter crops in the hard visual families (`0Oo`, `1Iil`, `5Ss`, `Cc`, `Uuv`, `Pp`, `2Zz`), but it should be mined into capped twin-family caches rather than mixed into broad training unfiltered. It will not directly solve punctuation.
