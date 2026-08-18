@@ -73,6 +73,7 @@ def evaluate_candidate(
     device_name: str = "auto",
     mode: str = "raw",
     sample_limit: int | None = None,
+    allow_deployed_calibration: bool = False,
 ) -> dict[str, object]:
     """Evaluate one candidate checkpoint and return benchmark-style metrics."""
 
@@ -87,6 +88,12 @@ def evaluate_candidate(
     model = load_candidate_checkpoint(checkpoint_path, device)
     images, targets = candidate_test_tensors(sample_limit=sample_limit)
     if mode == "hybrid":
+        if checkpoint_path.resolve() != MIXEDCASE_WEIGHTS_PATH.resolve() and not allow_deployed_calibration:
+            raise RuntimeError(
+                "Hybrid candidate evaluation would reuse deployed mixed-case calibration artifacts. "
+                "Use --mode raw for candidate checkpoints, or pass --allow-deployed-calibration "
+                "only for an explicit diagnostic."
+            )
         metrics = hybrid_stack_metrics(model, images, targets, device, batch_size, apply_calibration=True)
     elif mode == "raw":
         loader = DataLoader(TensorDataset(images, targets), batch_size=batch_size, shuffle=False)
@@ -136,6 +143,17 @@ def read_baseline_metrics(path: Path | None) -> dict[str, float]:
         for key, value in metrics.items()
         if key in GATE_KEYS and isinstance(value, (int, float))
     }
+
+
+def read_baseline_mode(path: Path | None) -> str | None:
+    """Read the evaluation mode stored in a baseline report, when present."""
+
+    if path is None:
+        return None
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    if isinstance(payload, dict) and isinstance(payload.get("mode"), str):
+        return str(payload["mode"])
+    return None
 
 
 def baseline_rows(
@@ -217,17 +235,33 @@ def main() -> None:
     parser.add_argument("--batch-size", type=int, default=4096)
     parser.add_argument("--device", choices=("auto", "cpu", "mps"), default="auto")
     parser.add_argument("--mode", choices=("raw", "hybrid"), default="raw")
+    parser.add_argument(
+        "--allow-deployed-calibration",
+        action="store_true",
+        help="Allow hybrid diagnostics for non-deployed checkpoints using deployed calibration artifacts.",
+    )
     parser.add_argument("--sample-limit", type=int, default=None)
     parser.add_argument("--target", type=float, default=95.0)
     parser.add_argument("--baseline-json", type=Path, default=None)
     parser.add_argument("--baseline-tolerance", type=float, default=0.0)
     parser.add_argument("--baseline-objective", choices=GATE_KEYS, default="test_accuracy")
     parser.add_argument("--baseline-min-delta", type=float, default=0.0)
+    parser.add_argument(
+        "--allow-baseline-mode-mismatch",
+        action="store_true",
+        help="Allow comparing reports produced by different evaluation modes.",
+    )
     parser.add_argument("--require-target", action="store_true")
     parser.add_argument("--require-baseline", action="store_true")
     parser.add_argument("--require-improvement", action="store_true")
     parser.add_argument("--json", action="store_true")
     args = parser.parse_args()
+    baseline_mode = read_baseline_mode(args.baseline_json)
+    if baseline_mode is not None and baseline_mode != args.mode and not args.allow_baseline_mode_mismatch:
+        raise RuntimeError(
+            f"Baseline report mode {baseline_mode!r} does not match requested mode {args.mode!r}. "
+            "Use a matching baseline JSON or pass --allow-baseline-mode-mismatch for diagnostics."
+        )
 
     report = evaluate_candidate(
         checkpoint_path=args.checkpoint_path,
@@ -235,6 +269,7 @@ def main() -> None:
         device_name=args.device,
         mode=args.mode,
         sample_limit=args.sample_limit,
+        allow_deployed_calibration=args.allow_deployed_calibration,
     )
     target_rows = gate_rows(report["metrics"], args.target)
     baseline_metrics = read_baseline_metrics(args.baseline_json)

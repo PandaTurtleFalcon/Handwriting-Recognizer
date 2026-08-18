@@ -5,14 +5,17 @@ from unittest.mock import patch
 
 import torch
 
+import scripts.evaluate_character_candidate as character_candidate
 from scripts.evaluate_character_candidate import (
     baseline_rows,
     candidate_validation_tensors,
+    evaluate_candidate,
     failed_rows,
     gate_rows,
     improvement_row,
     load_candidate_checkpoint,
     read_baseline_metrics,
+    read_baseline_mode,
 )
 
 
@@ -84,6 +87,36 @@ class CharacterCandidateEvaluatorTests(unittest.TestCase):
 
         self.assertEqual(metrics, {"validation_accuracy": 94.1, "letter_validation_accuracy": 93.5})
 
+    def test_read_baseline_mode_accepts_nested_report_json(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "baseline.json"
+            path.write_text('{"mode":"raw","metrics":{"validation_accuracy":94.1}}', encoding="utf-8")
+
+            mode = read_baseline_mode(path)
+
+        self.assertEqual(mode, "raw")
+
+    def test_main_rejects_baseline_mode_mismatch_before_evaluation(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "baseline.json"
+            path.write_text('{"mode":"raw","metrics":{"validation_accuracy":94.1}}', encoding="utf-8")
+            argv = [
+                "evaluate_character_candidate.py",
+                "--mode",
+                "calibrated",
+                "--baseline-json",
+                str(path),
+            ]
+
+            with (
+                patch("sys.argv", argv),
+                patch("scripts.evaluate_character_candidate.evaluate_candidate") as evaluator,
+            ):
+                with self.assertRaisesRegex(RuntimeError, "does not match requested mode"):
+                    character_candidate.main()
+
+            evaluator.assert_not_called()
+
     def test_candidate_validation_tensors_can_sample_deterministically(self) -> None:
         images = torch.arange(12, dtype=torch.float32).view(12, 1, 1, 1)
         targets = torch.arange(12)
@@ -115,6 +148,23 @@ class CharacterCandidateEvaluatorTests(unittest.TestCase):
 
             with self.assertRaisesRegex(RuntimeError, "label order"):
                 load_candidate_checkpoint(checkpoint_path, ["A", "B"], torch.device("cpu"))
+
+    def test_calibrated_mode_rejects_non_deployed_candidate_by_default(self) -> None:
+        class FixedModel(torch.nn.Module):
+            def forward(self, inputs: torch.Tensor) -> torch.Tensor:
+                return torch.zeros((inputs.size(0), 2))
+
+        with tempfile.TemporaryDirectory() as directory:
+            checkpoint_path = Path(directory) / "candidate.pt"
+            with (
+                patch(
+                    "scripts.evaluate_character_candidate.candidate_validation_tensors",
+                    return_value=(torch.zeros((1, 1, 28, 28)), torch.zeros(1, dtype=torch.long), ["A", "B"]),
+                ),
+                patch("scripts.evaluate_character_candidate.load_candidate_checkpoint", return_value=FixedModel()),
+            ):
+                with self.assertRaisesRegex(RuntimeError, "deployed character calibration"):
+                    evaluate_candidate(checkpoint_path, device_name="cpu", mode="calibrated")
 
 
 if __name__ == "__main__":
