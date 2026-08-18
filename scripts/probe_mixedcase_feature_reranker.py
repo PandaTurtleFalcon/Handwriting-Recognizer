@@ -25,7 +25,9 @@ from alnum_model import (  # noqa: E402
     MIXEDCASE_LABELS,
     build_or_load_emnist_byclass_mixedcase_cache,
     build_or_load_mnist_cache,
+    limit_mixedcase_extra_cache,
     load_alnum_model,
+    load_mixedcase_extra_cache,
     load_mixedcase_model,
     mixedcase_labels_match_with_ambiguity,
 )
@@ -83,6 +85,30 @@ def _split_tensors(train: bool, sample_limit: int | None = None) -> tuple[torch.
     generator = torch.Generator().manual_seed(123 if train else 456)
     selected = torch.randperm(int(targets.numel()), generator=generator)[:sample_limit]
     return images[selected], targets[selected]
+
+
+def _fit_tensors(
+    train_images: torch.Tensor,
+    train_targets: torch.Tensor,
+    extra_roots: list[Path],
+    extra_samples_per_class: int | None,
+    seed: int,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """Return reranker fit tensors with optional capped extra datasets."""
+
+    image_parts = [train_images]
+    target_parts = [train_targets]
+    for extra_index, extra_root in enumerate(extra_roots):
+        extra_images, extra_targets = load_mixedcase_extra_cache(extra_root)
+        extra_images, extra_targets = limit_mixedcase_extra_cache(
+            extra_images,
+            extra_targets,
+            extra_samples_per_class,
+            seed + 3000 + extra_index,
+        )
+        image_parts.append(extra_images)
+        target_parts.append(extra_targets)
+    return torch.cat(image_parts), torch.cat(target_parts)
 
 
 def _model_outputs(images: torch.Tensor, batch_size: int) -> tuple[torch.Tensor, torch.Tensor]:
@@ -291,6 +317,8 @@ def run_probe(
     calibration_ratio: float,
     min_family_delta: float,
     seed: int,
+    extra_roots: list[Path] | None = None,
+    extra_samples_per_class: int | None = None,
 ) -> dict[str, object]:
     """Train family probes on train split and evaluate on test split."""
 
@@ -304,6 +332,13 @@ def run_probe(
     fit_indices = order[calibration_count:]
     fit_images = train_images[fit_indices]
     fit_targets = train_targets[fit_indices]
+    fit_images, fit_targets = _fit_tensors(
+        fit_images,
+        fit_targets,
+        extra_roots or [],
+        extra_samples_per_class,
+        seed,
+    )
     calibration_images = train_images[calibration_indices]
     calibration_targets = train_targets[calibration_indices]
     fit_mixed, fit_folded = _model_outputs(fit_images, batch_size)
@@ -360,6 +395,8 @@ def run_probe(
         "fit_samples": int(fit_targets.numel()),
         "calibration_samples": int(calibration_targets.numel()),
         "test_samples": int(test_targets.numel()),
+        "extra_roots": [str(path) for path in (extra_roots or [])],
+        "extra_samples_per_class": extra_samples_per_class,
     }
 
 
@@ -375,6 +412,8 @@ def main() -> None:
     parser.add_argument("--calibration-ratio", type=float, default=0.2)
     parser.add_argument("--min-family-delta", type=float, default=0.0)
     parser.add_argument("--seed", type=int, default=20260818)
+    parser.add_argument("--extra-root", action="append", type=Path, default=[])
+    parser.add_argument("--extra-samples-per-class", type=int, default=None)
     args = parser.parse_args()
     print(
         json.dumps(
@@ -387,6 +426,8 @@ def main() -> None:
                 calibration_ratio=args.calibration_ratio,
                 min_family_delta=args.min_family_delta,
                 seed=args.seed,
+                extra_roots=args.extra_root,
+                extra_samples_per_class=args.extra_samples_per_class,
             ),
             indent=2,
         )

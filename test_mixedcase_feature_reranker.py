@@ -1,7 +1,10 @@
 import unittest
+from pathlib import Path
+from unittest.mock import patch
 
 import torch
 
+from scripts.probe_mixedcase_feature_reranker import _fit_tensors
 from scripts.probe_mixedcase_feature_reranker import geometry_features
 from scripts.probe_mixedcase_feature_reranker import selected_families
 
@@ -28,6 +31,31 @@ class MixedcaseFeatureRerankerTests(unittest.TestCase):
         self.assertEqual(len(families), 3)
         self.assertTrue(all(len(family) > 1 for family in families))
         self.assertTrue(all(0 <= index < 62 for family in families for index in family))
+
+    def test_fit_tensors_appends_capped_extra_roots(self) -> None:
+        """Optional adviser data should be capped before joining fit tensors."""
+
+        train_images = torch.zeros((1, 1, 28, 28), dtype=torch.float32)
+        train_targets = torch.tensor([10], dtype=torch.long)
+        extra_images = torch.ones((4, 1, 28, 28), dtype=torch.float32)
+        extra_targets = torch.tensor([36, 36, 36, 37], dtype=torch.long)
+
+        with patch(
+            "scripts.probe_mixedcase_feature_reranker.load_mixedcase_extra_cache",
+            return_value=(extra_images, extra_targets),
+        ):
+            images, targets = _fit_tensors(
+                train_images,
+                train_targets,
+                [Path("extra.pt")],
+                extra_samples_per_class=1,
+                seed=11,
+            )
+
+        self.assertEqual(tuple(images.shape), (3, 1, 28, 28))
+        self.assertEqual(torch.bincount(targets, minlength=62)[10].item(), 1)
+        self.assertEqual(torch.bincount(targets, minlength=62)[36].item(), 1)
+        self.assertEqual(torch.bincount(targets, minlength=62)[37].item(), 1)
 
 
 if __name__ == "__main__":
