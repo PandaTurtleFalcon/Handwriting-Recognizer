@@ -484,6 +484,33 @@ class ExtraAlnumDatasetTests(unittest.TestCase):
 
         self.assertTrue(restore.called)
 
+    def test_mixedcase_cli_restores_artifacts_when_training_raises(self) -> None:
+        """Protected mixed-case training should restore artifacts after hard failures."""
+
+        with (
+            tempfile.TemporaryDirectory() as directory,
+            patch(
+                "sys.argv",
+                [
+                    "alnum_model.py",
+                    "--mixed-case",
+                    "--mixedcase-require-benchmark-gates",
+                    "--mixedcase-benchmark-gate-names",
+                    "mixedcase_exact",
+                    "--mixedcase-benchmark-backup-dir",
+                    str(Path(directory) / "backup"),
+                ],
+            ),
+            patch("alnum_model.saved_mixedcase_benchmark_values", return_value={"mixedcase_exact": 87.8}),
+            patch("alnum_model.backup_mixedcase_artifacts"),
+            patch("alnum_model.restore_mixedcase_artifacts") as restore,
+            patch("alnum_model.train_mixedcase", side_effect=RuntimeError("training failed")),
+        ):
+            with self.assertRaisesRegex(RuntimeError, "training failed"):
+                alnum_model.main()
+
+        self.assertTrue(restore.called)
+
     def test_mixedcase_warm_start_rejects_model_type_mismatch(self) -> None:
         """Warm-start training should fail fast instead of random-initializing."""
 
