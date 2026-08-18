@@ -18,18 +18,28 @@ if str(PROJECT_DIR) not in sys.path:
 from alnum_model import (
     CORRECTION_UPLOAD_DIR,
     CORRECTIONS_PATH,
+    DEFAULT_MIXEDCASE_BENCHMARK_GATES,
     LABELS,
     MIXEDCASE_LABELS,
     MIXEDCASE_METRICS_PATH,
     _correction_training_items,
+    backup_mixedcase_artifacts,
+    mixedcase_benchmark_gate_failures,
+    saved_mixedcase_benchmark_values,
     _record_with_legacy_sequence_boxes,
     load_correction_cache,
+    restore_mixedcase_artifacts,
     train,
     train_mixedcase,
 )
 from character_model import DATASET_ROOT as CHARACTER_DATASET_ROOT
+from character_model import DEFAULT_CHARACTER_BENCHMARK_GATES
 from character_model import LABELS_PATH as CHARACTER_LABELS_PATH
 from character_model import METRICS_PATH as CHARACTER_METRICS_PATH
+from character_model import backup_character_artifacts
+from character_model import benchmark_gate_failures
+from character_model import restore_character_artifacts
+from character_model import saved_benchmark_values
 from character_model import train_character_model
 from main import (
     CHARACTER_PRACTICE_PRIORITY_LABELS,
@@ -45,6 +55,7 @@ DEFAULT_MIN_CHARACTER_CORRECTIONS = 10
 DEFAULT_MIN_ALNUM_CORRECTIONS = 10
 DEFAULT_PRIORITY_LABELS = "".join(CHARACTER_PRACTICE_PRIORITY_LABELS)
 DEFAULT_MIXEDCASE_PRIORITY_LABELS = "".join(MIXEDCASE_PRACTICE_PRIORITY_LABELS)
+DAILY_BACKUP_ROOT = PROJECT_DIR / "tmp" / "daily_training_backups"
 
 
 def best_checkpoint_from_metrics(metrics_path: Path) -> dict[str, float]:
@@ -88,6 +99,71 @@ def deployed_mixedcase_checkpoint_floors(metrics_path: Path = MIXEDCASE_METRICS_
         "min_checkpoint_upper": float(checkpoint.get("upper_test_accuracy", 0.0)),
         "min_checkpoint_lower": float(checkpoint.get("lower_test_accuracy", 0.0)),
     }
+
+
+def protected_daily_character_train(*, backup_dir: Path) -> None:
+    """Run daily character fine-tuning and restore artifacts if saved gates regress."""
+
+    baseline = saved_benchmark_values(DEFAULT_CHARACTER_BENCHMARK_GATES)
+    backup_character_artifacts(backup_dir)
+    extra_roots = [CHARACTER_CORRECTION_ROOT]
+    if HASY_CHARACTER_ROOT.exists():
+        extra_roots.insert(0, HASY_CHARACTER_ROOT)
+    train_character_model(
+        epochs=2,
+        batch_size=128,
+        min_accuracy=0,
+        dataset_root=CHARACTER_DATASET_ROOT,
+        model_type="widecnn",
+        device_name="auto",
+        learning_rate=0.00008,
+        label_smoothing=0.02,
+        seed=101,
+        warm_start=True,
+        augment=True,
+        extra_roots=extra_roots,
+        checkpoint_objective="letter_validation_accuracy",
+        **deployed_character_checkpoint_floors(),
+    )
+    candidate = saved_benchmark_values(DEFAULT_CHARACTER_BENCHMARK_GATES)
+    failures = benchmark_gate_failures(baseline, candidate)
+    if failures:
+        restore_character_artifacts(backup_dir)
+        raise RuntimeError(
+            "Rejected daily character correction fine-tune: "
+            + "; ".join(failures)
+            + f". Restored artifacts from {backup_dir}."
+        )
+
+
+def protected_daily_mixedcase_train(*, backup_dir: Path) -> None:
+    """Run daily mixed-case fine-tuning and restore artifacts if saved gates regress."""
+
+    baseline = saved_mixedcase_benchmark_values(DEFAULT_MIXEDCASE_BENCHMARK_GATES)
+    backup_mixedcase_artifacts(backup_dir)
+    train_mixedcase(
+        epochs=3,
+        batch_size=2048,
+        min_accuracy=0,
+        learning_rate=0.00008,
+        seed=101,
+        model_type="cnn",
+        samples_per_class=2500,
+        device_name="auto",
+        include_corrections=True,
+        warm_start=True,
+        checkpoint_objective="lower_test_accuracy",
+        **deployed_mixedcase_checkpoint_floors(),
+    )
+    candidate = saved_mixedcase_benchmark_values(DEFAULT_MIXEDCASE_BENCHMARK_GATES)
+    failures = mixedcase_benchmark_gate_failures(baseline, candidate)
+    if failures:
+        restore_mixedcase_artifacts(backup_dir)
+        raise RuntimeError(
+            "Rejected daily mixed-case correction fine-tune: "
+            + "; ".join(failures)
+            + f". Restored artifacts from {backup_dir}."
+        )
 
 
 def export_character_correction_folder(
@@ -658,25 +734,8 @@ def main(argv: list[str] | None = None) -> None:
             )
         else:
             print(f"Fine-tuning primary character model with {character_count} correction samples.")
-            extra_roots = [CHARACTER_CORRECTION_ROOT]
-            if HASY_CHARACTER_ROOT.exists():
-                extra_roots.insert(0, HASY_CHARACTER_ROOT)
-            floors = deployed_character_checkpoint_floors()
-            train_character_model(
-                epochs=2,
-                batch_size=128,
-                min_accuracy=0,
-                dataset_root=CHARACTER_DATASET_ROOT,
-                model_type="widecnn",
-                device_name="auto",
-                learning_rate=0.00008,
-                label_smoothing=0.02,
-                seed=101,
-                warm_start=True,
-                augment=True,
-                extra_roots=extra_roots,
-                checkpoint_objective="letter_validation_accuracy",
-                **floors,
+            protected_daily_character_train(
+                backup_dir=DAILY_BACKUP_ROOT / "character",
             )
 
     if folded_corrections is not None:
@@ -713,20 +772,8 @@ def main(argv: list[str] | None = None) -> None:
             )
         else:
             print(f"Fine-tuning mixed-case model with {mixed_count} correction samples.")
-            mixedcase_floors = deployed_mixedcase_checkpoint_floors()
-            train_mixedcase(
-                epochs=3,
-                batch_size=2048,
-                min_accuracy=0,
-                learning_rate=0.00008,
-                seed=101,
-                model_type="cnn",
-                samples_per_class=2500,
-                device_name="auto",
-                include_corrections=True,
-                warm_start=True,
-                checkpoint_objective="lower_test_accuracy",
-                **mixedcase_floors,
+            protected_daily_mixedcase_train(
+                backup_dir=DAILY_BACKUP_ROOT / "mixedcase",
             )
 
 

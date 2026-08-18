@@ -76,6 +76,32 @@ def parse_family_names(value: str) -> tuple[str, ...] | None:
     return families or None
 
 
+def parse_source_groups(value: str) -> tuple[str, ...]:
+    """Parse prediction source groups allowed to receive reranker replacements."""
+
+    groups = tuple(part.strip().lower() for part in value.split(",") if part.strip())
+    allowed = {"digit", "upper", "lower"}
+    invalid = sorted(set(groups) - allowed)
+    if invalid:
+        raise ValueError(f"Unknown source group(s): {', '.join(invalid)}")
+    return groups or ("digit", "upper", "lower")
+
+
+def source_group_mask(predictions: torch.Tensor, groups: tuple[str, ...]) -> torch.Tensor:
+    """Return a mask for predictions belonging to the selected source groups."""
+
+    if set(groups) == {"digit", "upper", "lower"}:
+        return torch.ones_like(predictions, dtype=torch.bool)
+    mask = torch.zeros_like(predictions, dtype=torch.bool)
+    if "digit" in groups:
+        mask |= predictions < 10
+    if "upper" in groups:
+        mask |= (predictions >= 10) & (predictions < 36)
+    if "lower" in groups:
+        mask |= predictions >= 36
+    return mask
+
+
 def _load_hybrid_artifact() -> dict[str, object]:
     """Return the deployed hybrid settings, or a disabled default."""
 
@@ -281,12 +307,14 @@ def apply_family_probe(
     mixed_outputs: torch.Tensor,
     folded_outputs: torch.Tensor,
     probe: FamilyProbe,
+    source_groups: tuple[str, ...] = ("digit", "upper", "lower"),
 ) -> torch.Tensor:
     """Return predictions after one family probe replaces in-family guesses."""
 
     current_in_family = torch.zeros_like(predictions, dtype=torch.bool)
     for family_index in probe.family_indices:
         current_in_family |= predictions == family_index
+    current_in_family &= source_group_mask(predictions, source_groups)
     if not bool(current_in_family.any()):
         return predictions
     features = family_features(images, mixed_outputs, folded_outputs, probe.family_indices)
@@ -379,6 +407,7 @@ def run_probe(
     hidden_units: int = 0,
     confirmation_ratio: float = 0.5,
     family_names: tuple[str, ...] | None = None,
+    source_groups: tuple[str, ...] = ("digit", "upper", "lower"),
 ) -> dict[str, object]:
     """Train family probes on train split and evaluate on test split."""
 
@@ -437,6 +466,7 @@ def run_probe(
             selection_mixed,
             selection_folded,
             probe,
+            source_groups,
         )
         selection_before = _metrics(selection_predictions, selection_targets)
         selection_after = _metrics(selection_candidate, selection_targets)
@@ -449,6 +479,7 @@ def run_probe(
                 confirmation_mixed,
                 confirmation_folded,
                 probe,
+                source_groups,
             )
             confirmation_before = _metrics(confirmation_predictions, confirmation_targets)
             confirmation_after = _metrics(confirmation_candidate, confirmation_targets)
@@ -476,7 +507,14 @@ def run_probe(
             )
             continue
         before = _metrics(probe_predictions, test_targets)
-        candidate_predictions = apply_family_probe(probe_predictions, test_images, test_mixed, test_folded, probe)
+        candidate_predictions = apply_family_probe(
+            probe_predictions,
+            test_images,
+            test_mixed,
+            test_folded,
+            probe,
+            source_groups,
+        )
         after = _metrics(candidate_predictions, test_targets)
         final_rejection = _final_gate_rejection(before, after, min_family_delta)
         if final_rejection is not None:
@@ -488,6 +526,8 @@ def run_probe(
                     "confirmation_delta": confirmation_delta,
                     "before_test_accuracy": before["test_accuracy"],
                     "after_test_accuracy": after["test_accuracy"],
+                    "before_metrics": before,
+                    "after_metrics": after,
                     "delta": after["test_accuracy"] - before["test_accuracy"],
                     "rejection_reason": final_rejection,
                 }
@@ -501,6 +541,8 @@ def run_probe(
                 "confirmation_delta": confirmation_delta,
                 "before_test_accuracy": before["test_accuracy"],
                 "after_test_accuracy": after["test_accuracy"],
+                "before_metrics": before,
+                "after_metrics": after,
                 "delta": after["test_accuracy"] - before["test_accuracy"],
             }
         )
@@ -524,6 +566,7 @@ def run_probe(
         "hidden_units": hidden_units,
         "confirmation_ratio": confirmation_ratio,
         "family_names": list(family_names or []),
+        "source_groups": list(source_groups),
     }
 
 
@@ -549,6 +592,11 @@ def main() -> None:
         default=0.5,
         help="Fraction of held-out calibration samples reserved for a second acceptance check.",
     )
+    parser.add_argument(
+        "--source-groups",
+        default="digit,upper,lower",
+        help="Comma-separated current prediction groups eligible for reranking: digit, upper, lower.",
+    )
     args = parser.parse_args()
     print(
         json.dumps(
@@ -566,6 +614,7 @@ def main() -> None:
                 hidden_units=args.hidden_units,
                 confirmation_ratio=args.confirmation_ratio,
                 family_names=parse_family_names(args.families),
+                source_groups=parse_source_groups(args.source_groups),
             ),
             indent=2,
         )

@@ -1190,3 +1190,9 @@ restored, so future improvement loops do not repeat known-bad blends.
   - Result: no model artifact changed. This makes the next mixed-case data/model experiments safer because checkpoint calibration artifacts stay hash-aligned with the deployed weights after a rejected run.
   - Verification: `test_extra_alnum_datasets.py` passed (`40 passed`), `py_compile` passed for `alnum_model.py`, and `git diff --check` passed.
   - Takeaway: mixed-case exact, uppercase, and lowercase remain below target, but future mixed-case training can now fail closed the same way character training does.
+
+- Rejected CVL top-six mixed-case feature probes:
+  - Code path: prepared ignored local cache `data/cvl_top6_family_letters.pt` from CVL word images with `4500` capped crops across the `1Iil`, `0Oo`, `5Ss`, `MNmn`, `9gq`, and `Uuv` families, then extended `scripts/probe_mixedcase_feature_reranker.py` with `--source-groups` and full before/after split metrics for final-gate rejections.
+  - Result: no deployment artifact changed. The top-six probe with `--source-groups digit,lower` rejected every family; `1Iil` raised exact to `87.8162%` but regressed lowercase. A narrower `1Iil --source-groups digit` probe raised exact to `87.7979%`, upper to `84.7955%`, lower to `73.3804%`, and case-or-ambiguity to `98.0494%`, but regressed digits from `95.0249%` to `94.9277%`, below the protected target.
+  - Verification: `test_mixedcase_feature_reranker.py test_train_from_corrections.py` passed (`30 passed`), both changed scripts compiled, and `git diff --check` passed.
+  - Takeaway: the top-family adviser now exposes a near-miss route, but the digit floor is too tight for naive `1/I/l/i` reranking. The next probe should add a digit-preserving constraint or route digit-looking `1` cases through the dedicated digit specialist before accepting a family adviser.

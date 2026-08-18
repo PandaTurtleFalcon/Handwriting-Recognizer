@@ -10,7 +10,9 @@ from scripts.probe_mixedcase_feature_reranker import _fit_tensors
 from scripts.probe_mixedcase_feature_reranker import _is_promotable
 from scripts.probe_mixedcase_feature_reranker import geometry_features
 from scripts.probe_mixedcase_feature_reranker import parse_family_names
+from scripts.probe_mixedcase_feature_reranker import parse_source_groups
 from scripts.probe_mixedcase_feature_reranker import selected_families
+from scripts.probe_mixedcase_feature_reranker import source_group_mask
 from scripts.probe_mixedcase_feature_reranker import train_family_probe
 from scripts.probe_mixedcase_feature_reranker import run_probe
 
@@ -52,6 +54,16 @@ class MixedcaseFeatureRerankerTests(unittest.TestCase):
 
         self.assertIsNone(parse_family_names(""))
         self.assertEqual(parse_family_names("1Iil, 0Oo"), ("1Iil", "0Oo"))
+
+    def test_source_group_mask_filters_current_prediction_groups(self) -> None:
+        """Family probes should be able to avoid groups that regress."""
+
+        predictions = torch.tensor([1, 10, 35, 36, 61], dtype=torch.long)
+
+        self.assertEqual(parse_source_groups(" digit, lower "), ("digit", "lower"))
+        self.assertEqual(source_group_mask(predictions, ("digit", "lower")).tolist(), [True, False, False, True, True])
+        with self.assertRaisesRegex(ValueError, "Unknown source group"):
+            parse_source_groups("symbol")
 
     def test_fit_tensors_appends_capped_extra_roots(self) -> None:
         """Optional adviser data should be capped before joining fit tensors."""
@@ -175,6 +187,7 @@ class MixedcaseFeatureRerankerTests(unittest.TestCase):
         self.assertEqual(report["hidden_units"], 7)
         self.assertEqual(report["confirmation_ratio"], 0.5)
         self.assertEqual(report["family_names"], ["AB"])
+        self.assertEqual(report["source_groups"], ["digit", "upper", "lower"])
         self.assertEqual(report["selection_samples"], 1)
         self.assertEqual(report["confirmation_samples"], 2)
         self.assertEqual(report["test_delta"], 0.0)
@@ -264,6 +277,80 @@ class MixedcaseFeatureRerankerTests(unittest.TestCase):
         self.assertGreater(report["families"][0]["selection_delta"], 0)
         self.assertLessEqual(report["families"][0]["confirmation_delta"], 0)
         self.assertEqual(report["test_delta"], 0.0)
+
+    def test_run_probe_final_rejection_reports_full_split_metrics(self) -> None:
+        """Final-gate failures should include before/after split metrics."""
+
+        train_images = torch.zeros((8, 1, 28, 28), dtype=torch.float32)
+        train_targets = torch.tensor([10, 11, 10, 11, 10, 11, 10, 11], dtype=torch.long)
+        test_images = torch.zeros((4, 1, 28, 28), dtype=torch.float32)
+        test_targets = torch.tensor([10, 11, 10, 11], dtype=torch.long)
+        probe_model = torch.nn.Linear(1, 2)
+        protected_base = {
+            "test_accuracy": 80.0,
+            "case_or_ambiguity_aware_test_accuracy": 98.0,
+            "digit_test_accuracy": 96.0,
+            "upper_test_accuracy": 88.0,
+            "lower_test_accuracy": 75.0,
+        }
+        upper_regressed = {**protected_base, "test_accuracy": 80.2, "upper_test_accuracy": 87.9}
+
+        with (
+            patch(
+                "scripts.probe_mixedcase_feature_reranker._split_tensors",
+                side_effect=[(train_images, train_targets), (test_images, test_targets)],
+            ),
+            patch(
+                "scripts.probe_mixedcase_feature_reranker._model_outputs",
+                side_effect=lambda images, _batch_size: (
+                    torch.zeros((images.shape[0], 62), dtype=torch.float32),
+                    torch.zeros((images.shape[0], 36), dtype=torch.float32),
+                ),
+            ),
+            patch("scripts.probe_mixedcase_feature_reranker._load_hybrid_artifact", return_value={"enabled": False}),
+            patch(
+                "scripts.probe_mixedcase_feature_reranker.hybrid_predictions",
+                side_effect=lambda mixed, _folded, _artifact: torch.full((mixed.shape[0],), 10, dtype=torch.long),
+            ),
+            patch("scripts.probe_mixedcase_feature_reranker.selected_families", return_value=[(10, 11)]),
+            patch("scripts.probe_mixedcase_feature_reranker.family_features", return_value=torch.zeros((6, 1))),
+            patch(
+                "scripts.probe_mixedcase_feature_reranker.train_family_probe",
+                return_value=FamilyProbe("AB", (10, 11), probe_model),
+            ),
+            patch(
+                "scripts.probe_mixedcase_feature_reranker.apply_family_probe",
+                side_effect=lambda predictions, *_args, **_kwargs: predictions,
+            ),
+            patch(
+                "scripts.probe_mixedcase_feature_reranker._metrics",
+                side_effect=[
+                    {"test_accuracy": 50.0},
+                    {"test_accuracy": 60.0},
+                    {"test_accuracy": 50.0},
+                    {"test_accuracy": 60.0},
+                    protected_base,
+                    upper_regressed,
+                    protected_base,
+                    protected_base,
+                ],
+            ),
+        ):
+            report = run_probe(
+                batch_size=8,
+                epochs=1,
+                learning_rate=0.01,
+                train_sample_limit=None,
+                family_limit=None,
+                calibration_ratio=0.5,
+                min_family_delta=0.01,
+                seed=3,
+                confirmation_ratio=0.5,
+            )
+
+        self.assertEqual(report["families"][0]["rejection_reason"], "final_upper_test_accuracy_regressed")
+        self.assertEqual(report["families"][0]["before_metrics"]["upper_test_accuracy"], 88.0)
+        self.assertEqual(report["families"][0]["after_metrics"]["upper_test_accuracy"], 87.9)
 
 
 if __name__ == "__main__":

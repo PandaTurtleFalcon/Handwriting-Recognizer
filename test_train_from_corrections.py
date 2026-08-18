@@ -422,24 +422,37 @@ class TrainFromCorrectionsTests(unittest.TestCase):
                     "min_checkpoint_lower": 73.1,
                 },
             ),
-            patch.object(train_from_corrections, "train_character_model") as train_character,
+            patch.object(train_from_corrections, "protected_daily_character_train") as train_character,
             patch.object(train_from_corrections, "train") as train_folded,
-            patch.object(train_from_corrections, "train_mixedcase") as train_mixed,
+            patch.object(train_from_corrections, "protected_daily_mixedcase_train") as train_mixed,
         ):
             train_from_corrections.main(["--force"])
 
-        self.assertEqual(train_character.call_args.kwargs["checkpoint_objective"], "letter_validation_accuracy")
-        self.assertEqual(train_character.call_args.kwargs["min_checkpoint_validation"], 94.1)
-        self.assertEqual(train_character.call_args.kwargs["min_checkpoint_ambiguity"], 99.0)
-        self.assertEqual(train_character.call_args.kwargs["min_checkpoint_digit"], 95.2)
-        self.assertEqual(train_character.call_args.kwargs["min_checkpoint_letter"], 93.7)
-        self.assertEqual(train_character.call_args.kwargs["min_checkpoint_punctuation"], 96.1)
+        self.assertEqual(train_character.call_args.kwargs["backup_dir"], train_from_corrections.DAILY_BACKUP_ROOT / "character")
         train_folded.assert_called_once()
-        self.assertEqual(train_mixed.call_args.kwargs["checkpoint_objective"], "lower_test_accuracy")
-        self.assertEqual(train_mixed.call_args.kwargs["min_checkpoint_case_or_visual"], 98.0)
-        self.assertEqual(train_mixed.call_args.kwargs["min_checkpoint_digit"], 95.1)
-        self.assertEqual(train_mixed.call_args.kwargs["min_checkpoint_upper"], 84.7)
-        self.assertEqual(train_mixed.call_args.kwargs["min_checkpoint_lower"], 73.1)
+        self.assertEqual(train_mixed.call_args.kwargs["backup_dir"], train_from_corrections.DAILY_BACKUP_ROOT / "mixedcase")
+
+    def test_protected_daily_mixedcase_train_restores_on_saved_benchmark_regression(self) -> None:
+        """Daily mixed-case correction training should fail closed."""
+
+        with (
+            tempfile.TemporaryDirectory() as directory,
+            patch.object(
+                train_from_corrections,
+                "saved_mixedcase_benchmark_values",
+                side_effect=[{"mixedcase_exact": 87.8}, {"mixedcase_exact": 87.7}],
+            ),
+            patch.object(train_from_corrections, "backup_mixedcase_artifacts") as backup,
+            patch.object(train_from_corrections, "restore_mixedcase_artifacts") as restore,
+            patch.object(train_from_corrections, "train_mixedcase") as train_mixed,
+            patch.object(train_from_corrections, "deployed_mixedcase_checkpoint_floors", return_value={}),
+        ):
+            with self.assertRaisesRegex(RuntimeError, "Rejected daily mixed-case correction fine-tune"):
+                train_from_corrections.protected_daily_mixedcase_train(backup_dir=Path(directory) / "mixed")
+
+        self.assertTrue(backup.called)
+        self.assertTrue(train_mixed.called)
+        self.assertTrue(restore.called)
 
     def test_counts_exportable_character_corrections_before_export(self) -> None:
         """Practice samples should appear in dry-run coverage before training export."""
