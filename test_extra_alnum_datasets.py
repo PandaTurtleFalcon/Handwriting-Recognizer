@@ -223,6 +223,39 @@ class ExtraAlnumDatasetTests(unittest.TestCase):
         self.assertTrue(attached)
         self.assertEqual(model(torch.zeros((2, 1, 28, 28))).argmax(dim=1).tolist(), [1, 0])
 
+    def test_attach_mixedcase_pair_rules_rejects_mismatched_checkpoint_hash(self) -> None:
+        class FixedLogitModel(nn.Module):
+            def forward(self, images: torch.Tensor) -> torch.Tensor:
+                return torch.tensor([[0.40, 0.30, 0.00]], dtype=torch.float32)
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            rules_path = Path(temp_dir) / "mixedcase_pair_rules.json"
+            weights_path = Path(temp_dir) / "mixedcase_cnn.pt"
+            weights_path.write_bytes(b"current weights")
+            rules_path.write_text(
+                json.dumps(
+                    {
+                        "labels": ["0", "O", "A"],
+                        "checkpoint_sha256": "not-the-current-checkpoint",
+                        "rules": [{"from": "0", "to": "O", "threshold": -0.15}],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            model = FixedLogitModel()
+
+            attached = attach_mixedcase_pair_rules(
+                model,
+                ["0", "O", "A"],
+                torch.device("cpu"),
+                rules_path,
+                weights_path,
+            )
+
+        self.assertFalse(attached)
+        self.assertFalse(hasattr(model, "mixedcase_pair_rules"))
+        self.assertEqual(int(model(torch.zeros((1, 1, 28, 28))).argmax(dim=1).item()), 0)
+
     def test_mixedcase_breakdown_reports_casefold_and_ambiguity_metrics(self) -> None:
         class FixedPredictionModel(nn.Module):
             def __init__(self, predictions: list[int]) -> None:

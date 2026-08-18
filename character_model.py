@@ -1003,9 +1003,9 @@ def load_character_model(
     model = model_class(num_classes=len(labels)).to(selected_device)
     model.load_state_dict(checkpoint["model_state_dict"])
     if logit_bias_path is not None:
-        attach_character_logit_bias(model, labels, selected_device, logit_bias_path)
+        attach_character_logit_bias(model, labels, selected_device, logit_bias_path, weights_path)
     if pair_rules_path is not None:
-        attach_character_pair_rules(model, labels, selected_device, pair_rules_path)
+        attach_character_pair_rules(model, labels, selected_device, pair_rules_path, weights_path)
     if EXEMPLARS_PATH.exists():
         exemplars = torch.load(EXEMPLARS_PATH, map_location="cpu", weights_only=True)
         if list(exemplars.get("labels", [])) == labels:
@@ -1026,6 +1026,7 @@ def attach_character_logit_bias(
     labels: list[str],
     device: torch.device,
     bias_path: Path = LOGIT_BIAS_PATH,
+    weights_path: Path = WEIGHTS_PATH,
 ) -> bool:
     """Attach optional post-training logit bias calibration to a model.
 
@@ -1038,6 +1039,8 @@ def attach_character_logit_bias(
         return False
     calibration = torch.load(bias_path, map_location=device, weights_only=True)
     if list(calibration.get("labels", [])) != list(labels):
+        return False
+    if not _artifact_matches_checkpoint(calibration, weights_path):
         return False
     bias = calibration.get("bias")
     if not isinstance(bias, torch.Tensor) or tuple(bias.shape) != (len(labels),):
@@ -1058,6 +1061,7 @@ def attach_character_pair_rules(
     labels: list[str],
     device: torch.device,
     rules_path: Path = PAIR_RULES_PATH,
+    weights_path: Path = WEIGHTS_PATH,
 ) -> bool:
     """Attach optional ordered pair rules for close visual-twin logits."""
 
@@ -1068,6 +1072,8 @@ def attach_character_pair_rules(
     except (OSError, json.JSONDecodeError):
         return False
     if list(artifact.get("labels", [])) != list(labels):
+        return False
+    if not _artifact_matches_checkpoint(artifact, weights_path):
         return False
     label_to_index = {label: index for index, label in enumerate(labels)}
     parsed_rules: list[tuple[int, int, float]] = []
@@ -1100,6 +1106,30 @@ def attach_character_pair_rules(
     model.forward = forward_with_pair_rules  # type: ignore[method-assign]
     model.character_pair_rules = [(labels[left], labels[right], threshold) for left, right, threshold in parsed_rules]  # type: ignore[attr-defined]
     return True
+
+
+def _artifact_matches_checkpoint(artifact: object, weights_path: Path) -> bool:
+    """Reject fingerprinted calibration artifacts for a different checkpoint."""
+
+    if not isinstance(artifact, dict):
+        return False
+    expected = artifact.get("checkpoint_sha256")
+    if not expected:
+        return True
+    return expected == _file_sha256(weights_path)
+
+
+def _file_sha256(path: Path) -> str | None:
+    """Return a file digest, or None when the checkpoint is unavailable."""
+
+    try:
+        digest = hashlib.sha256()
+        with path.open("rb") as handle:
+            for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+                digest.update(chunk)
+        return digest.hexdigest()
+    except OSError:
+        return None
 
 
 def load_letter_model(

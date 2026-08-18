@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import sys
 from collections import Counter
@@ -110,6 +111,8 @@ def _read_mixedcase_calibration(project_dir: Path) -> dict[str, object] | None:
         return None
     if list(calibration.get("labels", [])) != list(MIXEDCASE_LABELS):
         return None
+    if not _artifact_matches_checkpoint(calibration, project_dir / "mixedcase_cnn.pt"):
+        return None
     best = calibration.get("best_checkpoint")
     return best if isinstance(best, dict) else None
 
@@ -126,6 +129,8 @@ def _read_mixedcase_pair_rules(project_dir: Path) -> dict[str, object] | None:
         return None
     artifact = _read_json(rules_path)
     if not isinstance(artifact, dict) or list(artifact.get("labels", [])) != list(MIXEDCASE_LABELS):
+        return None
+    if not _artifact_matches_checkpoint(artifact, project_dir / "mixedcase_cnn.pt"):
         return None
     best = artifact.get("best_checkpoint")
     return best if isinstance(best, dict) else None
@@ -149,6 +154,8 @@ def _read_character_calibration(project_dir: Path) -> dict[str, object] | None:
         return None
     if list(calibration.get("labels", [])) != list(labels):
         return None
+    if not _artifact_matches_checkpoint(calibration, project_dir / "character_cnn.pt"):
+        return None
     best = calibration.get("best_checkpoint")
     if not isinstance(best, dict):
         return None
@@ -168,8 +175,34 @@ def _read_character_pair_rules(project_dir: Path) -> dict[str, object] | None:
     artifact = _read_json(rules_path)
     if not isinstance(artifact, dict) or list(artifact.get("labels", [])) != list(labels):
         return None
+    if not _artifact_matches_checkpoint(artifact, project_dir / "character_cnn.pt"):
+        return None
     best = artifact.get("best_checkpoint")
     return best if isinstance(best, dict) else None
+
+
+def _artifact_matches_checkpoint(artifact: object, weights_path: Path) -> bool:
+    """Return whether a fingerprinted calibration artifact matches weights."""
+
+    if not isinstance(artifact, dict):
+        return False
+    expected = artifact.get("checkpoint_sha256")
+    if not expected:
+        return True
+    return expected == _file_sha256(weights_path)
+
+
+def _file_sha256(path: Path) -> str | None:
+    """Return a stable digest for checkpoint freshness checks."""
+
+    try:
+        digest = hashlib.sha256()
+        with path.open("rb") as handle:
+            for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+                digest.update(chunk)
+        return digest.hexdigest()
+    except OSError:
+        return None
 
 
 def summarize_app_hardcases(

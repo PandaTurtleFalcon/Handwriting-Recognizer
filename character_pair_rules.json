@@ -483,5 +483,6 @@
     "punctuation_validation_accuracy": 96.34317862165963,
     "punctuation_ambiguity_aware_validation_accuracy": 99.15611814345992
   },
-  "source": "greedy_pair_rule_validation_probe"
+  "source": "greedy_pair_rule_validation_probe",
+  "checkpoint_sha256": "9239c6de233b909ddc48f55f5ac0f61b2fd9950b11d0492334ae089ca6c9684c"
 }

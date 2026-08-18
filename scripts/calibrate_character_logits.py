@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import itertools
 import json
 import shutil
@@ -21,6 +22,7 @@ from character_model import (  # noqa: E402
     DATASET_ROOT,
     LOGIT_BIAS_PATH,
     PAIR_RULES_PATH,
+    WEIGHTS_PATH,
     build_or_load_combined_cache,
     labels_match_with_ambiguity,
     load_character_model,
@@ -55,6 +57,19 @@ def _validation_logits(batch_size: int) -> tuple[torch.Tensor, torch.Tensor, tor
             validation_targets.append(batch_targets)
     train_target_tensor = targets[torch.tensor(train_indices, dtype=torch.long)]
     return torch.cat(outputs), torch.cat(validation_targets), train_target_tensor, list(labels)
+
+
+def _checkpoint_sha256() -> str | None:
+    """Return the character checkpoint fingerprint for calibration artifacts."""
+
+    try:
+        digest = hashlib.sha256()
+        with WEIGHTS_PATH.open("rb") as handle:
+            for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+                digest.update(chunk)
+        return digest.hexdigest()
+    except OSError:
+        return None
 
 
 def _breakdown(
@@ -199,6 +214,7 @@ def calibrate_character_pair_rules(
                 {
                     "labels": labels,
                     "rules": steps,
+                    "checkpoint_sha256": _checkpoint_sha256(),
                     "base_accuracy": base_breakdown["validation_accuracy"],
                     "calibrated_accuracy": best_breakdown["validation_accuracy"],
                     "base_objective": base_breakdown[objective],
@@ -308,6 +324,7 @@ def calibrate_character_logits(
             {
                 "labels": labels,
                 "bias": bias,
+                "checkpoint_sha256": _checkpoint_sha256(),
                 "scale": best_scale,
                 "base_accuracy": base_accuracy,
                 "calibrated_accuracy": best_accuracy,
@@ -409,6 +426,7 @@ def calibrate_character_greedy_bias(
             {
                 "labels": labels,
                 "bias": best_bias,
+                "checkpoint_sha256": _checkpoint_sha256(),
                 "scale": "greedy-per-label",
                 "base_accuracy": base_breakdown["validation_accuracy"],
                 "calibrated_accuracy": best_breakdown["validation_accuracy"],

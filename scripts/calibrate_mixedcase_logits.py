@@ -8,6 +8,7 @@ import json
 import shutil
 import sys
 import tempfile
+import hashlib
 from pathlib import Path
 
 import torch
@@ -21,6 +22,7 @@ from alnum_model import (  # noqa: E402
     MIXEDCASE_LABELS,
     MIXEDCASE_LOGIT_BIAS_PATH,
     MIXEDCASE_PAIR_RULES_PATH,
+    MIXEDCASE_WEIGHTS_PATH,
     build_or_load_emnist_byclass_mixedcase_cache,
     build_or_load_mnist_cache,
     load_mixedcase_model,
@@ -62,6 +64,19 @@ def _mixedcase_logits(batch_size: int) -> tuple[torch.Tensor, torch.Tensor, torc
         torch.cat([mnist_train_targets, byclass_train_targets]),
         list(labels),
     )
+
+
+def _checkpoint_sha256() -> str | None:
+    """Return the mixed-case checkpoint fingerprint for calibration artifacts."""
+
+    try:
+        digest = hashlib.sha256()
+        with MIXEDCASE_WEIGHTS_PATH.open("rb") as handle:
+            for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+                digest.update(chunk)
+        return digest.hexdigest()
+    except OSError:
+        return None
 
 
 def _metrics(predictions: torch.Tensor, targets: torch.Tensor, labels: list[str]) -> dict[str, float]:
@@ -290,6 +305,7 @@ def calibrate_mixedcase_pair_rules(
                 {
                     "labels": labels,
                     "rules": rules,
+                    "checkpoint_sha256": _checkpoint_sha256(),
                     "base_accuracy": base_metrics["test_accuracy"],
                     "calibrated_accuracy": final_metrics["test_accuracy"],
                     "best_checkpoint": final_metrics,
@@ -351,6 +367,7 @@ def calibrate_mixedcase_logits(
             {
                 "labels": labels,
                 "bias": bias,
+                "checkpoint_sha256": _checkpoint_sha256(),
                 "scale": best_scale,
                 "base_accuracy": base_metrics["test_accuracy"],
                 "calibrated_accuracy": best_metrics["test_accuracy"],
@@ -454,6 +471,7 @@ def calibrate_mixedcase_greedy_bias(
             {
                 "labels": labels,
                 "bias": best_bias,
+                "checkpoint_sha256": _checkpoint_sha256(),
                 "scale": "greedy-per-label",
                 "base_accuracy": base_metrics["test_accuracy"],
                 "calibrated_accuracy": best_metrics["test_accuracy"],

@@ -125,6 +125,32 @@ class CharacterPostprocessingTests(unittest.TestCase):
         self.assertFalse(hasattr(model, "character_logit_bias"))
         self.assertTrue(torch.allclose(output, torch.zeros((1, 2))))
 
+    def test_character_logit_bias_rejects_mismatched_checkpoint_hash(self) -> None:
+        """A fingerprinted calibration artifact must match the active weights."""
+
+        model = torch.nn.Linear(2, 2, bias=False)
+        torch.nn.init.zeros_(model.weight)
+        labels = ["A", "B"]
+        with tempfile.TemporaryDirectory() as directory:
+            bias_path = Path(directory) / "bias.pt"
+            weights_path = Path(directory) / "character_cnn.pt"
+            weights_path.write_bytes(b"current weights")
+            torch.save(
+                {
+                    "labels": labels,
+                    "bias": torch.tensor([-0.2, 0.2]),
+                    "checkpoint_sha256": "not-the-current-checkpoint",
+                },
+                bias_path,
+            )
+
+            attached = attach_character_logit_bias(model, labels, torch.device("cpu"), bias_path, weights_path)
+            output = model(torch.ones((1, 2)))
+
+        self.assertFalse(attached)
+        self.assertFalse(hasattr(model, "character_logit_bias"))
+        self.assertTrue(torch.allclose(output, torch.zeros((1, 2))))
+
     def test_character_pair_rules_flip_close_visual_twin(self) -> None:
         """A matching pair-rule artifact should flip only close alternatives."""
 
@@ -162,6 +188,37 @@ class CharacterPostprocessingTests(unittest.TestCase):
         self.assertTrue(labels_match_with_ambiguity("T", "7"))
         self.assertFalse(labels_match_with_ambiguity("A", "B"))
 
+    def test_character_pair_rules_reject_mismatched_checkpoint_hash(self) -> None:
+        """Stale pair rules must not attach to a different checkpoint."""
+
+        class FixedLogitModel(torch.nn.Module):
+            def forward(self, images: torch.Tensor) -> torch.Tensor:
+                return torch.tensor([[0.40, 0.30]], dtype=torch.float32)
+
+        labels = ["0", "O"]
+        with tempfile.TemporaryDirectory() as directory:
+            rules_path = Path(directory) / "rules.json"
+            weights_path = Path(directory) / "character_cnn.pt"
+            weights_path.write_bytes(b"current weights")
+            rules_path.write_text(
+                json.dumps(
+                    {
+                        "labels": labels,
+                        "checkpoint_sha256": "not-the-current-checkpoint",
+                        "rules": [{"from": "0", "to": "O", "threshold": -0.15}],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            model = FixedLogitModel()
+
+            attached = attach_character_pair_rules(model, labels, torch.device("cpu"), rules_path, weights_path)
+            prediction = int(model(torch.zeros((1, 1, 32, 32))).argmax(dim=1).item())
+
+        self.assertFalse(attached)
+        self.assertFalse(hasattr(model, "character_pair_rules"))
+        self.assertEqual(prediction, 0)
+
     def test_mixedcase_logit_bias_attaches_to_matching_model(self) -> None:
         """A matching mixed-case calibration artifact should shift model logits."""
 
@@ -178,6 +235,32 @@ class CharacterPostprocessingTests(unittest.TestCase):
         self.assertTrue(attached)
         self.assertTrue(hasattr(model, "mixedcase_logit_bias"))
         self.assertTrue(torch.allclose(output, torch.tensor([[-0.1, 0.3]])))
+
+    def test_mixedcase_logit_bias_rejects_mismatched_checkpoint_hash(self) -> None:
+        """Mixed-case bias artifacts are tied to the checkpoint they calibrated."""
+
+        model = torch.nn.Linear(2, 2, bias=False)
+        torch.nn.init.zeros_(model.weight)
+        labels = ["A", "a"]
+        with tempfile.TemporaryDirectory() as directory:
+            bias_path = Path(directory) / "mixedcase_bias.pt"
+            weights_path = Path(directory) / "mixedcase_cnn.pt"
+            weights_path.write_bytes(b"current weights")
+            torch.save(
+                {
+                    "labels": labels,
+                    "bias": torch.tensor([-0.1, 0.3]),
+                    "checkpoint_sha256": "not-the-current-checkpoint",
+                },
+                bias_path,
+            )
+
+            attached = attach_mixedcase_logit_bias(model, labels, torch.device("cpu"), bias_path, weights_path)
+            output = model(torch.ones((1, 2)))
+
+        self.assertFalse(attached)
+        self.assertFalse(hasattr(model, "mixedcase_logit_bias"))
+        self.assertTrue(torch.allclose(output, torch.zeros((1, 2))))
 
     def test_character_loss_weights_can_emphasize_punctuation(self) -> None:
         weights = character_loss_weights(["A", "7", "!", "."], punctuation_weight=2.5)

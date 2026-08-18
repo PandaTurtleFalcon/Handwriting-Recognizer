@@ -1377,9 +1377,9 @@ def load_mixedcase_model(
     model.load_state_dict(checkpoint["model_state_dict"])
     model.eval()
     if logit_bias_path is not None:
-        attach_mixedcase_logit_bias(model, labels, selected_device, logit_bias_path)
+        attach_mixedcase_logit_bias(model, labels, selected_device, logit_bias_path, weights_path)
     if pair_rules_path is not None:
-        attach_mixedcase_pair_rules(model, labels, selected_device, pair_rules_path)
+        attach_mixedcase_pair_rules(model, labels, selected_device, pair_rules_path, weights_path)
     return model, labels
 
 
@@ -1388,6 +1388,7 @@ def attach_mixedcase_logit_bias(
     labels: list[str],
     device: torch.device,
     bias_path: Path = MIXEDCASE_LOGIT_BIAS_PATH,
+    weights_path: Path = MIXEDCASE_WEIGHTS_PATH,
 ) -> bool:
     """Attach a matching mixed-case logit-bias artifact to a loaded model."""
 
@@ -1398,6 +1399,8 @@ def attach_mixedcase_logit_bias(
     except (OSError, RuntimeError, ValueError):
         return False
     if list(artifact.get("labels", [])) != list(labels):
+        return False
+    if not _artifact_matches_checkpoint(artifact, weights_path):
         return False
     bias = artifact.get("bias")
     if not isinstance(bias, torch.Tensor) or bias.numel() != len(labels):
@@ -1418,6 +1421,7 @@ def attach_mixedcase_pair_rules(
     labels: list[str],
     device: torch.device,
     rules_path: Path = MIXEDCASE_PAIR_RULES_PATH,
+    weights_path: Path = MIXEDCASE_WEIGHTS_PATH,
 ) -> bool:
     """Attach optional pairwise visual-twin logit rules to a mixed-case model."""
 
@@ -1428,6 +1432,8 @@ def attach_mixedcase_pair_rules(
     except (OSError, json.JSONDecodeError):
         return False
     if list(artifact.get("labels", [])) != list(labels):
+        return False
+    if not _artifact_matches_checkpoint(artifact, weights_path):
         return False
     label_to_index = {label: index for index, label in enumerate(labels)}
     parsed_rules: list[tuple[int, int, float]] = []
@@ -1460,6 +1466,30 @@ def attach_mixedcase_pair_rules(
     model.forward = forward_with_pair_rules  # type: ignore[method-assign]
     model.mixedcase_pair_rules = [(labels[left], labels[right], threshold) for left, right, threshold in parsed_rules]  # type: ignore[attr-defined]
     return True
+
+
+def _artifact_matches_checkpoint(artifact: object, weights_path: Path) -> bool:
+    """Reject fingerprinted calibration artifacts for a different checkpoint."""
+
+    if not isinstance(artifact, dict):
+        return False
+    expected = artifact.get("checkpoint_sha256")
+    if not expected:
+        return True
+    return expected == _file_sha256(weights_path)
+
+
+def _file_sha256(path: Path) -> str | None:
+    """Return a file digest, or None when the checkpoint is unavailable."""
+
+    try:
+        digest = hashlib.sha256()
+        with path.open("rb") as handle:
+            for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+                digest.update(chunk)
+        return digest.hexdigest()
+    except OSError:
+        return None
 
 
 def initialize_mixedcase_from_folded_checkpoint(

@@ -220,5 +220,6 @@
     "upper_test_accuracy": 84.07133286543737,
     "lower_test_accuracy": 72.72996045677964
   },
-  "source": "greedy_pair_rule_test_probe"
+  "source": "greedy_pair_rule_test_probe",
+  "checkpoint_sha256": "75f3263d7d16344780d2a4efbb3f539959fd0b95a6f5930f74391a0f2aa964eb"
 }
