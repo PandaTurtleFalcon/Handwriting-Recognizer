@@ -490,20 +490,53 @@
       "objective_gain": 0.013408420488076445,
       "validation_accuracy": 94.13822444927673,
       "objective_value": 93.47009922231162
+    },
+    {
+      "round": 1,
+      "from": "/",
+      "to": "i",
+      "threshold": -1.5,
+      "flips": 7,
+      "objective": "letter_validation_accuracy",
+      "objective_gain": 0.053633681952263146,
+      "validation_accuracy": 94.15713340266616,
+      "objective_value": 93.52373290426388
+    },
+    {
+      "round": 2,
+      "from": "|",
+      "to": "i",
+      "threshold": -1.25,
+      "flips": 6,
+      "objective": "letter_validation_accuracy",
+      "objective_gain": 0.04022526146420091,
+      "validation_accuracy": 94.16658787936088,
+      "objective_value": 93.56395816572808
+    },
+    {
+      "round": 3,
+      "from": "1",
+      "to": "I",
+      "threshold": -0.5,
+      "flips": 6,
+      "objective": "letter_validation_accuracy",
+      "objective_gain": 0.013408420488062234,
+      "validation_accuracy": 94.15713340266616,
+      "objective_value": 93.57736658621614
     }
   ],
   "checkpoint_sha256": "9239c6de233b909ddc48f55f5ac0f61b2fd9950b11d0492334ae089ca6c9684c",
-  "base_accuracy": 94.12876997258202,
-  "calibrated_accuracy": 94.13822444927673,
-  "base_objective": 93.45669080182354,
-  "calibrated_objective": 93.47009922231162,
+  "base_accuracy": 94.13822444927673,
+  "calibrated_accuracy": 94.15713340266616,
+  "base_objective": 93.47009922231162,
+  "calibrated_objective": 93.57736658621614,
   "objective": "letter_validation_accuracy",
   "best_checkpoint": {
-    "validation_accuracy": 94.13822444927673,
+    "validation_accuracy": 94.15713340266616,
     "ambiguity_aware_validation_accuracy": 99.10182471400208,
-    "digit_validation_accuracy": 95.22687094873307,
-    "letter_validation_accuracy": 93.47009922231162,
-    "punctuation_validation_accuracy": 96.34317862165963,
+    "digit_validation_accuracy": 95.10901591043017,
+    "letter_validation_accuracy": 93.57736658621614,
+    "punctuation_validation_accuracy": 96.06188466947961,
     "punctuation_ambiguity_aware_validation_accuracy": 99.15611814345992
   },
   "source": "greedy_pair_rule_validation_probe"

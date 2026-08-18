@@ -189,7 +189,7 @@ def calibrate_character_pair_rules(
                     continue
                 objective_gain = candidate_breakdown[objective] - best_breakdown[objective]
                 validation_gain = candidate_breakdown["validation_accuracy"] - best_breakdown["validation_accuracy"]
-                if objective_gain <= 0 and validation_gain <= 0:
+                if objective_gain <= 0:
                     continue
                 score = (objective_gain, validation_gain)
                 if best_candidate is None or score > best_candidate[0]:

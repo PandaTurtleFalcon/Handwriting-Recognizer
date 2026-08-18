@@ -329,6 +329,47 @@ class CharacterCalibrationCliTests(unittest.TestCase):
             self.assertEqual(artifact["rules"][0]["from"], "0")
             self.assertEqual(artifact["rules"][0]["to"], "O")
 
+    def test_pair_rules_reject_validation_gain_when_objective_regresses(self) -> None:
+        """Optimizing a split metric should not accept rules that only help overall accuracy."""
+
+        logits = torch.tensor(
+            [
+                [0.30, 0.40, 0.00],
+                [0.30, 0.40, 0.00],
+                [0.30, 0.40, 0.00],
+                [0.00, 0.00, 0.50],
+            ],
+            dtype=torch.float32,
+        )
+        targets = torch.tensor([0, 0, 1, 2], dtype=torch.long)
+        train_targets = torch.tensor([0, 1, 2], dtype=torch.long)
+        labels = ["0", "A", "."]
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            output_path = Path(temp_dir) / "character_pair_rules.json"
+            with (
+                patch("scripts.calibrate_character_logits._validation_logits", return_value=(logits, targets, train_targets, labels)),
+                patch("scripts.calibrate_character_logits.LOGIT_BIAS_PATH", Path(temp_dir) / "missing.pt"),
+            ):
+                report = calibrate_character_pair_rules(
+                    output_path=output_path,
+                    batch_size=4,
+                    families=("0A",),
+                    thresholds=(-0.15,),
+                    rounds=1,
+                    min_improvement=0.01,
+                    objective="letter_validation_accuracy",
+                    min_ambiguity=0.0,
+                    min_digit=0.0,
+                    min_letter=0.0,
+                    min_punctuation=0.0,
+                    write=True,
+                )
+
+            self.assertFalse(report["wrote"])
+            self.assertEqual(report["calibrated_objective"], report["base_objective"])
+            self.assertFalse(output_path.exists())
+
 
 if __name__ == "__main__":
     unittest.main()
