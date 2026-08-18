@@ -10,6 +10,7 @@ from scripts.evaluate_character_candidate import (
     candidate_validation_tensors,
     failed_rows,
     gate_rows,
+    improvement_row,
     load_candidate_checkpoint,
     read_baseline_metrics,
 )
@@ -58,6 +59,18 @@ class CharacterCandidateEvaluatorTests(unittest.TestCase):
         ]
 
         self.assertEqual(failed_rows(rows), [{"name": "letter_validation_accuracy", "passed": False}])
+
+    def test_improvement_row_requires_minimum_delta(self) -> None:
+        row = improvement_row(
+            {"letter_validation_accuracy": 93.62},
+            {"letter_validation_accuracy": 93.59},
+            "letter_validation_accuracy",
+            min_delta=0.05,
+        )
+
+        self.assertIsNotNone(row)
+        self.assertFalse(row["passed"])
+        self.assertAlmostEqual(row["delta"], 0.03)
 
     def test_read_baseline_metrics_accepts_nested_report_json(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

@@ -161,6 +161,29 @@ def baseline_rows(
     return rows
 
 
+def improvement_row(
+    metrics: dict[str, float],
+    baseline_metrics: dict[str, float],
+    objective: str,
+    min_delta: float,
+) -> dict[str, object] | None:
+    """Return one pass/fail row for the required objective improvement."""
+
+    if objective not in GATE_KEYS or objective not in baseline_metrics:
+        return None
+    value = float(metrics.get(objective, 0.0))
+    baseline = float(baseline_metrics[objective])
+    delta = value - baseline
+    return {
+        "name": objective,
+        "value": value,
+        "baseline": baseline,
+        "delta": delta,
+        "min_delta": min_delta,
+        "passed": delta >= min_delta,
+    }
+
+
 def failed_rows(rows: list[dict[str, object]]) -> list[dict[str, object]]:
     """Return rows that did not pass their gate."""
 
@@ -196,8 +219,11 @@ def main() -> None:
     parser.add_argument("--target", type=float, default=95.0)
     parser.add_argument("--baseline-json", type=Path, default=None)
     parser.add_argument("--baseline-tolerance", type=float, default=0.0)
+    parser.add_argument("--baseline-objective", choices=GATE_KEYS, default="validation_accuracy")
+    parser.add_argument("--baseline-min-delta", type=float, default=0.0)
     parser.add_argument("--require-target", action="store_true")
     parser.add_argument("--require-baseline", action="store_true")
+    parser.add_argument("--require-improvement", action="store_true")
     parser.add_argument("--json", action="store_true")
     args = parser.parse_args()
 
@@ -209,15 +235,24 @@ def main() -> None:
         sample_limit=args.sample_limit,
     )
     target_rows = gate_rows(report["metrics"], args.target)
-    comparison_rows = baseline_rows(
+    baseline_metrics = read_baseline_metrics(args.baseline_json)
+    comparison_rows = baseline_rows(report["metrics"], baseline_metrics, args.baseline_tolerance)
+    objective_row = improvement_row(
         report["metrics"],
-        read_baseline_metrics(args.baseline_json),
-        args.baseline_tolerance,
+        baseline_metrics,
+        args.baseline_objective,
+        args.baseline_min_delta,
     )
     report["gates"] = target_rows
     report["baseline_gates"] = comparison_rows
+    report["improvement_gate"] = objective_row
     target_failures = failed_rows(target_rows) if args.require_target else []
     baseline_failures = failed_rows(comparison_rows) if args.require_baseline else []
+    improvement_failures = (
+        [objective_row]
+        if args.require_improvement and (objective_row is None or not bool(objective_row.get("passed")))
+        else []
+    )
     if args.json:
         print(json.dumps(report, indent=2))
     else:
@@ -225,8 +260,18 @@ def main() -> None:
         print(f"mode: {report['mode']} examples: {report['total_examples']}")
         _print_rows("target gates:", target_rows)
         _print_rows("baseline gates:", comparison_rows)
-    if target_failures or baseline_failures:
-        failure_names = [str(row["name"]) for row in [*target_failures, *baseline_failures]]
+        if objective_row is not None:
+            print(
+                "improvement gate: "
+                f"{objective_row['name']} delta={objective_row['delta']:.4f}% "
+                f"min_delta={objective_row['min_delta']:.4f}% "
+                f"{'PASS' if objective_row['passed'] else 'FAIL'}"
+            )
+    if target_failures or baseline_failures or improvement_failures:
+        failure_names = [
+            str(row["name"] if row is not None else args.baseline_objective)
+            for row in [*target_failures, *baseline_failures, *improvement_failures]
+        ]
         raise SystemExit(f"Candidate failed required gate(s): {', '.join(failure_names)}")
 
 

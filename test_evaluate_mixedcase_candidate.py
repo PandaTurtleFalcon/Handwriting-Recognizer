@@ -11,6 +11,7 @@ from scripts.evaluate_mixedcase_candidate import (
     candidate_test_tensors,
     failed_rows,
     gate_rows,
+    improvement_row,
     load_candidate_checkpoint,
     read_baseline_metrics,
 )
@@ -59,6 +60,18 @@ class MixedcaseCandidateEvaluatorTests(unittest.TestCase):
         ]
 
         self.assertEqual(failed_rows(rows), [{"name": "upper_test_accuracy", "passed": False}])
+
+    def test_improvement_row_requires_minimum_delta(self) -> None:
+        row = improvement_row(
+            {"test_accuracy": 87.80},
+            {"test_accuracy": 87.78},
+            "test_accuracy",
+            min_delta=0.05,
+        )
+
+        self.assertIsNotNone(row)
+        self.assertFalse(row["passed"])
+        self.assertAlmostEqual(row["delta"], 0.02)
 
     def test_read_baseline_metrics_accepts_nested_report_json(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

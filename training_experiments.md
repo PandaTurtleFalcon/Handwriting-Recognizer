@@ -1257,3 +1257,10 @@ restored, so future improvement loops do not repeat known-bad blends.
   - Result: no model artifact changed. The current calibrated character checkpoint correctly fails `--require-target` on a 1024-example diagnostic slice (`94.14%` validation, `94.21%` letter), while the same checkpoint passes a same-slice `--require-baseline` comparison on a 2048-example slice.
   - Verification: focused character evaluator tests passed, compile checks passed, and the baseline gate check reported no failures.
   - Takeaway: character candidates now have an honest promotion gate matching the isolated artifact workflow. The next candidate fine-tune can be evaluated directly before touching live weights, labels, exemplars, or metrics.
+
+- Rejected matching-architecture character micro-finetune:
+  - Command shape: saved a full calibrated baseline report, then ran a one-epoch candidate-only `widecnn` warm-start with learning rate `0.0000005`, weak visual-twin labels, letter-focused objective, and output paths under `tmp/character_candidates/`.
+  - Result: not promotable and no deployed artifact changed. Raw candidate validation was only `92.98%` with digit `94.34%` and letter `92.14%`; calibrated candidate metrics exactly matched the deployed baseline (`94.1666%` validation, `93.5908%` letter), so it preserved but did not improve.
+  - Code path: added `--baseline-objective`, `--baseline-min-delta`, and `--require-improvement` to both character and mixed-case candidate evaluators so equal-to-baseline candidates can fail unless they improve the chosen objective.
+  - Verification: evaluator tests passed (`111 passed`), compile checks passed, and a same-checkpoint smoke correctly failed `--require-improvement --baseline-objective letter_validation_accuracy --baseline-min-delta 0.01`.
+  - Takeaway: the current character micro-finetune recipe is flat after calibration. Future candidate runs should require positive objective movement before spending time on app-hardcase replay or artifact promotion.
