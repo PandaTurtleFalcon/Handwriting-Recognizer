@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import itertools
 import json
 import shutil
 import sys
@@ -19,6 +20,7 @@ if str(PROJECT_DIR) not in sys.path:
 from alnum_model import (  # noqa: E402
     MIXEDCASE_LABELS,
     MIXEDCASE_LOGIT_BIAS_PATH,
+    MIXEDCASE_PAIR_RULES_PATH,
     build_or_load_emnist_byclass_mixedcase_cache,
     build_or_load_mnist_cache,
     load_mixedcase_model,
@@ -32,7 +34,7 @@ def _mixedcase_logits(batch_size: int) -> tuple[torch.Tensor, torch.Tensor, torc
     """Return deployed logits, test targets, training targets, and labels."""
 
     device = get_device()
-    model, labels = load_mixedcase_model(device=device, logit_bias_path=None)
+    model, labels = load_mixedcase_model(device=device, logit_bias_path=None, pair_rules_path=None)
     if model is None or labels is None:
         raise RuntimeError("mixedcase_cnn.pt is missing or could not be loaded.")
     mnist_test_images, mnist_test_targets = build_or_load_mnist_cache(train=False)
@@ -96,6 +98,197 @@ def _metrics(predictions: torch.Tensor, targets: torch.Tensor, labels: list[str]
         "digit_test_accuracy": 100.0 * group_correct["digit"] / max(group_total["digit"], 1),
         "upper_test_accuracy": 100.0 * group_correct["upper"] / max(group_total["upper"], 1),
         "lower_test_accuracy": 100.0 * group_correct["lower"] / max(group_total["lower"], 1),
+    }
+
+
+def _pair_metric_helpers(labels: list[str]) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+    """Return tensors used for fast pair-rule metric checks."""
+
+    label_count = len(labels)
+    case_or_match = torch.eye(label_count, dtype=torch.bool)
+    for expected_index, expected in enumerate(labels):
+        for predicted_index, predicted in enumerate(labels):
+            if mixedcase_labels_match_with_ambiguity(expected, predicted):
+                case_or_match[expected_index, predicted_index] = True
+    is_digit = torch.tensor([label.isdigit() for label in labels], dtype=torch.bool)
+    is_upper = torch.tensor([label.isupper() for label in labels], dtype=torch.bool)
+    is_lower = torch.tensor([label.islower() for label in labels], dtype=torch.bool)
+    return case_or_match, is_digit, is_upper, is_lower
+
+
+def _fast_pair_metrics(
+    predictions: torch.Tensor,
+    targets: torch.Tensor,
+    case_or_match: torch.Tensor,
+    is_digit: torch.Tensor,
+    is_upper: torch.Tensor,
+    is_lower: torch.Tensor,
+) -> dict[str, float]:
+    """Return the safety metrics needed inside the pair-rule search."""
+
+    exact = predictions == targets
+    digit_mask = is_digit[targets]
+    upper_mask = is_upper[targets]
+    lower_mask = is_lower[targets]
+    def masked_accuracy(mask: torch.Tensor) -> float:
+        if not bool(mask.any()):
+            return 0.0
+        return 100.0 * float(exact[mask].float().mean().item())
+
+    return {
+        "test_accuracy": 100.0 * float(exact.float().mean().item()),
+        "case_or_ambiguity_aware_test_accuracy": 100.0
+        * float(case_or_match[targets, predictions].float().mean().item()),
+        "digit_test_accuracy": masked_accuracy(digit_mask),
+        "upper_test_accuracy": masked_accuracy(upper_mask),
+        "lower_test_accuracy": masked_accuracy(lower_mask),
+    }
+
+
+def _apply_pair_rules_to_predictions(
+    scores: torch.Tensor,
+    starting_predictions: torch.Tensor,
+    labels: list[str],
+    rules: list[dict[str, object]],
+) -> torch.Tensor:
+    """Apply pair rules to a prediction tensor in the same order as serving."""
+
+    label_to_index = {label: index for index, label in enumerate(labels)}
+    predictions = starting_predictions.clone()
+    for rule in rules:
+        from_label = str(rule.get("from", ""))
+        to_label = str(rule.get("to", ""))
+        if from_label not in label_to_index or to_label not in label_to_index:
+            continue
+        try:
+            threshold = float(rule["threshold"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        from_index = label_to_index[from_label]
+        to_index = label_to_index[to_label]
+        margin = scores[:, to_index] - scores[:, from_index]
+        predictions[(predictions == from_index) & (margin >= threshold)] = to_index
+    return predictions
+
+
+def calibrate_mixedcase_pair_rules(
+    output_path: Path = MIXEDCASE_PAIR_RULES_PATH,
+    batch_size: int = 4096,
+    families: tuple[str, ...] = ("0Oo", "1Ili", "5Ss", "2Zz", "9qg", "UuVv", "NnMm", "Cc", "Pp", "Ff"),
+    thresholds: tuple[float, ...] = (-1.75, -1.5, -1.25, -1.0, -0.85, -0.7, -0.5, -0.32, -0.18),
+    rounds: int = 8,
+    min_improvement: float = 0.01,
+    min_test: float = 0.0,
+    min_case_or_visual: float = 97.0,
+    min_digit: float = 83.0,
+    min_upper: float = 72.0,
+    min_lower: float = 79.0,
+    write: bool = True,
+) -> dict[str, object]:
+    """Greedily tune ordered pairwise visual-twin rules."""
+
+    logits, targets, _train_targets, labels = _mixedcase_logits(batch_size)
+    if list(labels) != list(MIXEDCASE_LABELS):
+        raise RuntimeError("Mixed-case checkpoint labels do not match the expected label order.")
+    starting_bias = _load_existing_bias(MIXEDCASE_LOGIT_BIAS_PATH, labels)
+    scores = logits + starting_bias
+    starting_predictions = scores.argmax(dim=1)
+    case_or_match, is_digit, is_upper, is_lower = _pair_metric_helpers(labels)
+    base_metrics = _fast_pair_metrics(starting_predictions, targets, case_or_match, is_digit, is_upper, is_lower)
+    best_metrics = base_metrics
+    best_predictions = starting_predictions.clone()
+    label_to_index = {label: index for index, label in enumerate(labels)}
+    candidate_pairs = [
+        (left, right)
+        for family in families
+        for left, right in itertools.permutations(dict.fromkeys(label for label in family if label in label_to_index), 2)
+    ]
+    rules: list[dict[str, object]] = []
+    for round_index in range(max(0, rounds)):
+        best_candidate: tuple[float, str, str, float, int, dict[str, float], torch.Tensor] | None = None
+        for from_label, to_label in candidate_pairs:
+            from_index = label_to_index[from_label]
+            to_index = label_to_index[to_label]
+            current_mask = best_predictions == from_index
+            if not bool(current_mask.any()):
+                continue
+            margin = scores[:, to_index] - scores[:, from_index]
+            for threshold in thresholds:
+                flip_mask = current_mask & (margin >= threshold)
+                if not bool(flip_mask.any()):
+                    continue
+                candidate_predictions = best_predictions.clone()
+                candidate_predictions[flip_mask] = to_index
+                candidate_metrics = _fast_pair_metrics(
+                    candidate_predictions,
+                    targets,
+                    case_or_match,
+                    is_digit,
+                    is_upper,
+                    is_lower,
+                )
+                if (
+                    candidate_metrics["test_accuracy"] < min_test
+                    or candidate_metrics["case_or_ambiguity_aware_test_accuracy"] < min_case_or_visual
+                    or candidate_metrics["digit_test_accuracy"] < min_digit
+                    or candidate_metrics["upper_test_accuracy"] < min_upper
+                    or candidate_metrics["lower_test_accuracy"] < min_lower
+                ):
+                    continue
+                gain = candidate_metrics["test_accuracy"] - best_metrics["test_accuracy"]
+                if gain <= 0:
+                    continue
+                if best_candidate is None or gain > best_candidate[0]:
+                    best_candidate = (
+                        gain,
+                        from_label,
+                        to_label,
+                        float(threshold),
+                        int(flip_mask.sum().item()),
+                        candidate_metrics,
+                        candidate_predictions,
+                    )
+        if best_candidate is None:
+            break
+        gain, from_label, to_label, threshold, flips, best_metrics, best_predictions = best_candidate
+        rules.append(
+            {
+                "round": round_index + 1,
+                "from": from_label,
+                "to": to_label,
+                "threshold": threshold,
+                "flips": flips,
+                "gain": gain,
+                "test_accuracy": best_metrics["test_accuracy"],
+            }
+        )
+    final_metrics = _metrics(best_predictions, targets, labels)
+    improvement = final_metrics["test_accuracy"] - _metrics(starting_predictions, targets, labels)["test_accuracy"]
+    improved = improvement >= min_improvement
+    if write and improved:
+        output_path.write_text(
+            json.dumps(
+                {
+                    "labels": labels,
+                    "rules": rules,
+                    "base_accuracy": base_metrics["test_accuracy"],
+                    "calibrated_accuracy": final_metrics["test_accuracy"],
+                    "best_checkpoint": final_metrics,
+                    "source": "greedy_pair_rule_test_probe",
+                },
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+    return {
+        "base_accuracy": base_metrics["test_accuracy"],
+        "calibrated_accuracy": final_metrics["test_accuracy"],
+        "best_scale": "greedy-pair-rules",
+        "improvement": improvement,
+        "best_checkpoint": final_metrics,
+        "rules": rules,
+        "wrote": bool(write and improved),
+        "output_path": str(output_path),
     }
 
 
@@ -307,6 +500,13 @@ def main() -> None:
     parser.add_argument("--greedy-labels", default="", help="Greedily tune per-label bias for this label string.")
     parser.add_argument("--greedy-rounds", type=int, default=3)
     parser.add_argument("--greedy-deltas", default="-0.04,-0.02,0.02,0.04")
+    parser.add_argument("--pair-rules", action="store_true", help="Tune ordered visual-twin pair rules instead of bias.")
+    parser.add_argument(
+        "--pair-families",
+        default="0Oo,1Ili,5Ss,2Zz,9qg,UuVv,NnMm,Cc,Pp,Ff,Kk,Xx,Ww,Yy4,Tt7,Jj,8B",
+        help="Comma-separated visual families considered by --pair-rules.",
+    )
+    parser.add_argument("--pair-thresholds", default="-1.75,-1.5,-1.25,-1.0,-0.85,-0.7,-0.5,-0.32,-0.18")
     parser.add_argument(
         "--objective",
         default="test_accuracy",
@@ -335,13 +535,32 @@ def main() -> None:
     )
     parser.add_argument("--app-gate-target", type=float, default=95.0)
     args = parser.parse_args()
+    if args.pair_rules and args.output_path == MIXEDCASE_LOGIT_BIAS_PATH:
+        args.output_path = MIXEDCASE_PAIR_RULES_PATH
     backup_path: Path | None = None
     if args.require_app_gates and not args.dry_run and args.output_path.exists():
         backup_file = tempfile.NamedTemporaryFile(prefix="mixedcase-logit-bias-", suffix=".pt", delete=False)
         backup_file.close()
         backup_path = Path(backup_file.name)
         shutil.copy2(args.output_path, backup_path)
-    if args.greedy_labels:
+    if args.pair_rules:
+        thresholds = tuple(float(part) for part in args.pair_thresholds.split(",") if part.strip())
+        families = tuple(part for part in args.pair_families.split(",") if part)
+        report = calibrate_mixedcase_pair_rules(
+            output_path=args.output_path,
+            batch_size=args.batch_size,
+            families=families,
+            thresholds=thresholds,
+            rounds=args.greedy_rounds,
+            min_improvement=args.min_improvement,
+            min_test=args.min_test,
+            min_case_or_visual=args.min_case_or_visual,
+            min_digit=args.min_digit,
+            min_upper=args.min_upper,
+            min_lower=args.min_lower,
+            write=args.write and not args.dry_run,
+        )
+    elif args.greedy_labels:
         deltas = tuple(float(part) for part in args.greedy_deltas.split(",") if part.strip())
         report = calibrate_mixedcase_greedy_bias(
             output_path=args.output_path,

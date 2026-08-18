@@ -155,6 +155,49 @@ class BenchmarkSummaryTests(unittest.TestCase):
         self.assertEqual(by_name["mixedcase_upper_exact"]["value"], 84.0)
         self.assertEqual(by_name["mixedcase_lower_exact"]["value"], 73.0)
 
+    def test_summarizes_matching_mixedcase_pair_rule_metrics(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            (root / "training_metrics.json").write_text(json.dumps({"best_checkpoint": {"test_accuracy": 99.0}}))
+            (root / "alnum_training_metrics.json").write_text(json.dumps({"best_checkpoint": {"test_accuracy": 96.0}}))
+            (root / "mixedcase_training_metrics.json").write_text(
+                json.dumps({"best_checkpoint": {"test_accuracy": 80.0, "case_or_ambiguity_aware_test_accuracy": 97.0}})
+            )
+            (root / "character_training_metrics.json").write_text(
+                json.dumps(
+                    {
+                        "best_checkpoint": {
+                            "validation_accuracy": 91.0,
+                            "ambiguity_aware_validation_accuracy": 98.0,
+                            "punctuation_validation_accuracy": 95.0,
+                            "punctuation_ambiguity_aware_validation_accuracy": 99.0,
+                        }
+                    }
+                )
+            )
+            from alnum_model import MIXEDCASE_LABELS
+
+            (root / "mixedcase_pair_rules.json").write_text(
+                json.dumps(
+                    {
+                        "labels": list(MIXEDCASE_LABELS),
+                        "best_checkpoint": {
+                            "test_accuracy": 87.5,
+                            "case_or_ambiguity_aware_test_accuracy": 97.8,
+                            "digit_test_accuracy": 95.1,
+                            "upper_test_accuracy": 84.1,
+                            "lower_test_accuracy": 72.7,
+                        },
+                    }
+                )
+            )
+
+            report = summarize_saved_metrics(root, target=95.0)
+
+        by_name = {str(item["name"]): item for item in report}
+        self.assertEqual(by_name["mixedcase_exact"]["value"], 87.5)
+        self.assertEqual(by_name["mixedcase_digit_exact"]["value"], 95.1)
+
     def test_summarizes_app_hardcase_gates_on_demand(self) -> None:
         with patch(
             "scripts.evaluate_hardcases.evaluate_cases",

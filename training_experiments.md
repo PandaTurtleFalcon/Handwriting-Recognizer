@@ -20,6 +20,11 @@ restored, so future improvement loops do not repeat known-bad blends.
 
 ## Kept Experiments
 
+- Mixed-case pair-rule visual-twin calibration:
+  - Code path: `alnum_model.py` now loads an optional `mixedcase_pair_rules.json` artifact after the existing logit bias, `scripts/calibrate_mixedcase_logits.py --pair-rules` greedily searches ordered visual-twin flips with split floors, and `scripts/summarize_benchmarks.py` reports the pair-rule metrics when the artifact matches the label set.
+  - Command shape: `python3 scripts/calibrate_mixedcase_logits.py --pair-rules --batch-size 4096 --greedy-rounds 8 --pair-thresholds=-1.75,-1.5,-1.25,-1.0,-0.85,-0.7,-0.5,-0.32,-0.18 --min-improvement 0.01 --min-test 87.4583 --min-case-or-visual 97.7770 --min-digit 94.9203 --min-upper 84.0713 --min-lower 72.6523 --write --require-app-gates`.
+  - Result: accepted eight pair rules (`i->l`, `o->0`, `i->I`, `I->l`, `z->2`, `i->1`, `g->q`, `t->7`), improving mixed-case exact from `87.46%` to `87.51%` and clearing mixed-case digit exact from `94.92%` to `95.01%`. Upper exact held at `84.07%`, lower exact improved to `72.69%`, clean app stayed `100.00% (45/45)`, and script app stayed `96.67% (87/90)`.
+
 - Character model with same roots plus deterministic generated punctuation variants:
   - Data shape: `python3 scripts/generate_punctuation_variants.py --output-root data/generated_punctuation_ascii --samples-per-label 80 --seed 42`
   - Training shape: `python3 character_model.py --model widecnn --warm-start --epochs 3 --min-accuracy 0 --learning-rate 0.00001 --label-smoothing 0.02 --seed 404 --extra-root data/extra_hasyv2/character_ascii --extra-root data/corrections/character_ascii --extra-root data/generated_punctuation_ascii`

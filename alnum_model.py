@@ -59,6 +59,7 @@ LABELS = [str(index) for index in range(10)] + [chr(ord("A") + index) for index 
 MIXEDCASE_WEIGHTS_PATH = PROJECT_DIR / "mixedcase_cnn.pt"
 MIXEDCASE_METRICS_PATH = PROJECT_DIR / "mixedcase_training_metrics.json"
 MIXEDCASE_LOGIT_BIAS_PATH = PROJECT_DIR / "mixedcase_logit_bias.pt"
+MIXEDCASE_PAIR_RULES_PATH = PROJECT_DIR / "mixedcase_pair_rules.json"
 MIXEDCASE_LABELS = (
     [str(index) for index in range(10)]
     + [chr(ord("A") + index) for index in range(26)]
@@ -1361,6 +1362,7 @@ def load_mixedcase_model(
     weights_path: Path = MIXEDCASE_WEIGHTS_PATH,
     device: torch.device | None = None,
     logit_bias_path: Path | None = MIXEDCASE_LOGIT_BIAS_PATH,
+    pair_rules_path: Path | None = MIXEDCASE_PAIR_RULES_PATH,
 ) -> tuple[nn.Module, list[str]] | tuple[None, None]:
     """Load the trained mixed-case recognizer if its checkpoint exists."""
 
@@ -1376,6 +1378,8 @@ def load_mixedcase_model(
     model.eval()
     if logit_bias_path is not None:
         attach_mixedcase_logit_bias(model, labels, selected_device, logit_bias_path)
+    if pair_rules_path is not None:
+        attach_mixedcase_pair_rules(model, labels, selected_device, pair_rules_path)
     return model, labels
 
 
@@ -1406,6 +1410,55 @@ def attach_mixedcase_logit_bias(
 
     model.forward = forward_with_bias  # type: ignore[method-assign]
     model.mixedcase_logit_bias = bias  # type: ignore[attr-defined]
+    return True
+
+
+def attach_mixedcase_pair_rules(
+    model: nn.Module,
+    labels: list[str],
+    device: torch.device,
+    rules_path: Path = MIXEDCASE_PAIR_RULES_PATH,
+) -> bool:
+    """Attach optional pairwise visual-twin logit rules to a mixed-case model."""
+
+    if not rules_path.exists() or getattr(model, "mixedcase_pair_rules", None) is not None:
+        return False
+    try:
+        artifact = json.loads(rules_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return False
+    if list(artifact.get("labels", [])) != list(labels):
+        return False
+    label_to_index = {label: index for index, label in enumerate(labels)}
+    parsed_rules: list[tuple[int, int, float]] = []
+    for rule in artifact.get("rules", []):
+        if not isinstance(rule, dict):
+            continue
+        from_label = str(rule.get("from", ""))
+        to_label = str(rule.get("to", ""))
+        if from_label not in label_to_index or to_label not in label_to_index:
+            continue
+        try:
+            threshold = float(rule["threshold"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        parsed_rules.append((label_to_index[from_label], label_to_index[to_label], threshold))
+    if not parsed_rules:
+        return False
+    original_forward = model.forward
+
+    def forward_with_pair_rules(inputs: torch.Tensor) -> torch.Tensor:
+        outputs = original_forward(inputs).clone()
+        for from_index, to_index, threshold in parsed_rules:
+            current = outputs.argmax(dim=1)
+            margin = outputs[:, to_index] - outputs[:, from_index]
+            flip_mask = (current == from_index) & (margin >= threshold)
+            if bool(flip_mask.any()):
+                outputs[flip_mask, to_index] = outputs[flip_mask, from_index] + 1e-4
+        return outputs
+
+    model.forward = forward_with_pair_rules  # type: ignore[method-assign]
+    model.mixedcase_pair_rules = [(labels[left], labels[right], threshold) for left, right, threshold in parsed_rules]  # type: ignore[attr-defined]
     return True
 
 

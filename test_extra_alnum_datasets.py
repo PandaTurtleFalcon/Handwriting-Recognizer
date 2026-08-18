@@ -17,6 +17,7 @@ from alnum_model import (
     _chars74k_sample_label,
     _mixedcase_train_dataset,
     _nist_sd19_label_from_hex,
+    attach_mixedcase_pair_rules,
     build_or_load_mixedcase_ascii_folder_cache,
     evaluate_mixedcase_breakdown,
     freeze_feature_layers,
@@ -192,6 +193,35 @@ class ExtraAlnumDatasetTests(unittest.TestCase):
         self.assertFalse(mixedcase_labels_match_with_visual_ambiguity("A", "a"))
         self.assertTrue(mixedcase_labels_match_with_visual_ambiguity("0", "O"))
         self.assertTrue(mixedcase_labels_match_with_visual_ambiguity("T", "7"))
+
+    def test_attach_mixedcase_pair_rules_flips_close_visual_twin(self) -> None:
+        class FixedLogitModel(nn.Module):
+            def forward(self, images: torch.Tensor) -> torch.Tensor:
+                return torch.tensor(
+                    [
+                        [0.40, 0.30, 0.00],
+                        [0.40, 0.10, 0.00],
+                    ],
+                    dtype=torch.float32,
+                )
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            rules_path = Path(temp_dir) / "mixedcase_pair_rules.json"
+            rules_path.write_text(
+                json.dumps(
+                    {
+                        "labels": ["0", "O", "A"],
+                        "rules": [{"from": "0", "to": "O", "threshold": -0.15}],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            model = FixedLogitModel()
+
+            attached = attach_mixedcase_pair_rules(model, ["0", "O", "A"], torch.device("cpu"), rules_path)
+
+        self.assertTrue(attached)
+        self.assertEqual(model(torch.zeros((2, 1, 28, 28))).argmax(dim=1).tolist(), [1, 0])
 
     def test_mixedcase_breakdown_reports_casefold_and_ambiguity_metrics(self) -> None:
         class FixedPredictionModel(nn.Module):

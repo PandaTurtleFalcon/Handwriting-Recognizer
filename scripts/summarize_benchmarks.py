@@ -56,6 +56,7 @@ def summarize_saved_metrics(project_dir: Path = PROJECT_DIR, target: float = 95.
     mixed_metrics = _read_json(project_dir / "mixedcase_training_metrics.json")
     character_metrics = _read_json(project_dir / "character_training_metrics.json")
     mixed_calibration = _read_mixedcase_calibration(project_dir)
+    mixed_pair_rules = _read_mixedcase_pair_rules(project_dir)
     character_calibration = _read_character_calibration(project_dir)
 
     digit_best = _best_checkpoint(digit_metrics)
@@ -64,6 +65,8 @@ def summarize_saved_metrics(project_dir: Path = PROJECT_DIR, target: float = 95.
     character_best = character_metrics.get("best_checkpoint", {})
     if mixed_calibration is not None:
         mixed_best = mixed_calibration
+    if mixed_pair_rules is not None:
+        mixed_best = mixed_pair_rules
     if character_calibration is not None:
         character_best = character_calibration
 
@@ -105,6 +108,23 @@ def _read_mixedcase_calibration(project_dir: Path) -> dict[str, object] | None:
     if list(calibration.get("labels", [])) != list(MIXEDCASE_LABELS):
         return None
     best = calibration.get("best_checkpoint")
+    return best if isinstance(best, dict) else None
+
+
+def _read_mixedcase_pair_rules(project_dir: Path) -> dict[str, object] | None:
+    """Return mixed-case pair-rule metrics when the optional artifact matches."""
+
+    rules_path = project_dir / "mixedcase_pair_rules.json"
+    if not rules_path.exists():
+        return None
+    try:
+        from alnum_model import MIXEDCASE_LABELS
+    except ImportError:
+        return None
+    artifact = _read_json(rules_path)
+    if not isinstance(artifact, dict) or list(artifact.get("labels", [])) != list(MIXEDCASE_LABELS):
+        return None
+    best = artifact.get("best_checkpoint")
     return best if isinstance(best, dict) else None
 
 

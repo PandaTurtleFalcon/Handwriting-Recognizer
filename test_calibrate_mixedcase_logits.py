@@ -8,6 +8,7 @@ from unittest.mock import patch
 import torch
 
 from scripts.calibrate_mixedcase_logits import calibrate_mixedcase_greedy_bias
+from scripts.calibrate_mixedcase_logits import calibrate_mixedcase_pair_rules
 from scripts.calibrate_mixedcase_logits import main
 
 
@@ -248,6 +249,48 @@ class MixedcaseCalibrationCliTests(unittest.TestCase):
                         objective="not_a_metric",
                     )
             self.assertFalse(output_path.exists())
+
+    def test_pair_rules_write_exact_improving_visual_twin_flips(self) -> None:
+        """Pair-rule mode should save ordered close-logit visual-twin rules."""
+
+        logits = torch.tensor(
+            [
+                [0.40, 0.30, 0.00],
+                [0.40, 0.20, 0.00],
+                [0.10, 0.50, 0.00],
+            ],
+            dtype=torch.float32,
+        )
+        targets = torch.tensor([1, 0, 1], dtype=torch.long)
+        train_targets = torch.tensor([0, 1, 2], dtype=torch.long)
+        labels = ["0", "O", "A"]
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            output_path = Path(temp_dir) / "mixedcase_pair_rules.json"
+            with (
+                patch("scripts.calibrate_mixedcase_logits._mixedcase_logits", return_value=(logits, targets, train_targets, labels)),
+                patch("scripts.calibrate_mixedcase_logits.MIXEDCASE_LABELS", labels),
+                patch("scripts.calibrate_mixedcase_logits.MIXEDCASE_LOGIT_BIAS_PATH", Path(temp_dir) / "missing.pt"),
+            ):
+                report = calibrate_mixedcase_pair_rules(
+                    output_path=output_path,
+                    batch_size=3,
+                    families=("0O",),
+                    thresholds=(-0.15,),
+                    rounds=2,
+                    min_improvement=0.01,
+                    min_case_or_visual=0.0,
+                    min_digit=0.0,
+                    min_upper=0.0,
+                    min_lower=0.0,
+                    write=True,
+                )
+
+            self.assertTrue(report["wrote"])
+            self.assertGreater(report["calibrated_accuracy"], report["base_accuracy"])
+            artifact = json.loads(output_path.read_text(encoding="utf-8"))
+            self.assertEqual(artifact["rules"][0]["from"], "0")
+            self.assertEqual(artifact["rules"][0]["to"], "O")
 
 
 if __name__ == "__main__":
