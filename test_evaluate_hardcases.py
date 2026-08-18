@@ -73,6 +73,26 @@ class HardCaseEvaluationTests(unittest.TestCase):
         self.assertEqual(report["results"][0]["font"], "uploaded")
         self.assertEqual(report["results"][0]["raw_prediction"], "xOO11eh'nd7o4")
 
+    def test_evaluate_uploaded_fixtures_scores_raw_rows_when_available(self) -> None:
+        """Real-upload raw metrics should use row-aware raw text."""
+
+        with patch("scripts.evaluate_hardcases.load_web_models", return_value=(object(), object())):
+            with patch("scripts.evaluate_hardcases.main.classify_files") as classifier:
+                classifier.return_value = [
+                    {
+                        "sequence": "look behind\nyou",
+                        "raw_sequence": "lookbehindyou",
+                        "raw_row_sequences": ["look behind", "you"],
+                    }
+                ]
+
+                report = evaluate_uploaded_fixtures(
+                    [{"path": __file__, "target": "look behind you"}]
+                )
+
+        self.assertEqual(report["raw_exact_accuracy"], 100.0)
+        self.assertEqual(report["results"][0]["raw_prediction"], "look behind\nyou")
+
     def test_evaluate_uploaded_fixtures_skips_missing_files(self) -> None:
         """Missing local fixture files should not crash the evaluator."""
 

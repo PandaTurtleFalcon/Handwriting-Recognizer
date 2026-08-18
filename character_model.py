@@ -52,6 +52,7 @@ CHAR_MEAN = 0.173
 CHAR_STD = 0.331
 CORRECTION_MEMORY_MAX_DISTANCE = 6.0
 CORRECTION_MEMORY_CONFIDENCE_CEILING = 0.95
+CORRECTION_MEMORY_EXACT_DISTANCE = 0.05
 CORRECTION_MEMORY_MIN_MARGIN = 2.0
 LETTER_MODEL_TYPES = {
     "cnn": EmnistCNN,
@@ -1361,7 +1362,7 @@ def _correction_memory_override_label(
 
     exemplars = getattr(model, "correction_exemplars", None)
     targets = getattr(model, "correction_exemplar_targets", None)
-    if exemplars is None or targets is None or current_confidence >= CORRECTION_MEMORY_CONFIDENCE_CEILING:
+    if exemplars is None or targets is None:
         return None
     vector = tensor.detach().cpu().flatten().float().unsqueeze(0)
     distances = torch.cdist(vector, exemplars.reshape(exemplars.size(0), -1)).squeeze(0)
@@ -1369,6 +1370,8 @@ def _correction_memory_override_label(
     best_target = int(targets[int(best_index)].item())
     best_distance_value = float(best_distance.item())
     if best_distance_value > CORRECTION_MEMORY_MAX_DISTANCE:
+        return None
+    if current_confidence >= CORRECTION_MEMORY_CONFIDENCE_CEILING and best_distance_value > CORRECTION_MEMORY_EXACT_DISTANCE:
         return None
     different_label_distances = distances[targets != best_target]
     if different_label_distances.numel() > 0:

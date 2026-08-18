@@ -591,7 +591,7 @@ class CharacterPostprocessingTests(unittest.TestCase):
         self.assertEqual(recovered["prediction_boxes"][0]["bbox"]["width"], 25)
         mock_split.assert_called_once_with([joined])
 
-    def test_correction_memory_overrides_only_low_confidence_close_matches(self) -> None:
+    def test_correction_memory_trusts_exact_matches_despite_confidence(self) -> None:
         class MemoryModel:
             pass
 
@@ -601,6 +601,22 @@ class CharacterPostprocessingTests(unittest.TestCase):
         tensor = torch.zeros((1, 1, 32, 32), dtype=torch.float32)
 
         self.assertEqual(_correction_memory_override_label(model, ["2", "a"], tensor, 0.94), ("a", 0.0))
+        self.assertEqual(_correction_memory_override_label(model, ["2", "a"], tensor, 0.99), ("a", 0.0))
+
+    def test_correction_memory_protects_high_confidence_non_exact_matches(self) -> None:
+        class MemoryModel:
+            pass
+
+        model = MemoryModel()
+        model.correction_exemplars = torch.full((1, 1, 32, 32), 0.01, dtype=torch.float32)
+        model.correction_exemplar_targets = torch.tensor([1], dtype=torch.long)
+        tensor = torch.zeros((1, 1, 32, 32), dtype=torch.float32)
+
+        close_match = _correction_memory_override_label(model, ["2", "a"], tensor, 0.94)
+        self.assertIsNotNone(close_match)
+        assert close_match is not None
+        self.assertEqual(close_match[0], "a")
+        self.assertAlmostEqual(close_match[1], 0.32, places=5)
         self.assertIsNone(_correction_memory_override_label(model, ["2", "a"], tensor, 0.95))
 
     def test_correction_memory_requires_distance_and_label_margin(self) -> None:

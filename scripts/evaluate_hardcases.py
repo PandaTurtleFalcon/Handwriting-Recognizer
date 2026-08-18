@@ -564,7 +564,12 @@ def evaluate_uploaded_fixtures(fixtures: list[dict[str, object]] | None = None) 
             continue
         classified = main.classify_files([(path.name, path.read_bytes())], model, device, save_sources=False)[0]
         prediction = str(classified.get("sequence", ""))
-        raw_prediction = str(classified.get("raw_sequence", prediction))
+        raw_rows = classified.get("raw_row_sequences", [])
+        raw_prediction = (
+            "\n".join(str(row) for row in raw_rows)
+            if isinstance(raw_rows, list) and raw_rows
+            else str(classified.get("raw_sequence", prediction))
+        )
         results.append(
             HardCaseResult(
                 target=target,

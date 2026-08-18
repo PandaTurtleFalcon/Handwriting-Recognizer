@@ -1531,6 +1531,49 @@ class WebAppRenderingTests(unittest.TestCase):
         self.assertEqual(json.loads(lines[0])["corrected_label"], "s")
         self.assertEqual(json.loads(lines[1])["corrected_label"], "5")
 
+    def test_exact_sequence_correction_relabels_matching_prediction_boxes(self) -> None:
+        """Repeat uploads should reuse exact per-box user labels."""
+
+        predictions = [
+            {"label": "7", "confidence": 0.99, "x": 1, "y": 2, "width": 30, "height": 40, "row": 1},
+            {"label": "0", "confidence": 0.91, "x": 45, "y": 2, "width": 31, "height": 40, "row": 1},
+        ]
+        record = {
+            "image_id": "same-image",
+            "correction_kind": "sequence",
+            "corrected_label": "lo",
+            "prediction_boxes": [
+                {"bbox": {"x": 1, "y": 2, "width": 30, "height": 40, "row": 1}},
+                {"bbox": {"x": 45, "y": 2, "width": 31, "height": 40, "row": 1}},
+            ],
+        }
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "corrections.jsonl"
+            path.write_text(json.dumps(record) + "\n", encoding="utf-8")
+
+            relabeled = main.relabel_predictions_from_exact_sequence_correction("same-image", predictions, path)
+
+        self.assertEqual("".join(main.prediction_value(item) for item in relabeled), "lo")
+        self.assertTrue(all(item["user_corrected"] for item in relabeled))
+
+    def test_exact_sequence_correction_requires_matching_boxes(self) -> None:
+        """Saved image labels should not apply after segmentation changes."""
+
+        predictions = [{"label": "7", "confidence": 0.99, "x": 1, "y": 2, "width": 30, "height": 40, "row": 1}]
+        record = {
+            "image_id": "same-image",
+            "correction_kind": "sequence",
+            "corrected_label": "l",
+            "prediction_boxes": [{"bbox": {"x": 99, "y": 2, "width": 30, "height": 40, "row": 1}}],
+        }
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "corrections.jsonl"
+            path.write_text("{not-json}\n" + json.dumps(record) + "\n", encoding="utf-8")
+
+            relabeled = main.relabel_predictions_from_exact_sequence_correction("same-image", predictions, path)
+
+        self.assertEqual(relabeled, predictions)
+
     def test_save_practice_source_image_accepts_png_data_url(self) -> None:
         """Generated practice corrections should save a crop source image."""
 

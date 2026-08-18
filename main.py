@@ -1243,6 +1243,76 @@ def app_revision() -> str:
     return revision if completed.returncode == 0 and revision else "unknown"
 
 
+def compact_correction_text(value: object) -> str:
+    """Return a saved sequence correction with layout whitespace removed."""
+
+    return "".join(character for character in str(value) if not character.isspace())
+
+
+def prediction_box_matches_saved(
+    prediction: dict[str, object],
+    box_record: dict[str, object],
+    tolerance: float = 3.0,
+) -> bool:
+    """Return true when a current prediction still matches a saved box."""
+
+    bbox = box_record.get("bbox", {})
+    if not isinstance(bbox, dict):
+        return False
+    for key in ("x", "y", "width", "height"):
+        try:
+            current = float(prediction.get(key, 0.0))
+            saved = float(bbox.get(key, 0.0))
+        except (TypeError, ValueError):
+            return False
+        if abs(current - saved) > tolerance:
+            return False
+    try:
+        return int(prediction.get("row", 1)) == int(bbox.get("row", 1))
+    except (TypeError, ValueError):
+        return False
+
+
+def relabel_predictions_from_exact_sequence_correction(
+    image_id: str,
+    predictions: list[dict[str, object]],
+    corrections_path: Path = CORRECTIONS_PATH,
+) -> list[dict[str, object]]:
+    """Apply an exact per-box user correction when the same upload reappears."""
+
+    if not image_id or not predictions or not corrections_path.exists():
+        return predictions
+
+    for line in reversed(corrections_path.read_text(encoding="utf-8").splitlines()):
+        if not line.strip():
+            continue
+        try:
+            record = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if record.get("image_id") != image_id or record.get("correction_kind") != "sequence":
+            continue
+        corrected_label = compact_correction_text(record.get("corrected_label", ""))
+        boxes = record.get("prediction_boxes", [])
+        if len(corrected_label) != len(predictions) or not isinstance(boxes, list) or len(boxes) != len(predictions):
+            continue
+        if not all(
+            isinstance(box, dict) and prediction_box_matches_saved(prediction, box)
+            for prediction, box in zip(predictions, boxes)
+        ):
+            continue
+        return [
+            {
+                **prediction,
+                "label": label,
+                "confidence": max(float(prediction.get("confidence", 0.0)), 0.99),
+                "user_corrected": True,
+            }
+            for prediction, label in zip(predictions, corrected_label)
+        ]
+    return predictions
+
+
 def classify_files(
     files: list[tuple[str, bytes]],
     model,
@@ -1294,6 +1364,7 @@ def classify_files(
                 predictions = digit_predictions
         else:
             predictions = predict_digits(model, image, device)
+        predictions = relabel_predictions_from_exact_sequence_correction(image_id, predictions)
         if not predictions:
             results.append(
                 {
