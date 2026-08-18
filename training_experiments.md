@@ -925,3 +925,16 @@ restored, so future improvement loops do not repeat known-bad blends.
   - Result: no model artifacts changed. Current correction data is still not ready for useful training: the dry-run found only `3` character crops and recommends collecting `1018` more priority-label samples before training.
   - Verification: `test_train_from_corrections.py` passed (`16 passed`).
   - Takeaway: when enough user-labeled data arrives, the daily job is less likely to replace a deployed checkpoint with a correction fine-tune that regresses the protected splits.
+
+- Uploaded app-fixture regression gate:
+  - Code path: added the reported rough "look behind you" screenshot as `data/app_hardcase_fixtures/look_behind_you_reported.png`, plus `scripts.evaluate_hardcases.evaluate_uploaded_fixtures()` and `uploaded_hardcase_*` summary gates.
+  - Result: no model artifacts changed. The real uploaded image now has an explicit app-level gate that expects `look behind\nyou`; the raw recognizer still reads the same image as `xOO11eh'nd7o4`, so this protects the website/context behavior without claiming the base character model is fixed.
+  - Verification: `scripts/evaluate_hardcases.py --uploaded-fixtures --json` passed `1/1`; `scripts/summarize_benchmarks.py --include-app-hardcases --include-uploaded-hardcases --json` reported generated app hardcases `180/180` and uploaded hardcases `1/1`; the broader regression bundle passed (`226 passed`).
+  - Takeaway: future training or cleanup changes now have to preserve this real user-reported upload, not only generated font fixtures.
+
+- Duplicate dataset research: Sueiras/UNIPEN character database:
+  - Research: the GitHub-hosted `sueiras/handwritting_characters_database` dataset describes 62,382 grayscale images organized in 93 ASCII-code folders and cites UNIPEN as the original online handwriting source.
+  - Local check: this project already has 62,382 PNGs in `data/unipen_chars/curated`, and `character_model.DATASET_ROOT` points at that directory. Current character metrics use that curated root plus HASY, correction crops, and generated punctuation extras.
+  - Result: rejected as "new data" because it is already the base character dataset, not an unused source.
+  - Source: https://github.com/sueiras/handwritting_characters_database
+  - Takeaway: next dataset work should target a genuinely distinct source or more user-labeled crops for visual families, not re-import the existing curated UNIPEN/Sueiras-style root.
