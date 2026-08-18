@@ -31,6 +31,30 @@ from character_model import (  # noqa: E402
 from mnist_model import get_device  # noqa: E402
 from scripts.analyze_character_confusions import _metric_extra_roots  # noqa: E402
 
+LABEL_GROUPS = {"digit", "letter", "punctuation"}
+
+
+def _label_group(label: str) -> str:
+    """Return the broad character group used by calibration filters."""
+
+    if label.isdigit():
+        return "digit"
+    if label.isalpha():
+        return "letter"
+    return "punctuation"
+
+
+def _parse_label_groups(value: str) -> tuple[str, ...] | None:
+    """Parse a comma-separated label-group filter from the CLI."""
+
+    groups = tuple(part.strip() for part in value.split(",") if part.strip())
+    if not groups:
+        return None
+    unknown = sorted(set(groups) - LABEL_GROUPS)
+    if unknown:
+        raise ValueError(f"Unknown label group(s): {', '.join(unknown)}")
+    return groups
+
 
 def _validation_logits(batch_size: int) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, list[str]]:
     """Return logits, validation targets, training targets, and labels."""
@@ -140,6 +164,8 @@ def calibrate_character_pair_rules(
     min_digit: float | None = None,
     min_letter: float | None = None,
     min_punctuation: float | None = None,
+    source_groups: tuple[str, ...] | None = None,
+    target_groups: tuple[str, ...] | None = None,
     write: bool = True,
 ) -> dict[str, object]:
     """Greedily tune ordered pairwise visual-twin rules for character logits."""
@@ -165,6 +191,8 @@ def calibrate_character_pair_rules(
         (left, right)
         for family in families
         for left, right in itertools.permutations(dict.fromkeys(label for label in family if label in label_to_index), 2)
+        if (source_groups is None or _label_group(left) in source_groups)
+        and (target_groups is None or _label_group(right) in target_groups)
     ]
     steps: list[dict[str, object]] = list(existing_rules)
     new_steps: list[dict[str, object]] = []
@@ -404,6 +432,7 @@ def calibrate_character_greedy_bias(
     min_digit: float | None = None,
     min_letter: float | None = None,
     min_punctuation: float | None = None,
+    label_groups: tuple[str, ...] | None = None,
     include_pair_rules: bool = False,
     write: bool = True,
 ) -> dict[str, object]:
@@ -424,7 +453,11 @@ def calibrate_character_greedy_bias(
     min_punctuation = _floor_or_baseline(min_punctuation, base_breakdown, "punctuation_validation_accuracy")
     best_bias = starting_bias.clone()
     best_breakdown = base_breakdown
-    tuned_indices = [labels.index(label) for label in dict.fromkeys(labels_to_tune) if label in labels]
+    tuned_indices = [
+        labels.index(label)
+        for label in dict.fromkeys(labels_to_tune)
+        if label in labels and (label_groups is None or _label_group(label) in label_groups)
+    ]
     steps: list[dict[str, object]] = []
     for round_index in range(max(0, rounds)):
         improved_this_round = False
@@ -558,6 +591,21 @@ def main() -> None:
         default="-2.5,-2.0,-1.75,-1.5,-1.25,-1.0,-0.85,-0.7,-0.5,-0.32,-0.18",
     )
     parser.add_argument(
+        "--pair-source-groups",
+        default="",
+        help="Comma-separated groups allowed as pair-rule sources: digit, letter, punctuation.",
+    )
+    parser.add_argument(
+        "--pair-target-groups",
+        default="",
+        help="Comma-separated groups allowed as pair-rule targets: digit, letter, punctuation.",
+    )
+    parser.add_argument(
+        "--greedy-label-groups",
+        default="",
+        help="Comma-separated groups allowed for greedy bias labels: digit, letter, punctuation.",
+    )
+    parser.add_argument(
         "--objective",
         default="validation_accuracy",
         choices=[
@@ -594,6 +642,8 @@ def main() -> None:
     if args.pair_rules:
         thresholds = tuple(float(part) for part in args.pair_thresholds.split(",") if part.strip())
         families = tuple(part for part in args.pair_families.split(",") if part)
+        source_groups = _parse_label_groups(args.pair_source_groups)
+        target_groups = _parse_label_groups(args.pair_target_groups)
         report = calibrate_character_pair_rules(
             output_path=args.output_path,
             batch_size=args.batch_size,
@@ -607,10 +657,13 @@ def main() -> None:
             min_digit=args.min_digit,
             min_letter=args.min_letter,
             min_punctuation=args.min_punctuation,
+            source_groups=source_groups,
+            target_groups=target_groups,
             write=not args.dry_run,
         )
     elif args.greedy_labels:
         deltas = tuple(float(part) for part in args.greedy_deltas.split(",") if part.strip())
+        label_groups = _parse_label_groups(args.greedy_label_groups)
         report = calibrate_character_greedy_bias(
             output_path=args.output_path,
             batch_size=args.batch_size,
@@ -624,6 +677,7 @@ def main() -> None:
             min_digit=args.min_digit,
             min_letter=args.min_letter,
             min_punctuation=args.min_punctuation,
+            label_groups=label_groups,
             include_pair_rules=args.include_pair_rules,
             write=not args.dry_run,
         )

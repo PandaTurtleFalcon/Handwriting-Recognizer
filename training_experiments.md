@@ -829,3 +829,9 @@ restored, so future improvement loops do not repeat known-bad blends.
   - Result: future letter-targeted character searches can no longer improve `letter_validation_accuracy` while quietly regressing overall, digit, punctuation, or ambiguity metrics. A real greedy-bias dry-run over visual twins with omitted floors stayed a no-op (`improvement=0.0`, `steps=[]`), confirming the current artifact remains unchanged.
   - Verification: `test_calibrate_character_logits.py` and `test_summarize_benchmarks.py` passed (`27 passed`).
   - Takeaway: this is a safety/tooling improvement, not a metric gain. It makes the next autonomous searches more trustworthy before attempting larger data or architecture changes.
+
+- Character calibration label-group filters:
+  - Code path: added source/target group filters for character pair-rule calibration and a label-group filter for greedy character-bias calibration. The CLI now accepts `--pair-source-groups`, `--pair-target-groups`, and `--greedy-label-groups` with `digit`, `letter`, and `punctuation` buckets.
+  - Result: future letter-only searches can avoid cross-group flips like digit-to-letter or punctuation-to-letter changes unless explicitly requested. A real letter-only pair-rule dry-run over `Cc,Oo,Ss,Pp,Uu,Vv,Ww,Xx,Yy,Zz,Nn` found no safe new steps (`improvement=0.0`, `new_steps=[]`), so deployed artifacts stayed unchanged.
+  - Verification: `test_calibrate_character_logits.py` passed (`17 passed`), `test_context_rules.py` passed (`40 passed`), and `scripts/summarize_benchmarks.py --json` confirmed current deployed metrics remain digit `99.65%`, folded alnum `96.66%`, mixed-case exact `87.78%`, character exact `94.17%`, and punctuation `96.06%`.
+  - Takeaway: no metric gain this iteration, but the calibration loop is safer for the next bounded searches because it can keep letter-focused probes inside the letter bucket.

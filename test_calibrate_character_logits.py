@@ -10,6 +10,7 @@ import torch
 from scripts.calibrate_character_logits import calibrate_character_greedy_bias
 from scripts.calibrate_character_logits import calibrate_character_pair_rules
 from scripts.calibrate_character_logits import main
+from scripts.calibrate_character_logits import _parse_label_groups
 
 
 class CharacterCalibrationCliTests(unittest.TestCase):
@@ -139,6 +140,90 @@ class CharacterCalibrationCliTests(unittest.TestCase):
 
             self.assertNotIn("include_pair_rules", calibrate.call_args.kwargs)
 
+    def test_cli_passes_pair_rule_group_filters(self) -> None:
+        """Pair-rule searches can be constrained to broad label groups."""
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            output_path = Path(temp_dir) / "character_pair_rules.json"
+            output = StringIO()
+            with (
+                patch(
+                    "sys.argv",
+                    [
+                        "calibrate_character_logits.py",
+                        "--pair-rules",
+                        "--output-path",
+                        str(output_path),
+                        "--pair-source-groups",
+                        "letter",
+                        "--pair-target-groups",
+                        "letter,punctuation",
+                        "--dry-run",
+                    ],
+                ),
+                patch(
+                    "scripts.calibrate_character_logits.calibrate_character_pair_rules",
+                    return_value={
+                        "base_accuracy": 93.0,
+                        "calibrated_accuracy": 93.0,
+                        "best_scale": "greedy-pair-rules",
+                        "improvement": 0.0,
+                        "best_checkpoint": {"validation_accuracy": 93.0},
+                        "wrote": False,
+                        "output_path": str(output_path),
+                    },
+                ) as calibrate,
+                patch("sys.stdout", output),
+            ):
+                main()
+
+            self.assertEqual(calibrate.call_args.kwargs["source_groups"], ("letter",))
+            self.assertEqual(calibrate.call_args.kwargs["target_groups"], ("letter", "punctuation"))
+
+    def test_cli_passes_greedy_label_group_filter(self) -> None:
+        """Greedy bias searches can ignore labels outside requested groups."""
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            output_path = Path(temp_dir) / "character_logit_bias.pt"
+            output = StringIO()
+            with (
+                patch(
+                    "sys.argv",
+                    [
+                        "calibrate_character_logits.py",
+                        "--greedy-labels",
+                        "0A.",
+                        "--greedy-label-groups",
+                        "letter",
+                        "--output-path",
+                        str(output_path),
+                        "--dry-run",
+                    ],
+                ),
+                patch(
+                    "scripts.calibrate_character_logits.calibrate_character_greedy_bias",
+                    return_value={
+                        "base_accuracy": 93.0,
+                        "calibrated_accuracy": 93.0,
+                        "best_scale": "greedy-per-label",
+                        "improvement": 0.0,
+                        "best_checkpoint": {"validation_accuracy": 93.0},
+                        "wrote": False,
+                        "output_path": str(output_path),
+                    },
+                ) as calibrate,
+                patch("sys.stdout", output),
+            ):
+                main()
+
+            self.assertEqual(calibrate.call_args.kwargs["label_groups"], ("letter",))
+
+    def test_parse_label_groups_rejects_unknown_group(self) -> None:
+        """Group filters should fail fast on misspelled buckets."""
+
+        with self.assertRaisesRegex(ValueError, "Unknown label group"):
+            _parse_label_groups("letter,letters")
+
     def test_greedy_bias_tunes_requested_labels(self) -> None:
         """Greedy mode should write a better per-label bias when one exists."""
 
@@ -216,6 +301,41 @@ class CharacterCalibrationCliTests(unittest.TestCase):
             self.assertGreater(report["calibrated_objective"], report["base_objective"])
             artifact = torch.load(output_path, map_location="cpu", weights_only=True)
             self.assertEqual(artifact["objective"], "letter_validation_accuracy")
+
+    def test_greedy_bias_group_filter_tunes_only_matching_labels(self) -> None:
+        """A label-group filter should skip requested labels from other groups."""
+
+        logits = torch.tensor(
+            [
+                [0.50, 0.00, 0.00],
+                [0.00, 0.10, 0.20],
+                [0.00, 0.10, 0.30],
+            ],
+            dtype=torch.float32,
+        )
+        targets = torch.tensor([0, 1, 1], dtype=torch.long)
+        train_targets = torch.tensor([0, 1, 2], dtype=torch.long)
+        labels = ["0", "A", "."]
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            output_path = Path(temp_dir) / "character_logit_bias.pt"
+            with patch("scripts.calibrate_character_logits._validation_logits", return_value=(logits, targets, train_targets, labels)):
+                report = calibrate_character_greedy_bias(
+                    output_path=output_path,
+                    batch_size=3,
+                    labels_to_tune="0A.",
+                    label_groups=("letter",),
+                    deltas=(0.2,),
+                    rounds=1,
+                    min_improvement=0.01,
+                    min_ambiguity=0.0,
+                    min_punctuation=0.0,
+                    write=True,
+                )
+
+            self.assertTrue(report["wrote"])
+            artifact = torch.load(output_path, map_location="cpu", weights_only=True)
+            self.assertEqual(artifact["tuned_labels"], ["A"])
 
     def test_greedy_bias_defaults_to_non_regression_floors(self) -> None:
         """A split gain should not be accepted by default if another split regresses."""
@@ -394,6 +514,47 @@ class CharacterCalibrationCliTests(unittest.TestCase):
             artifact = json.loads(output_path.read_text(encoding="utf-8"))
             self.assertEqual(artifact["rules"][0]["from"], "0")
             self.assertEqual(artifact["rules"][0]["to"], "O")
+
+    def test_pair_rules_group_filter_blocks_cross_group_flips(self) -> None:
+        """Letter-only pair-rule searches should reject digit-to-letter fixes."""
+
+        logits = torch.tensor(
+            [
+                [0.40, 0.30, 0.00],
+                [0.40, 0.10, 0.00],
+                [0.10, 0.50, 0.00],
+            ],
+            dtype=torch.float32,
+        )
+        targets = torch.tensor([1, 0, 1], dtype=torch.long)
+        train_targets = torch.tensor([0, 1, 2], dtype=torch.long)
+        labels = ["0", "O", "."]
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            output_path = Path(temp_dir) / "character_pair_rules.json"
+            with (
+                patch("scripts.calibrate_character_logits._validation_logits", return_value=(logits, targets, train_targets, labels)),
+                patch("scripts.calibrate_character_logits.LOGIT_BIAS_PATH", Path(temp_dir) / "missing.pt"),
+            ):
+                report = calibrate_character_pair_rules(
+                    output_path=output_path,
+                    batch_size=3,
+                    families=("0O",),
+                    thresholds=(-0.15,),
+                    rounds=2,
+                    source_groups=("letter",),
+                    target_groups=("letter",),
+                    min_improvement=0.01,
+                    min_ambiguity=0.0,
+                    min_digit=0.0,
+                    min_letter=0.0,
+                    min_punctuation=0.0,
+                    write=True,
+                )
+
+            self.assertFalse(report["wrote"])
+            self.assertEqual(report["new_steps"], [])
+            self.assertFalse(output_path.exists())
 
     def test_pair_rules_reject_validation_gain_when_objective_regresses(self) -> None:
         """Optimizing a split metric should not accept rules that only help overall accuracy."""
