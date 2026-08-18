@@ -138,6 +138,68 @@ class CharacterCalibrationCliTests(unittest.TestCase):
             self.assertEqual(artifact["tuned_labels"], ["A"])
             self.assertEqual(len(artifact["steps"]), 1)
 
+    def test_greedy_bias_can_optimize_letter_split(self) -> None:
+        """Greedy mode should support targeting a split metric with floors."""
+
+        logits = torch.tensor(
+            [
+                [0.50, 0.00, 0.00, 0.00],
+                [0.00, 0.50, 0.00, 0.00],
+                [0.00, 0.20, 0.10, 0.00],
+                [0.00, 0.30, 0.20, 0.00],
+                [0.00, 0.00, 0.00, 0.50],
+            ],
+            dtype=torch.float32,
+        )
+        targets = torch.tensor([0, 1, 2, 2, 3], dtype=torch.long)
+        train_targets = torch.tensor([0, 1, 2, 3], dtype=torch.long)
+        labels = ["0", "A", "B", "."]
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            output_path = Path(temp_dir) / "character_logit_bias.pt"
+            with patch("scripts.calibrate_character_logits._validation_logits", return_value=(logits, targets, train_targets, labels)):
+                report = calibrate_character_greedy_bias(
+                    output_path=output_path,
+                    batch_size=5,
+                    labels_to_tune="B",
+                    deltas=(0.2,),
+                    rounds=2,
+                    min_improvement=0.01,
+                    objective="letter_validation_accuracy",
+                    min_validation=0.0,
+                    min_ambiguity=0.0,
+                    min_digit=100.0,
+                    min_letter=0.0,
+                    min_punctuation=100.0,
+                    write=True,
+                )
+
+            self.assertTrue(report["wrote"])
+            self.assertEqual(report["objective"], "letter_validation_accuracy")
+            self.assertGreater(report["calibrated_objective"], report["base_objective"])
+            artifact = torch.load(output_path, map_location="cpu", weights_only=True)
+            self.assertEqual(artifact["objective"], "letter_validation_accuracy")
+
+    def test_greedy_bias_rejects_unknown_objective(self) -> None:
+        """Invalid objective names should fail before writing an artifact."""
+
+        logits = torch.tensor([[0.50, 0.00]], dtype=torch.float32)
+        targets = torch.tensor([0], dtype=torch.long)
+        train_targets = torch.tensor([0], dtype=torch.long)
+        labels = ["A", "B"]
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            output_path = Path(temp_dir) / "character_logit_bias.pt"
+            with patch("scripts.calibrate_character_logits._validation_logits", return_value=(logits, targets, train_targets, labels)):
+                with self.assertRaises(ValueError):
+                    calibrate_character_greedy_bias(
+                        output_path=output_path,
+                        batch_size=1,
+                        labels_to_tune="B",
+                        objective="not_a_metric",
+                    )
+            self.assertFalse(output_path.exists())
+
 
 if __name__ == "__main__":
     unittest.main()

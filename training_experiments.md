@@ -613,6 +613,11 @@ restored, so future improvement loops do not repeat known-bad blends.
   - Command shape: backed up `mixedcase_cnn.pt`, `mixedcase_training_metrics.json`, and `mixedcase_logit_bias.pt`, then ran one frozen-feature warm-start epoch with `python3 alnum_model.py --mixed-case --model cnn --warm-start --epochs 1 --batch-size 256 --samples-per-class 2500 --min-accuracy 0 --learning-rate 0.0000015 --seed 4103 --mixedcase-label-smoothing 0.01 --mixedcase-weak-labels 'ocsumlfqpi' --mixedcase-weak-loss-weight 1.03 --mixedcase-lower-loss-weight 1.015 --mixedcase-upper-loss-weight 1.0 --mixedcase-type-loss-weight 0.01 --mixedcase-class-balance-strength 0.04 --mixedcase-freeze-feature-layers --device mps`.
   - Result: rejected. The epoch improved raw lowercase exact to `84.67%`, but aggregate raw mixed-case exact fell to `79.89%` and uppercase fell to `70.48%`. The backed-up mixed-case model, metrics, and bias artifact were restored, and the full benchmark returned to deployed mixed-case exact `87.44%` with clean/script app gates still green.
 
+- Split-aware character letter calibration:
+  - Code path: `scripts/calibrate_character_logits.py` now supports greedy objectives and split floors (`--objective`, `--min-validation`, `--min-digit`, `--min-letter`) so future probes can target the failing letter split without sacrificing already-green gates.
+  - Command shape: `python3 scripts/calibrate_character_logits.py --batch-size 4096 --greedy-labels 'OolISsciCvxXPpUuVvMmNnYyKkWwFfzZ' --greedy-rounds 5 --greedy-deltas=-0.08,-0.06,-0.04,-0.02,0.02,0.04,0.06,0.08 --objective letter_validation_accuracy --min-validation 93.50 --min-ambiguity 98.85 --min-digit 95.0 --min-letter 92.67 --min-punctuation 96.0 --require-app-gates`.
+  - Result: accepted four tiny bias steps (`P -0.08`, `U -0.08`, `Y -0.08`, `z +0.02`), improving character exact from `93.55%` to `93.58%` and character letter exact from `92.67%` to `92.72%`. Digit exact remains passing at `95.05%`; clean app remains `100.00% (45/45)` and script app remains `95.56% (86/90)`.
+
 ## Next Higher-Value Directions
 
 - Interrupted full calibration/analyzer startup probe:

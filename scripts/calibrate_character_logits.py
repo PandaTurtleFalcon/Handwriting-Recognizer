@@ -180,7 +180,11 @@ def calibrate_character_greedy_bias(
     deltas: tuple[float, ...] = (-0.12, -0.08, -0.04, 0.04, 0.08, 0.12),
     rounds: int = 6,
     min_improvement: float = 0.01,
+    objective: str = "validation_accuracy",
+    min_validation: float = 0.0,
     min_ambiguity: float = 98.8,
+    min_digit: float = 0.0,
+    min_letter: float = 0.0,
     min_punctuation: float = 95.0,
     write: bool = True,
 ) -> dict[str, object]:
@@ -189,6 +193,8 @@ def calibrate_character_greedy_bias(
     logits, targets, _train_targets, labels = _validation_logits(batch_size)
     starting_bias = _load_existing_bias(output_path, labels)
     base_breakdown = _breakdown((logits + starting_bias).argmax(dim=1), targets, labels)
+    if objective not in base_breakdown:
+        raise ValueError(f"Unknown character calibration objective: {objective}")
     best_bias = starting_bias.clone()
     best_breakdown = base_breakdown
     tuned_indices = [labels.index(label) for label in dict.fromkeys(labels_to_tune) if label in labels]
@@ -201,11 +207,14 @@ def calibrate_character_greedy_bias(
                 candidate_bias[label_index] += float(delta)
                 candidate_breakdown = _breakdown((logits + candidate_bias).argmax(dim=1), targets, labels)
                 if (
-                    candidate_breakdown["punctuation_validation_accuracy"] < min_punctuation
+                    candidate_breakdown["validation_accuracy"] < min_validation
+                    or candidate_breakdown["punctuation_validation_accuracy"] < min_punctuation
                     or candidate_breakdown["ambiguity_aware_validation_accuracy"] < min_ambiguity
+                    or candidate_breakdown["digit_validation_accuracy"] < min_digit
+                    or candidate_breakdown["letter_validation_accuracy"] < min_letter
                 ):
                     continue
-                if candidate_breakdown["validation_accuracy"] <= best_breakdown["validation_accuracy"]:
+                if candidate_breakdown[objective] <= best_breakdown[objective]:
                     continue
                 best_bias = candidate_bias
                 best_breakdown = candidate_breakdown
@@ -216,11 +225,13 @@ def calibrate_character_greedy_bias(
                         "label": labels[label_index],
                         "delta": float(delta),
                         "validation_accuracy": candidate_breakdown["validation_accuracy"],
+                        "objective": objective,
+                        "objective_value": candidate_breakdown[objective],
                     }
                 )
         if not improved_this_round:
             break
-    improvement = best_breakdown["validation_accuracy"] - base_breakdown["validation_accuracy"]
+    improvement = best_breakdown[objective] - base_breakdown[objective]
     improved = improvement >= min_improvement
     if write and improved:
         torch.save(
@@ -230,6 +241,9 @@ def calibrate_character_greedy_bias(
                 "scale": "greedy-per-label",
                 "base_accuracy": base_breakdown["validation_accuracy"],
                 "calibrated_accuracy": best_breakdown["validation_accuracy"],
+                "base_objective": base_breakdown[objective],
+                "calibrated_objective": best_breakdown[objective],
+                "objective": objective,
                 "best_checkpoint": best_breakdown,
                 "source": "greedy_per_label_validation_probe",
                 "tuned_labels": [labels[index] for index in tuned_indices],
@@ -240,6 +254,9 @@ def calibrate_character_greedy_bias(
     return {
         "base_accuracy": base_breakdown["validation_accuracy"],
         "calibrated_accuracy": best_breakdown["validation_accuracy"],
+        "base_objective": base_breakdown[objective],
+        "calibrated_objective": best_breakdown[objective],
+        "objective": objective,
         "best_scale": "greedy-per-label",
         "improvement": improvement,
         "best_checkpoint": best_breakdown,
@@ -287,7 +304,23 @@ def main() -> None:
     parser.add_argument("--greedy-labels", default="", help="Greedily tune per-label bias for this label string.")
     parser.add_argument("--greedy-rounds", type=int, default=6)
     parser.add_argument("--greedy-deltas", default="-0.12,-0.08,-0.04,0.04,0.08,0.12")
+    parser.add_argument(
+        "--objective",
+        default="validation_accuracy",
+        choices=[
+            "validation_accuracy",
+            "ambiguity_aware_validation_accuracy",
+            "digit_validation_accuracy",
+            "letter_validation_accuracy",
+            "punctuation_validation_accuracy",
+            "punctuation_ambiguity_aware_validation_accuracy",
+        ],
+        help="Metric to improve in greedy mode while preserving the configured floors.",
+    )
+    parser.add_argument("--min-validation", type=float, default=0.0)
     parser.add_argument("--min-ambiguity", type=float, default=98.8)
+    parser.add_argument("--min-digit", type=float, default=0.0)
+    parser.add_argument("--min-letter", type=float, default=0.0)
     parser.add_argument("--min-punctuation", type=float, default=95.0)
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument(
@@ -312,7 +345,11 @@ def main() -> None:
             deltas=deltas,
             rounds=args.greedy_rounds,
             min_improvement=args.min_improvement,
+            objective=args.objective,
+            min_validation=args.min_validation,
             min_ambiguity=args.min_ambiguity,
+            min_digit=args.min_digit,
+            min_letter=args.min_letter,
             min_punctuation=args.min_punctuation,
             write=not args.dry_run,
         )
