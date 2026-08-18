@@ -1251,3 +1251,9 @@ restored, so future improvement loops do not repeat known-bad blends.
   - Rejected smoke: a one-epoch `widecnn` warm-start candidate with weak visual-twin labels and letter-focused objective failed safely before writing candidate files; best observed floors were `93.09%` validation, `94.04%` digit, and `92.42%` letter, below the configured preservation floors.
   - Verification: character, correction, and benchmark tests passed; compile and diff checks passed.
   - Takeaway: character work now has the same candidate-first workflow as mixed-case. Future character attempts can be larger without risking live artifacts, but this smoke confirmed the recent warm-start recipe still regresses the exact gates.
+
+- Character candidate evaluator target and baseline gates:
+  - Code path: added `scripts/evaluate_character_candidate.py`, a direct character checkpoint evaluator with raw/calibrated modes, target gates, baseline JSON comparison, and required-gate failure exits.
+  - Result: no model artifact changed. The current calibrated character checkpoint correctly fails `--require-target` on a 1024-example diagnostic slice (`94.14%` validation, `94.21%` letter), while the same checkpoint passes a same-slice `--require-baseline` comparison on a 2048-example slice.
+  - Verification: focused character evaluator tests passed, compile checks passed, and the baseline gate check reported no failures.
+  - Takeaway: character candidates now have an honest promotion gate matching the isolated artifact workflow. The next candidate fine-tune can be evaluated directly before touching live weights, labels, exemplars, or metrics.
