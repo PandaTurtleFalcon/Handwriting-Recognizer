@@ -634,6 +634,10 @@ restored, so future improvement loops do not repeat known-bad blends.
   - Verification: `python3 -m pytest -q test_context_rules.py test_evaluate_hardcases.py` passed (`47` tests), `python3 scripts/evaluate_hardcases.py --script-cases --json` improved app hardcase exact from `86/90` to `87/90`, and full benchmark summary reports `app_script_hardcase_exact: 96.67% (87/90)` plus `app_script_hardcase_ambiguity: 100.00% (90/90)`.
   - Remaining app exact misses are the deliberately ambiguous rough `S5s`, `Ss5`, and `5Ss` rows, all reading as `555` but passing ambiguity-aware matching.
 
+- All-label mixed-case exact calibration continuation:
+  - Command shape: dry-ran, then wrote after app gates, with `python3 scripts/calibrate_mixedcase_logits.py --batch-size 4096 --greedy-labels '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz' --greedy-rounds 3 --greedy-deltas=-0.04,-0.03,-0.02,-0.01,0.01,0.02,0.03,0.04 --objective test_accuracy --min-test 87.44488335457518 --min-case-or-visual 97.70 --min-digit 94.90 --min-upper 83.95 --min-lower 72.64 --write --require-app-gates`.
+  - Result: accepted thirteen tiny mixed-case bias steps, improving mixed-case exact from `87.44%` to `87.46%`, case-or-visual from `97.77%` to `97.78%`, upper exact from `83.96%` to `84.07%`, and lower exact from `72.64%` to `72.65%`. Digit exact slipped from `94.95%` to `94.92%`, still below the `95%` goal but above the experiment floor; clean app stayed `100.00% (45/45)` and script app stayed `96.67% (87/90)`.
+
 ## Next Higher-Value Directions
 
 - Interrupted full calibration/analyzer startup probe:
