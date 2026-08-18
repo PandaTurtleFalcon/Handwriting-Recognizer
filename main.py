@@ -521,10 +521,21 @@ input[type="text"]:focus-visible {
   line-height: 1.1;
   font-weight: 800;
   color: var(--ink);
-  letter-spacing: -0.01em;
+  letter-spacing: 0;
   max-width: 100%;
   overflow-wrap: anywhere;
   font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+}
+.answer-summary {
+  display: grid;
+  gap: 5px;
+  justify-items: end;
+}
+.answer-summary span {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 800;
+  text-transform: uppercase;
 }
 .row-output {
   margin: 10px 0 0;
@@ -1072,6 +1083,7 @@ class MnistWebHandler(BaseHTTPRequestHandler):
         body = resolved.read_bytes()
         self.send_response(HTTPStatus.OK)
         self.send_header("Content-Type", content_type)
+        self.send_header("Cache-Control", "no-store, max-age=0")
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         self.wfile.write(body)
@@ -1082,6 +1094,7 @@ class MnistWebHandler(BaseHTTPRequestHandler):
         encoded = body.encode("utf-8")
         self.send_response(status)
         self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Cache-Control", "no-store, max-age=0")
         self.send_header("Content-Length", str(len(encoded)))
         self.end_headers()
         self.wfile.write(encoded)
@@ -2275,7 +2288,10 @@ def render_result(result: dict[str, object]) -> str:
 <article class="result-panel">
   <div class="result-head">
     <div class="filename">{filename}</div>
-    <div class="sequence">{html.escape(str(result.get("sequence", "")))}</div>
+    <div class="answer-summary">
+      <span>final answer</span>
+      <div class="sequence">{html.escape(str(result.get("sequence", "")))}</div>
+    </div>
   </div>
   {row_html}
   {context_html}

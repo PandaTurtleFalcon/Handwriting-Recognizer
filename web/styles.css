@@ -551,6 +551,19 @@ h2 {
   text-align: right;
 }
 
+.answer-summary {
+  display: grid;
+  gap: 6px;
+  justify-items: end;
+}
+
+.answer-summary span {
+  color: #5d6b80;
+  font-size: 0.85rem;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
 .row-output,
 .context-output {
   display: flex;

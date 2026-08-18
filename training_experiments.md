@@ -794,3 +794,14 @@ restored, so future improvement loops do not repeat known-bad blends.
 - Rejected character pair-rule continuation after `G +0.24` bias:
   - Command shape: backed up character artifacts, then ran `scripts/calibrate_character_logits.py --pair-rules` over the current visual families (`SOos5`, `0Oo`, `1Ili|!/`, `Cc`, `Vv`, `Uu`, `Pp`, `Xx`, `Zz2`, `GgqQ9`, `Yy4`, `Tt7`, `Jj`, `Kk`, `Ff`, `+t`, `._-`, `;:i!`) with objective `letter_validation_accuracy`, floors matching the new baseline, and app gates required.
   - Result: rejected/no-op. The search found no new rule that improved letter exactness while preserving the configured floors, so `character_pair_rules.json` was not rewritten. `scripts/summarize_benchmarks.py --json` stayed at character exact `94.1666%` and character-letter exact `93.5908%`.
+
+- Rejected mixed-case hybrid threshold one-off probe:
+  - Command shape: first broad dry-run tried deployed mixed-case plus folded alnum thresholds, but accidentally omitted the existing mixed-case bias/pair calibration and reported an invalid `81.20%` base; it was interrupted before writing anything.
+  - Corrected command shape: reran a narrower dry-run with serving-calibrated mixed logits and folded logits active.
+  - Result: rejected/no-op. The corrected base was `87.7354%` exact (`95.0249%` digit, `84.6711%` upper, `72.9887%` lower, `97.9940%` case-or-visual), found `steps=[]`, and wrote no artifact.
+  - Takeaway: no safe one-off threshold gain was found. Further hybrid work should first build a reusable cached/vectorized calibrator that exactly reproduces `mixedcase_hybrid.json`; the temporary probe was slow and did not exactly match saved artifact metrics.
+
+- Rejected mixed-case greedy bias dry-runs:
+  - Command shape: ran `scripts/calibrate_mixedcase_logits.py --dry-run` twice with wide visual-twin candidate labels/deltas, once targeting `upper_test_accuracy` and once targeting `lower_test_accuracy`, while preserving overall, digit, case-or-visual, upper, and lower floors.
+  - Result: rejected/no-op. Both dry-runs reported raw calibration metrics around `87.4583%` exact (`94.9203%` digit, `84.0713%` upper, `72.6524%` lower, `97.7771%` case-or-visual), found `steps=[]`, and wrote no artifact.
+  - Takeaway: mixed-case bias-only search appears tapped out. The next progress likely needs real correction data, a proper hybrid calibrator, or a model/objective change such as separate visual-family and case heads.

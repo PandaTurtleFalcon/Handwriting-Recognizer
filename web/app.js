@@ -874,7 +874,10 @@ function renderResult(result) {
 
   const head = makeElement("div", "result-head");
   head.append(makeElement("div", "filename", result.filename));
-  head.append(makeElement("div", "sequence", result.sequence));
+  const answer = makeElement("div", "answer-summary");
+  answer.append(makeElement("span", "", "final answer"));
+  answer.append(makeElement("div", "sequence", result.sequence));
+  head.append(answer);
   panel.append(head);
 
   renderRows(result, panel);
