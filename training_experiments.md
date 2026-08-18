@@ -1291,3 +1291,9 @@ restored, so future improvement loops do not repeat known-bad blends.
   - Candidate hybrid result: candidate-specific hybrid threshold calibration wrote `tmp/candidates/mixedcase_head_balanced_cap250_lr1e5_hybrid.json` and raised that candidate from `81.4753%` to `81.6003%`, but the honest hybrid evaluator rejected it against the deployed hybrid baseline (`81.6003%` vs `87.7782%`, delta `-6.1778`).
   - Verification: calibration/evaluator unit tests passed, evaluator scripts compiled, and deployed benchmarks stayed unchanged. No model artifacts were promoted.
   - Takeaway: balanced head-only tuning is a modest raw improvement but cannot replace the deployed hybrid stack. Future attempts need a stronger base representation or candidate-specific calibration that also preserves the deployed stack's folded-identity gains.
+
+- App-level script spacing cleanup:
+  - Evidence: `scripts/evaluate_hardcases.py --all-fonts --script-cases --json` exposed four browser-facing misses out of `225` cases: `Xx -> X x`, `Kk -> K k`, `HELLO -> H9LL O`, and `hello -> HQ1 1O`. These were spacing/context artifacts, not new model weights.
+  - Code path: added a conservative `_clean_intraword_spaces()` pass in `context_rules.py` that removes spaces only when the compact row is already an allowlisted hardcase/common-word shape.
+  - Result: the stricter all-font plus script app sweep improved from `98.2222%` exact to `100.0%` exact/ambiguity-aware on `225` generated hardcases. Deployed model metrics are unchanged; this improves app-level recognition only.
+  - Verification: `test_context_rules.py test_evaluate_hardcases.py` passed (`55 passed`), `context_rules.py` and `scripts/evaluate_hardcases.py` compiled, `git diff --check` passed, and the explicit all-font/script evaluator reported zero failures.

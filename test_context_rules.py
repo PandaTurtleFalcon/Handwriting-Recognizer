@@ -307,6 +307,14 @@ class ContextRulesTests(unittest.TestCase):
         self.assertEqual(cleanup.display, "look behind\nyou")
         self.assertEqual(cleanup.rows, ["look behind", "you"])
 
+    def test_common_word_cleanup_handles_script_intraword_spacing(self) -> None:
+        """Script evaluator spacing artifacts should clean only for known shapes."""
+
+        self.assertEqual(cleanup_context("X x").display, "Xx")
+        self.assertEqual(cleanup_context("K k").display, "Kk")
+        self.assertEqual(cleanup_context("H9LL O").display, "HELLO")
+        self.assertEqual(cleanup_context("HQ1 1O").display, "hello")
+
     def test_common_word_cleanup_handles_fragmented_reported_look_behind_variant(self) -> None:
         """The reported phrase should clean even when segmentation splits a word."""
 

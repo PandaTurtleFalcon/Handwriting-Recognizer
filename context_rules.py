@@ -92,6 +92,8 @@ def _clean_one_row(text: str) -> tuple[str, list[str]]:
     notes.extend(common_word_notes)
     cleaned, token_notes = _clean_common_word_tokens(cleaned)
     notes.extend(token_notes)
+    cleaned, spacing_notes = _clean_intraword_spaces(cleaned)
+    notes.extend(spacing_notes)
     cleaned, test_notes = _clean_test_word(cleaned)
     notes.extend(test_notes)
     cleaned, numeric_notes = _clean_numeric_pair(cleaned)
@@ -233,6 +235,20 @@ def _clean_common_word_tokens(text: str) -> tuple[str, list[str]]:
     if cleaned_tokens == tokens:
         return text, []
     return " ".join(cleaned_tokens), ["Read spaced common-word tokens using known visual lookalikes."]
+
+
+def _clean_intraword_spaces(text: str) -> tuple[str, list[str]]:
+    """Drop accidental spaces only when the compact row is already allowlisted."""
+
+    if " " not in text:
+        return text, []
+    compact = text.replace(" ", "")
+    cleaned, notes = _clean_common_words(compact)
+    if cleaned != compact:
+        return cleaned, ["Removed accidental spaces inside a known visual-word shape.", *notes]
+    if compact in {"Xx", "Kk", "Cc", "Ff", "Mm", "Uu", "Vv", "Ww", "Yy", "Zz", "Pp"}:
+        return compact, ["Removed accidental spaces inside a known case-pair shape."]
+    return text, []
 
 
 def _clean_test_word(text: str) -> tuple[str, list[str]]:
