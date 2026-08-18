@@ -17,6 +17,7 @@ import json
 import shutil
 import subprocess
 import tempfile
+import threading
 from email import policy
 from email.parser import BytesParser
 from http import HTTPStatus
@@ -933,6 +934,8 @@ class MnistWebHandler(BaseHTTPRequestHandler):
     alnum_model = None
     alnum_labels = None
     recognizer_kind = "digits"
+    model_load_error = None
+    model_load_lock = threading.Lock()
 
     def log_message(self, format: str, *args: object) -> None:
         """Keep default server logging but route it through stdout."""
@@ -954,6 +957,8 @@ class MnistWebHandler(BaseHTTPRequestHandler):
                 {
                     "ok": True,
                     "model_loaded": self.model is not None,
+                    "model_loading": self.model_load_lock.locked(),
+                    "model_load_error": self.model_load_error,
                     "recognizer": self.recognizer_kind,
                     "revision": app_revision(),
                     "started_at": SERVER_STARTED_AT,
@@ -1001,6 +1006,7 @@ class MnistWebHandler(BaseHTTPRequestHandler):
         body = self.rfile.read(length)
         try:
             files = parse_multipart_files(content_type, body)
+            ensure_recognizer_loaded()
             results = classify_files(files, self.model, self.device)
             self._send_html(render_page(results=results))
         except ValueError as exc:
@@ -1027,6 +1033,7 @@ class MnistWebHandler(BaseHTTPRequestHandler):
         body = self.rfile.read(length)
         try:
             files = parse_multipart_files(content_type, body)
+            ensure_recognizer_loaded()
             results = classify_files(files, self.model, self.device)
         except ValueError as exc:
             self._send_json({"ok": False, "error": str(exc)}, HTTPStatus.BAD_REQUEST)
@@ -2651,46 +2658,69 @@ def load_character_recognizer_stack(
     return model, labels, letter_model, letter_labels, alnum_model, alnum_labels
 
 
+def prepare_recognizer_metadata() -> None:
+    """Select the best available recognizer without loading heavy weights."""
+
+    if CHARACTER_WEIGHTS_PATH.exists():
+        MnistWebHandler.recognizer_kind = "characters"
+        return
+    if WEIGHTS_PATH.exists():
+        MnistWebHandler.recognizer_kind = "digits"
+        return
+    raise SystemExit(f"Missing model weights. Train first with: python3 character_model.py or python3 mnist_model.py")
+
+
+def ensure_recognizer_loaded() -> None:
+    """Load recognizer weights once, on demand, when a prediction needs them."""
+
+    if MnistWebHandler.model is not None:
+        return
+    with MnistWebHandler.model_load_lock:
+        if MnistWebHandler.model is not None:
+            return
+        try:
+            MnistWebHandler.device = get_device()
+            if MnistWebHandler.recognizer_kind == "characters":
+                (
+                    MnistWebHandler.model,
+                    MnistWebHandler.labels,
+                    MnistWebHandler.letter_model,
+                    MnistWebHandler.letter_labels,
+                    MnistWebHandler.alnum_model,
+                    MnistWebHandler.alnum_labels,
+                ) = load_character_recognizer_stack(MnistWebHandler.device)
+            else:
+                MnistWebHandler.model = load_model(device=MnistWebHandler.device)
+                MnistWebHandler.labels = None
+                MnistWebHandler.letter_model = None
+                MnistWebHandler.letter_labels = None
+                MnistWebHandler.alnum_model = None
+                MnistWebHandler.alnum_labels = None
+            MnistWebHandler.model_load_error = None
+        except Exception as exc:
+            MnistWebHandler.model_load_error = repr(exc)
+            raise
+
+
 def run(host: str = HOST, port: int = PORT) -> None:
-    """Load the best available recognizer and start the local HTTP server.
+    """Start the local HTTP server and lazily load the best recognizer.
 
     Model selection prefers the expanded character recognizer (which itself
     layers letter/alnum models on top, see `character_model.predict_characters`)
     and only falls back to the plain digit-only CNN when the character
     weights were never trained. The exact-case 62-class alnum model is
     preferred when present so lowercase user corrections can survive serving.
+    Heavy weights are intentionally loaded on the first prediction instead
+    of before binding the socket, so the page and `/health` come up quickly.
     """
 
-    if CHARACTER_WEIGHTS_PATH.exists():
-        MnistWebHandler.device = get_device()
-        (
-            MnistWebHandler.model,
-            MnistWebHandler.labels,
-            MnistWebHandler.letter_model,
-            MnistWebHandler.letter_labels,
-            MnistWebHandler.alnum_model,
-            MnistWebHandler.alnum_labels,
-        ) = load_character_recognizer_stack(MnistWebHandler.device)
-        MnistWebHandler.recognizer_kind = "characters"
-    elif WEIGHTS_PATH.exists():
-        MnistWebHandler.device = get_device()
-        MnistWebHandler.model = load_model(device=MnistWebHandler.device)
-        MnistWebHandler.labels = None
-        MnistWebHandler.letter_model = None
-        MnistWebHandler.letter_labels = None
-        MnistWebHandler.alnum_model = None
-        MnistWebHandler.alnum_labels = None
-        MnistWebHandler.recognizer_kind = "digits"
-    else:
-        raise SystemExit(
-            f"Missing model weights. Train first with: python3 character_model.py or python3 mnist_model.py"
-        )
+    prepare_recognizer_metadata()
     # ThreadingHTTPServer handles each request on its own thread so a slow
     # image upload/prediction doesn't block other concurrent requests; this
     # is safe here because the loaded models are read-only at inference time
     # and PyTorch inference (under torch.no_grad()) doesn't mutate shared state.
     server = ThreadingHTTPServer((host, port), MnistWebHandler)
-    print(f"Handwriting Recognizer ({MnistWebHandler.recognizer_kind}) running at http://{host}:{port}")
+    print(f"Handwriting Recognizer ({MnistWebHandler.recognizer_kind}, lazy load) running at http://{host}:{port}")
     server.serve_forever()
 
 

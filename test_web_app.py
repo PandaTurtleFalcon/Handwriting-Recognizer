@@ -281,6 +281,76 @@ class WebAppRenderingTests(unittest.TestCase):
         self.assertNotIn("logit_bias_path", mixed_loader.call_args.kwargs)
         folded_loader.assert_not_called()
 
+    def test_prepare_recognizer_metadata_does_not_load_weights(self) -> None:
+        """Startup should select a recognizer without blocking on model loads."""
+
+        previous_kind = main.MnistWebHandler.recognizer_kind
+        class ExistingPath:
+            def exists(self) -> bool:
+                return True
+
+        try:
+            with patch.object(main, "CHARACTER_WEIGHTS_PATH", ExistingPath()):
+                with patch.object(main, "WEIGHTS_PATH", ExistingPath()):
+                    with patch.object(main, "load_character_recognizer_stack") as stack_loader:
+                        with patch.object(main, "load_model") as digit_loader:
+                            main.prepare_recognizer_metadata()
+                            selected_kind = main.MnistWebHandler.recognizer_kind
+        finally:
+            main.MnistWebHandler.recognizer_kind = previous_kind
+
+        self.assertEqual(selected_kind, "characters")
+        stack_loader.assert_not_called()
+        digit_loader.assert_not_called()
+
+    def test_ensure_recognizer_loaded_loads_character_stack_once(self) -> None:
+        """The first prediction should lazily load the selected character stack."""
+
+        previous_state = (
+            main.MnistWebHandler.model,
+            main.MnistWebHandler.device,
+            main.MnistWebHandler.labels,
+            main.MnistWebHandler.letter_model,
+            main.MnistWebHandler.letter_labels,
+            main.MnistWebHandler.alnum_model,
+            main.MnistWebHandler.alnum_labels,
+            main.MnistWebHandler.recognizer_kind,
+            main.MnistWebHandler.model_load_error,
+        )
+        main.MnistWebHandler.model = None
+        main.MnistWebHandler.device = None
+        main.MnistWebHandler.labels = None
+        main.MnistWebHandler.letter_model = None
+        main.MnistWebHandler.letter_labels = None
+        main.MnistWebHandler.alnum_model = None
+        main.MnistWebHandler.alnum_labels = None
+        main.MnistWebHandler.recognizer_kind = "characters"
+        main.MnistWebHandler.model_load_error = None
+        try:
+            with patch.object(main, "get_device", return_value=object()) as device_loader:
+                with patch.object(
+                    main,
+                    "load_character_recognizer_stack",
+                    return_value=(object(), ["H"], object(), ["H"], object(), ["H", "i"]),
+                ) as stack_loader:
+                    main.ensure_recognizer_loaded()
+                    main.ensure_recognizer_loaded()
+        finally:
+            (
+                main.MnistWebHandler.model,
+                main.MnistWebHandler.device,
+                main.MnistWebHandler.labels,
+                main.MnistWebHandler.letter_model,
+                main.MnistWebHandler.letter_labels,
+                main.MnistWebHandler.alnum_model,
+                main.MnistWebHandler.alnum_labels,
+                main.MnistWebHandler.recognizer_kind,
+                main.MnistWebHandler.model_load_error,
+            ) = previous_state
+
+        device_loader.assert_called_once()
+        stack_loader.assert_called_once()
+
     def test_classify_files_applies_context_cleanup_to_display(self) -> None:
         """Obvious context cleanup should affect display text, not predictions."""
 
