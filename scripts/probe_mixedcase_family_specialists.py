@@ -143,6 +143,24 @@ def capped_family_dataset(
     return TensorDataset(images[selected][order], local[order])
 
 
+def split_holdout(
+    images: torch.Tensor,
+    targets: torch.Tensor,
+    ratio: float,
+    seed: int,
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+    """Split train tensors into fit and validation slices."""
+
+    if ratio <= 0.0 or int(targets.numel()) < 2:
+        return images, targets, images[:0], targets[:0]
+    validation_count = max(1, int(round(int(targets.numel()) * min(ratio, 0.5))))
+    generator = torch.Generator().manual_seed(seed)
+    order = torch.randperm(int(targets.numel()), generator=generator)
+    validation = order[:validation_count]
+    fit = order[validation_count:]
+    return images[fit], targets[fit], images[validation], targets[validation]
+
+
 def train_specialist(
     family: str,
     indices: tuple[int, ...],
@@ -176,8 +194,12 @@ def train_specialist(
     return Specialist(family=family, indices=indices, model=model)
 
 
-def deployed_predictions(images: torch.Tensor, batch_size: int, device: torch.device) -> torch.Tensor:
-    """Return current deployed mixed-case predictions for images."""
+def deployed_predictions_and_labels(
+    images: torch.Tensor,
+    batch_size: int,
+    device: torch.device,
+) -> tuple[torch.Tensor, list[str]]:
+    """Return current deployed mixed-case predictions and labels for images."""
 
     model, labels = load_mixedcase_model(device=device)
     if model is None or list(labels or []) != list(MIXEDCASE_LABELS):
@@ -187,7 +209,14 @@ def deployed_predictions(images: torch.Tensor, batch_size: int, device: torch.de
     with torch.no_grad():
         for (batch_images,) in loader:
             predictions.append(model(batch_images.to(device)).argmax(dim=1).cpu())
-    return torch.cat(predictions)
+    return torch.cat(predictions), list(labels)
+
+
+def deployed_predictions(images: torch.Tensor, batch_size: int, device: torch.device) -> torch.Tensor:
+    """Return current deployed mixed-case predictions for images."""
+
+    predictions, _labels = deployed_predictions_and_labels(images, batch_size, device)
+    return predictions
 
 
 def apply_specialists(
@@ -234,6 +263,96 @@ def apply_specialists(
     return predictions, reports
 
 
+def threshold_report(
+    base_predictions: torch.Tensor,
+    candidate_predictions: torch.Tensor,
+    targets: torch.Tensor,
+) -> tuple[dict[str, float], dict[str, object]]:
+    """Return metrics and replacement counts for one threshold candidate."""
+
+    metrics = _metrics(candidate_predictions, targets, list(MIXEDCASE_LABELS))
+    changed_mask = candidate_predictions != base_predictions
+    fixed_mask = changed_mask & (candidate_predictions == targets) & (base_predictions != targets)
+    broken_mask = changed_mask & (candidate_predictions != targets) & (base_predictions == targets)
+    return metrics, {
+        "changed": int(changed_mask.sum().item()),
+        "fixed": int(fixed_mask.sum().item()),
+        "broken": int(broken_mask.sum().item()),
+    }
+
+
+def choose_thresholds(
+    validation_predictions: torch.Tensor,
+    validation_images: torch.Tensor,
+    validation_targets: torch.Tensor,
+    specialists: list[Specialist],
+    batch_size: int,
+    device: torch.device,
+    confidence_values: tuple[float, ...],
+    margin_values: tuple[float, ...],
+) -> dict[str, object]:
+    """Select confidence/margin gates on held-out train data."""
+
+    if not specialists or not int(validation_targets.numel()):
+        return {
+            "confidence": None,
+            "margin": None,
+            "base": _metrics(validation_predictions, validation_targets, list(MIXEDCASE_LABELS)),
+            "candidate": None,
+            "replacement_report": {"changed": 0, "fixed": 0, "broken": 0},
+        }
+    base_metrics = _metrics(validation_predictions, validation_targets, list(MIXEDCASE_LABELS))
+    best: dict[str, object] = {
+        "confidence": None,
+        "margin": None,
+        "base": base_metrics,
+        "candidate": base_metrics,
+        "replacement_report": {"changed": 0, "fixed": 0, "broken": 0},
+    }
+    best_score = 0.0
+    for confidence in confidence_values:
+        for margin in margin_values:
+            candidate_predictions, _family_reports = apply_specialists(
+                validation_predictions,
+                validation_images,
+                specialists,
+                batch_size,
+                device,
+                confidence_threshold=confidence,
+                margin_threshold=margin,
+            )
+            candidate_metrics, replacements = threshold_report(
+                validation_predictions,
+                candidate_predictions,
+                validation_targets,
+            )
+            if (
+                candidate_metrics["case_or_ambiguity_aware_test_accuracy"]
+                < base_metrics["case_or_ambiguity_aware_test_accuracy"]
+                or candidate_metrics["digit_test_accuracy"] < base_metrics["digit_test_accuracy"]
+                or candidate_metrics["upper_test_accuracy"] < base_metrics["upper_test_accuracy"]
+                or candidate_metrics["lower_test_accuracy"] < base_metrics["lower_test_accuracy"]
+            ):
+                continue
+            score = candidate_metrics["test_accuracy"] - base_metrics["test_accuracy"]
+            if score > best_score:
+                best_score = score
+                best = {
+                    "confidence": confidence,
+                    "margin": margin,
+                    "base": base_metrics,
+                    "candidate": candidate_metrics,
+                    "replacement_report": replacements,
+                }
+    return best
+
+
+def parse_float_grid(value: str) -> tuple[float, ...]:
+    """Parse a comma-separated threshold grid."""
+
+    return tuple(float(part.strip()) for part in value.split(",") if part.strip())
+
+
 def probe_family_specialists(
     families: tuple[str, ...],
     batch_size: int,
@@ -246,6 +365,10 @@ def probe_family_specialists(
     extra_samples_per_class: int | None,
     specialist_confidence: float,
     specialist_margin: float,
+    auto_threshold: bool,
+    validation_ratio: float,
+    confidence_grid: tuple[float, ...],
+    margin_grid: tuple[float, ...],
     seed: int,
 ) -> dict[str, object]:
     """Train and evaluate visual-family specialists without deploying them."""
@@ -262,6 +385,13 @@ def probe_family_specialists(
         generator = torch.Generator().manual_seed(seed + 2)
         selected = torch.randperm(int(test_targets.numel()), generator=generator)[:test_sample_limit]
         test_images, test_targets = test_images[selected], test_targets[selected]
+    fit_images, fit_targets, validation_images, validation_targets = split_holdout(
+        train_images,
+        train_targets,
+        validation_ratio if auto_threshold else 0.0,
+        seed + 3,
+    )
+    train_images, train_targets = fit_images, fit_targets
     train_images, train_targets = append_extra_tensors(
         train_images,
         train_targets,
@@ -293,6 +423,31 @@ def probe_family_specialists(
         else:
             trained.append(specialist)
     base_predictions = deployed_predictions(test_images, batch_size, device)
+    threshold_selection: dict[str, object] | None = None
+    reported_confidence: float | None = specialist_confidence
+    reported_margin: float | None = specialist_margin
+    if auto_threshold and int(validation_targets.numel()):
+        validation_predictions = deployed_predictions(validation_images, batch_size, device)
+        threshold_selection = choose_thresholds(
+            validation_predictions,
+            validation_images,
+            validation_targets,
+            trained,
+            batch_size,
+            device,
+            confidence_grid,
+            margin_grid,
+        )
+        if threshold_selection.get("confidence") is not None and threshold_selection.get("margin") is not None:
+            specialist_confidence = float(threshold_selection["confidence"])
+            specialist_margin = float(threshold_selection["margin"])
+            reported_confidence = specialist_confidence
+            reported_margin = specialist_margin
+        else:
+            specialist_confidence = float("inf")
+            specialist_margin = float("inf")
+            reported_confidence = None
+            reported_margin = None
     candidate_predictions, family_reports = apply_specialists(
         base_predictions,
         test_images,
@@ -307,6 +462,8 @@ def probe_family_specialists(
     return {
         "families": [specialist.family for specialist in trained],
         "skipped_families": skipped,
+        "thresholds": {"confidence": reported_confidence, "margin": reported_margin},
+        "threshold_selection": threshold_selection,
         "base": base_metrics,
         "candidate": candidate_metrics,
         "delta": {
@@ -340,6 +497,10 @@ def main() -> None:
     parser.add_argument("--extra-samples-per-class", type=int, default=None)
     parser.add_argument("--specialist-confidence", type=float, default=0.85)
     parser.add_argument("--specialist-margin", type=float, default=0.35)
+    parser.add_argument("--auto-threshold", action="store_true")
+    parser.add_argument("--validation-ratio", type=float, default=0.15)
+    parser.add_argument("--confidence-grid", default="0.5,0.6,0.7,0.8,0.85,0.9,0.95")
+    parser.add_argument("--margin-grid", default="0,0.1,0.2,0.35,0.5,0.7")
     parser.add_argument("--seed", type=int, default=5150)
     args = parser.parse_args()
     report = probe_family_specialists(
@@ -354,6 +515,10 @@ def main() -> None:
         extra_samples_per_class=args.extra_samples_per_class,
         specialist_confidence=args.specialist_confidence,
         specialist_margin=args.specialist_margin,
+        auto_threshold=args.auto_threshold,
+        validation_ratio=args.validation_ratio,
+        confidence_grid=parse_float_grid(args.confidence_grid),
+        margin_grid=parse_float_grid(args.margin_grid),
         seed=args.seed,
     )
     print(json.dumps(report, indent=2))
