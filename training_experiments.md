@@ -743,3 +743,9 @@ restored, so future improvement loops do not repeat known-bad blends.
   - Result: generated script app hardcases improved from `96.67% (87/90)` exact to `100.00% (90/90)` exact; ambiguity-aware stayed `100.00%`.
   - Verification: focused resolver tests passed (`5 passed`), `scripts/evaluate_hardcases.py --script-cases --json` passed all 90 cases, and `scripts/summarize_benchmarks.py` confirmed saved model metrics were unchanged.
   - Remaining blocker: this improves app-level recognition only. It does not change aggregate mixed-case or character-letter model metrics, which are still below 95%.
+
+- Character letter-focused stacked bias calibration:
+  - Command shape: backed up `character_logit_bias.pt`, then ran `scripts/calibrate_character_logits.py` with current pair rules included, objective `letter_validation_accuracy`, wide candidate labels/deltas, and floors for overall accuracy (`>=94.10%`), ambiguity (`>=99.09%`), digits (`>=95.20%`), letters (`>=93.43%`), punctuation (`>=96.30%`), plus app gates.
+  - Result: accepted two bias steps (`s -0.16`, `e -0.14`), improving saved character exact from `94.11%` to `94.13%` and letter exact from `93.43%` to `93.46%`. Ambiguity improved to `99.10%`; digit exact stayed `95.23%`; punctuation exact stayed `96.34%`.
+  - Verification: `scripts/analyze_character_confusions.py --top 10 --batch-size 4096` matched the overall ambiguity definition after the analyzer was changed to reuse the canonical `character_model.labels_match_with_ambiguity`; `test_character_confusion_analysis.py`, `test_calibrate_character_logits.py`, and `test_summarize_benchmarks.py` passed (`26 passed`).
+  - Remaining blocker: aggregate character exact and character-letter exact are still below 95%, and worst labels remain the visual/case twins `O`, `S`, `l`, `I`, `0`, `c`, `o`, `1`, and `i`.

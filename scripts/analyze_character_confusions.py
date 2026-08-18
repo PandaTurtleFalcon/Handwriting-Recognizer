@@ -13,43 +13,24 @@ if str(PROJECT_DIR) not in sys.path:
     sys.path.insert(0, str(PROJECT_DIR))
 
 METRICS_PATH = PROJECT_DIR / "character_training_metrics.json"
-AMBIGUITY_GROUPS = [
-    frozenset("0Oo"),
-    frozenset("1Ili|!/"),
-    frozenset("5Ss"),
-    frozenset("2Zz"),
-    frozenset("8B"),
-    frozenset("Cc"),
-    frozenset("Xx"),
-    frozenset("Vv"),
-    frozenset("Kk"),
-    frozenset("Pp"),
-    frozenset("Tt7"),
-    frozenset("-_"),
-    frozenset(".'`"),
-    frozenset(":;i!"),
-    frozenset("+t"),
-    frozenset("&def"),
-    frozenset("@e"),
-    frozenset("9qg"),
-    frozenset("Yy4"),
-    frozenset("Uuv"),
-    frozenset("NnMm"),
-    frozenset("Jj"),
-]
 DATASET_ROOT = None
 build_or_load_combined_cache = None
 get_device = None
 load_character_model = None
 train_test_split = None
+match_with_ambiguity = None
 
 
 def labels_match_with_ambiguity(expected: str, predicted: str) -> bool:
     """Return true when labels are exact or known visual twins."""
 
-    if expected == predicted:
-        return True
-    return any(expected in group and predicted in group for group in AMBIGUITY_GROUPS)
+    global match_with_ambiguity
+
+    if match_with_ambiguity is None:
+        from character_model import labels_match_with_ambiguity as character_labels_match_with_ambiguity
+
+        match_with_ambiguity = character_labels_match_with_ambiguity
+    return bool(match_with_ambiguity(expected, predicted))
 
 
 def _group(label: str) -> str:
