@@ -20,6 +20,7 @@ from character_model import (
     _punctuation_shape_label,
     _record_with_legacy_correction_boxes,
     _split_touching_character_regions,
+    attach_character_pair_rules,
     attach_character_logit_bias,
     build_or_load_combined_cache,
     character_loss_weights,
@@ -123,6 +124,39 @@ class CharacterPostprocessingTests(unittest.TestCase):
         self.assertFalse(attached)
         self.assertFalse(hasattr(model, "character_logit_bias"))
         self.assertTrue(torch.allclose(output, torch.zeros((1, 2))))
+
+    def test_character_pair_rules_flip_close_visual_twin(self) -> None:
+        """A matching pair-rule artifact should flip only close alternatives."""
+
+        class FixedLogitModel(torch.nn.Module):
+            def forward(self, images: torch.Tensor) -> torch.Tensor:
+                return torch.tensor(
+                    [
+                        [0.40, 0.30, 0.00],
+                        [0.40, 0.10, 0.00],
+                    ],
+                    dtype=torch.float32,
+                )
+
+        labels = ["0", "O", "A"]
+        with tempfile.TemporaryDirectory() as directory:
+            rules_path = Path(directory) / "rules.json"
+            rules_path.write_text(
+                json.dumps(
+                    {
+                        "labels": labels,
+                        "rules": [{"from": "0", "to": "O", "threshold": -0.15}],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            model = FixedLogitModel()
+
+            attached = attach_character_pair_rules(model, labels, torch.device("cpu"), rules_path)
+            predictions = model(torch.zeros((2, 1, 32, 32))).argmax(dim=1).tolist()
+
+        self.assertTrue(attached)
+        self.assertEqual(predictions, [1, 0])
         self.assertTrue(labels_match_with_ambiguity(";", "!"))
         self.assertTrue(labels_match_with_ambiguity("q", "9"))
         self.assertTrue(labels_match_with_ambiguity("T", "7"))

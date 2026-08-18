@@ -58,6 +58,7 @@ def summarize_saved_metrics(project_dir: Path = PROJECT_DIR, target: float = 95.
     mixed_calibration = _read_mixedcase_calibration(project_dir)
     mixed_pair_rules = _read_mixedcase_pair_rules(project_dir)
     character_calibration = _read_character_calibration(project_dir)
+    character_pair_rules = _read_character_pair_rules(project_dir)
 
     digit_best = _best_checkpoint(digit_metrics)
     folded_best = folded_metrics.get("best_checkpoint", {})
@@ -69,6 +70,8 @@ def summarize_saved_metrics(project_dir: Path = PROJECT_DIR, target: float = 95.
         mixed_best = mixed_pair_rules
     if character_calibration is not None:
         character_best = character_calibration
+    if character_pair_rules is not None:
+        character_best = character_pair_rules
 
     return [
         _gate("digit_specialist_exact", _float_or_none(digit_best.get("test_accuracy")), target),
@@ -150,6 +153,23 @@ def _read_character_calibration(project_dir: Path) -> dict[str, object] | None:
     if not isinstance(best, dict):
         return None
     return best
+
+
+def _read_character_pair_rules(project_dir: Path) -> dict[str, object] | None:
+    """Return character pair-rule metrics when the optional artifact matches."""
+
+    rules_path = project_dir / "character_pair_rules.json"
+    labels_path = project_dir / "character_labels.json"
+    if not rules_path.exists() or not labels_path.exists():
+        return None
+    labels = _read_json(labels_path)
+    if not isinstance(labels, list):
+        return None
+    artifact = _read_json(rules_path)
+    if not isinstance(artifact, dict) or list(artifact.get("labels", [])) != list(labels):
+        return None
+    best = artifact.get("best_checkpoint")
+    return best if isinstance(best, dict) else None
 
 
 def summarize_app_hardcases(

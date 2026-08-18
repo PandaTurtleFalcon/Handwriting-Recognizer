@@ -110,6 +110,49 @@ class BenchmarkSummaryTests(unittest.TestCase):
         self.assertEqual(by_name["character_letter_exact"]["value"], 92.5)
         self.assertEqual(by_name["punctuation_exact"]["value"], 96.0)
 
+    def test_summarizes_matching_character_pair_rule_metrics(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            (root / "training_metrics.json").write_text(json.dumps({"best_checkpoint": {"test_accuracy": 99.0}}))
+            (root / "alnum_training_metrics.json").write_text(json.dumps({"best_checkpoint": {"test_accuracy": 96.0}}))
+            (root / "mixedcase_training_metrics.json").write_text(
+                json.dumps({"best_checkpoint": {"test_accuracy": 80.0, "case_or_ambiguity_aware_test_accuracy": 97.0}})
+            )
+            (root / "character_labels.json").write_text(json.dumps(["A", "B"]))
+            (root / "character_training_metrics.json").write_text(
+                json.dumps(
+                    {
+                        "best_checkpoint": {
+                            "validation_accuracy": 91.0,
+                            "ambiguity_aware_validation_accuracy": 98.0,
+                            "punctuation_validation_accuracy": 95.0,
+                            "punctuation_ambiguity_aware_validation_accuracy": 99.0,
+                        }
+                    }
+                )
+            )
+            (root / "character_pair_rules.json").write_text(
+                json.dumps(
+                    {
+                        "labels": ["A", "B"],
+                        "best_checkpoint": {
+                            "validation_accuracy": 93.7,
+                            "ambiguity_aware_validation_accuracy": 99.0,
+                            "digit_validation_accuracy": 95.5,
+                            "letter_validation_accuracy": 92.9,
+                            "punctuation_validation_accuracy": 96.0,
+                            "punctuation_ambiguity_aware_validation_accuracy": 99.5,
+                        },
+                    }
+                )
+            )
+
+            report = summarize_saved_metrics(root, target=95.0)
+
+        by_name = {str(item["name"]): item for item in report}
+        self.assertEqual(by_name["character_exact"]["value"], 93.7)
+        self.assertEqual(by_name["character_letter_exact"]["value"], 92.9)
+
     def test_summarizes_matching_mixedcase_calibration_metrics(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)

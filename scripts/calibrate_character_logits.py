@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import itertools
 import json
 import shutil
 import sys
@@ -19,6 +20,7 @@ if str(PROJECT_DIR) not in sys.path:
 from character_model import (  # noqa: E402
     DATASET_ROOT,
     LOGIT_BIAS_PATH,
+    PAIR_RULES_PATH,
     build_or_load_combined_cache,
     labels_match_with_ambiguity,
     load_character_model,
@@ -32,7 +34,7 @@ def _validation_logits(batch_size: int) -> tuple[torch.Tensor, torch.Tensor, tor
     """Return logits, validation targets, training targets, and labels."""
 
     device = get_device()
-    model, labels = load_character_model(device=device, logit_bias_path=None)
+    model, labels = load_character_model(device=device, logit_bias_path=None, pair_rules_path=None)
     images, targets, cache_labels = build_or_load_combined_cache(DATASET_ROOT, _metric_extra_roots())
     if list(cache_labels) != list(labels):
         raise RuntimeError("Character cache labels do not match deployed checkpoint labels.")
@@ -94,6 +96,129 @@ def _breakdown(
         "punctuation_ambiguity_aware_validation_accuracy": 100.0
         * group_ambiguity["punctuation"]
         / max(group_total["punctuation"], 1),
+    }
+
+
+def calibrate_character_pair_rules(
+    output_path: Path = PAIR_RULES_PATH,
+    batch_size: int = 2048,
+    families: tuple[str, ...] = ("0Oo", "1Ili|!/", "5Ss", "2Zz", "9qg", "UuVv", "NnMm", "Cc", "Pp", "Ff"),
+    thresholds: tuple[float, ...] = (-2.5, -2.0, -1.75, -1.5, -1.25, -1.0, -0.85, -0.7, -0.5, -0.32, -0.18),
+    rounds: int = 10,
+    min_improvement: float = 0.01,
+    objective: str = "letter_validation_accuracy",
+    min_validation: float = 0.0,
+    min_ambiguity: float = 98.8,
+    min_digit: float = 0.0,
+    min_letter: float = 0.0,
+    min_punctuation: float = 95.0,
+    write: bool = True,
+) -> dict[str, object]:
+    """Greedily tune ordered pairwise visual-twin rules for character logits."""
+
+    logits, targets, _train_targets, labels = _validation_logits(batch_size)
+    starting_bias = _load_existing_bias(LOGIT_BIAS_PATH, labels)
+    scores = logits + starting_bias
+    starting_predictions = scores.argmax(dim=1)
+    base_breakdown = _breakdown(starting_predictions, targets, labels)
+    if objective not in base_breakdown:
+        raise ValueError(f"Unknown character calibration objective: {objective}")
+    best_predictions = starting_predictions.clone()
+    best_breakdown = base_breakdown
+    label_to_index = {label: index for index, label in enumerate(labels)}
+    candidate_pairs = [
+        (left, right)
+        for family in families
+        for left, right in itertools.permutations(dict.fromkeys(label for label in family if label in label_to_index), 2)
+    ]
+    steps: list[dict[str, object]] = []
+    for round_index in range(max(0, rounds)):
+        best_candidate: tuple[tuple[float, float], str, str, float, int, dict[str, float], torch.Tensor] | None = None
+        for from_label, to_label in candidate_pairs:
+            from_index = label_to_index[from_label]
+            to_index = label_to_index[to_label]
+            current_mask = best_predictions == from_index
+            if not bool(current_mask.any()):
+                continue
+            margin = scores[:, to_index] - scores[:, from_index]
+            for threshold in thresholds:
+                flip_mask = current_mask & (margin >= threshold)
+                if not bool(flip_mask.any()):
+                    continue
+                candidate_predictions = best_predictions.clone()
+                candidate_predictions[flip_mask] = to_index
+                candidate_breakdown = _breakdown(candidate_predictions, targets, labels)
+                if (
+                    candidate_breakdown["validation_accuracy"] < min_validation
+                    or candidate_breakdown["ambiguity_aware_validation_accuracy"] < min_ambiguity
+                    or candidate_breakdown["digit_validation_accuracy"] < min_digit
+                    or candidate_breakdown["letter_validation_accuracy"] < min_letter
+                    or candidate_breakdown["punctuation_validation_accuracy"] < min_punctuation
+                ):
+                    continue
+                objective_gain = candidate_breakdown[objective] - best_breakdown[objective]
+                validation_gain = candidate_breakdown["validation_accuracy"] - best_breakdown["validation_accuracy"]
+                if objective_gain <= 0 and validation_gain <= 0:
+                    continue
+                score = (objective_gain, validation_gain)
+                if best_candidate is None or score > best_candidate[0]:
+                    best_candidate = (
+                        score,
+                        from_label,
+                        to_label,
+                        float(threshold),
+                        int(flip_mask.sum().item()),
+                        candidate_breakdown,
+                        candidate_predictions,
+                    )
+        if best_candidate is None:
+            break
+        score, from_label, to_label, threshold, flips, best_breakdown, best_predictions = best_candidate
+        steps.append(
+            {
+                "round": round_index + 1,
+                "from": from_label,
+                "to": to_label,
+                "threshold": threshold,
+                "flips": flips,
+                "objective": objective,
+                "objective_gain": score[0],
+                "validation_accuracy": best_breakdown["validation_accuracy"],
+                "objective_value": best_breakdown[objective],
+            }
+        )
+    improvement = best_breakdown[objective] - base_breakdown[objective]
+    improved = improvement >= min_improvement
+    if write and improved:
+        output_path.write_text(
+            json.dumps(
+                {
+                    "labels": labels,
+                    "rules": steps,
+                    "base_accuracy": base_breakdown["validation_accuracy"],
+                    "calibrated_accuracy": best_breakdown["validation_accuracy"],
+                    "base_objective": base_breakdown[objective],
+                    "calibrated_objective": best_breakdown[objective],
+                    "objective": objective,
+                    "best_checkpoint": best_breakdown,
+                    "source": "greedy_pair_rule_validation_probe",
+                },
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+    return {
+        "base_accuracy": base_breakdown["validation_accuracy"],
+        "calibrated_accuracy": best_breakdown["validation_accuracy"],
+        "base_objective": base_breakdown[objective],
+        "calibrated_objective": best_breakdown[objective],
+        "objective": objective,
+        "best_scale": "greedy-pair-rules",
+        "improvement": improvement,
+        "best_checkpoint": best_breakdown,
+        "steps": steps,
+        "wrote": bool(write and improved),
+        "output_path": str(output_path),
     }
 
 
@@ -304,6 +429,16 @@ def main() -> None:
     parser.add_argument("--greedy-labels", default="", help="Greedily tune per-label bias for this label string.")
     parser.add_argument("--greedy-rounds", type=int, default=6)
     parser.add_argument("--greedy-deltas", default="-0.12,-0.08,-0.04,0.04,0.08,0.12")
+    parser.add_argument("--pair-rules", action="store_true", help="Tune ordered visual-twin pair rules instead of bias.")
+    parser.add_argument(
+        "--pair-families",
+        default="0Oo,1Ili|!/,5Ss,2Zz,9qg,UuVv,NnMm,Cc,Pp,Ff,Kk,Xx,Ww,Yy4,Tt7,Jj,8B,-_,.'`,:;i!,+t",
+        help="Comma-separated visual families considered by --pair-rules.",
+    )
+    parser.add_argument(
+        "--pair-thresholds",
+        default="-2.5,-2.0,-1.75,-1.5,-1.25,-1.0,-0.85,-0.7,-0.5,-0.32,-0.18",
+    )
     parser.add_argument(
         "--objective",
         default="validation_accuracy",
@@ -330,13 +465,33 @@ def main() -> None:
     )
     parser.add_argument("--app-gate-target", type=float, default=95.0)
     args = parser.parse_args()
+    if args.pair_rules and args.output_path == LOGIT_BIAS_PATH:
+        args.output_path = PAIR_RULES_PATH
     backup_path: Path | None = None
     if args.require_app_gates and not args.dry_run and args.output_path.exists():
         backup_file = tempfile.NamedTemporaryFile(prefix="character-logit-bias-", suffix=".pt", delete=False)
         backup_file.close()
         backup_path = Path(backup_file.name)
         shutil.copy2(args.output_path, backup_path)
-    if args.greedy_labels:
+    if args.pair_rules:
+        thresholds = tuple(float(part) for part in args.pair_thresholds.split(",") if part.strip())
+        families = tuple(part for part in args.pair_families.split(",") if part)
+        report = calibrate_character_pair_rules(
+            output_path=args.output_path,
+            batch_size=args.batch_size,
+            families=families,
+            thresholds=thresholds,
+            rounds=args.greedy_rounds,
+            min_improvement=args.min_improvement,
+            objective=args.objective,
+            min_validation=args.min_validation,
+            min_ambiguity=args.min_ambiguity,
+            min_digit=args.min_digit,
+            min_letter=args.min_letter,
+            min_punctuation=args.min_punctuation,
+            write=not args.dry_run,
+        )
+    elif args.greedy_labels:
         deltas = tuple(float(part) for part in args.greedy_deltas.split(",") if part.strip())
         report = calibrate_character_greedy_bias(
             output_path=args.output_path,

@@ -8,6 +8,7 @@ from unittest.mock import patch
 import torch
 
 from scripts.calibrate_character_logits import calibrate_character_greedy_bias
+from scripts.calibrate_character_logits import calibrate_character_pair_rules
 from scripts.calibrate_character_logits import main
 
 
@@ -199,6 +200,47 @@ class CharacterCalibrationCliTests(unittest.TestCase):
                         objective="not_a_metric",
                     )
             self.assertFalse(output_path.exists())
+
+    def test_pair_rules_write_letter_improving_visual_twin_flips(self) -> None:
+        """Pair-rule mode should save close-logit flips that improve letters."""
+
+        logits = torch.tensor(
+            [
+                [0.40, 0.30, 0.00],
+                [0.40, 0.10, 0.00],
+                [0.10, 0.50, 0.00],
+            ],
+            dtype=torch.float32,
+        )
+        targets = torch.tensor([1, 0, 1], dtype=torch.long)
+        train_targets = torch.tensor([0, 1, 2], dtype=torch.long)
+        labels = ["0", "O", "."]
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            output_path = Path(temp_dir) / "character_pair_rules.json"
+            with (
+                patch("scripts.calibrate_character_logits._validation_logits", return_value=(logits, targets, train_targets, labels)),
+                patch("scripts.calibrate_character_logits.LOGIT_BIAS_PATH", Path(temp_dir) / "missing.pt"),
+            ):
+                report = calibrate_character_pair_rules(
+                    output_path=output_path,
+                    batch_size=3,
+                    families=("0O",),
+                    thresholds=(-0.15,),
+                    rounds=2,
+                    min_improvement=0.01,
+                    min_ambiguity=0.0,
+                    min_digit=0.0,
+                    min_letter=0.0,
+                    min_punctuation=0.0,
+                    write=True,
+                )
+
+            self.assertTrue(report["wrote"])
+            self.assertGreater(report["calibrated_objective"], report["base_objective"])
+            artifact = json.loads(output_path.read_text(encoding="utf-8"))
+            self.assertEqual(artifact["rules"][0]["from"], "0")
+            self.assertEqual(artifact["rules"][0]["to"], "O")
 
 
 if __name__ == "__main__":

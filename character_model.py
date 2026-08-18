@@ -42,6 +42,7 @@ METRICS_PATH = PROJECT_DIR / "character_training_metrics.json"
 LABELS_PATH = PROJECT_DIR / "character_labels.json"
 EXEMPLARS_PATH = PROJECT_DIR / "character_exemplars.pt"
 LOGIT_BIAS_PATH = PROJECT_DIR / "character_logit_bias.pt"
+PAIR_RULES_PATH = PROJECT_DIR / "character_pair_rules.json"
 CORRECTIONS_PATH = PROJECT_DIR / "data" / "corrections" / "corrections.jsonl"
 CORRECTION_UPLOAD_DIR = PROJECT_DIR / "data" / "corrections" / "uploads"
 
@@ -990,6 +991,7 @@ def load_character_model(
     weights_path: Path = WEIGHTS_PATH,
     device: torch.device | None = None,
     logit_bias_path: Path | None = LOGIT_BIAS_PATH,
+    pair_rules_path: Path | None = PAIR_RULES_PATH,
 ) -> tuple[nn.Module, list[str]]:
     """Load the curated character classifier and optional exemplar bank."""
 
@@ -1002,6 +1004,8 @@ def load_character_model(
     model.load_state_dict(checkpoint["model_state_dict"])
     if logit_bias_path is not None:
         attach_character_logit_bias(model, labels, selected_device, logit_bias_path)
+    if pair_rules_path is not None:
+        attach_character_pair_rules(model, labels, selected_device, pair_rules_path)
     if EXEMPLARS_PATH.exists():
         exemplars = torch.load(EXEMPLARS_PATH, map_location="cpu", weights_only=True)
         if list(exemplars.get("labels", [])) == labels:
@@ -1046,6 +1050,55 @@ def attach_character_logit_bias(
 
     model.forward = biased_forward  # type: ignore[method-assign]
     model.character_logit_bias = bias.detach().cpu()
+    return True
+
+
+def attach_character_pair_rules(
+    model: nn.Module,
+    labels: list[str],
+    device: torch.device,
+    rules_path: Path = PAIR_RULES_PATH,
+) -> bool:
+    """Attach optional ordered pair rules for close visual-twin logits."""
+
+    if not rules_path.exists() or getattr(model, "character_pair_rules", None) is not None:
+        return False
+    try:
+        artifact = json.loads(rules_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return False
+    if list(artifact.get("labels", [])) != list(labels):
+        return False
+    label_to_index = {label: index for index, label in enumerate(labels)}
+    parsed_rules: list[tuple[int, int, float]] = []
+    for rule in artifact.get("rules", []):
+        if not isinstance(rule, dict):
+            continue
+        from_label = str(rule.get("from", ""))
+        to_label = str(rule.get("to", ""))
+        if from_label not in label_to_index or to_label not in label_to_index:
+            continue
+        try:
+            threshold = float(rule["threshold"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        parsed_rules.append((label_to_index[from_label], label_to_index[to_label], threshold))
+    if not parsed_rules:
+        return False
+    original_forward = model.forward
+
+    def forward_with_pair_rules(images: torch.Tensor) -> torch.Tensor:
+        outputs = original_forward(images).clone()
+        for from_index, to_index, threshold in parsed_rules:
+            current = outputs.argmax(dim=1)
+            margin = outputs[:, to_index] - outputs[:, from_index]
+            flip_mask = (current == from_index) & (margin >= threshold)
+            if bool(flip_mask.any()):
+                outputs[flip_mask, to_index] = outputs[flip_mask, from_index] + 1e-4
+        return outputs
+
+    model.forward = forward_with_pair_rules  # type: ignore[method-assign]
+    model.character_pair_rules = [(labels[left], labels[right], threshold) for left, right, threshold in parsed_rules]  # type: ignore[attr-defined]
     return True
 
 
