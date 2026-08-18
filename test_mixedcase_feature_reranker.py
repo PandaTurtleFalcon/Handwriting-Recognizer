@@ -9,12 +9,14 @@ from scripts.probe_mixedcase_feature_reranker import _final_gate_rejection
 from scripts.probe_mixedcase_feature_reranker import _fit_tensors
 from scripts.probe_mixedcase_feature_reranker import _is_promotable
 from scripts.probe_mixedcase_feature_reranker import geometry_features
+from scripts.probe_mixedcase_feature_reranker import family_features
 from scripts.probe_mixedcase_feature_reranker import parse_family_names
 from scripts.probe_mixedcase_feature_reranker import parse_source_groups
 from scripts.probe_mixedcase_feature_reranker import selected_families
 from scripts.probe_mixedcase_feature_reranker import source_group_mask
 from scripts.probe_mixedcase_feature_reranker import train_family_probe
 from scripts.probe_mixedcase_feature_reranker import run_probe
+from scripts.probe_mixedcase_feature_reranker import apply_family_probe
 
 
 class MixedcaseFeatureRerankerTests(unittest.TestCase):
@@ -64,6 +66,39 @@ class MixedcaseFeatureRerankerTests(unittest.TestCase):
         self.assertEqual(source_group_mask(predictions, ("digit", "lower")).tolist(), [True, False, False, True, True])
         with self.assertRaisesRegex(ValueError, "Unknown source group"):
             parse_source_groups("symbol")
+
+    def test_family_features_can_include_digit_specialist_outputs(self) -> None:
+        """Digit logits should be optional features for digit-sensitive families."""
+
+        images = torch.zeros((2, 1, 28, 28), dtype=torch.float32)
+        mixed = torch.zeros((2, 62), dtype=torch.float32)
+        folded = torch.zeros((2, 36), dtype=torch.float32)
+        digit = torch.zeros((2, 10), dtype=torch.float32)
+
+        base = family_features(images, mixed, folded, (1, 18, 47))
+        enriched = family_features(images, mixed, folded, (1, 18, 47), digit)
+
+        self.assertEqual(enriched.shape[0], base.shape[0])
+        self.assertEqual(enriched.shape[1], base.shape[1] + 22)
+
+    def test_apply_family_probe_respects_probe_confidence_gate(self) -> None:
+        """Low-confidence family probe predictions should abstain."""
+
+        model = torch.nn.Linear(28, 2)
+        with torch.no_grad():
+            model.weight.zero_()
+            model.bias[:] = torch.tensor([0.0, 0.1])
+        probe = FamilyProbe("AB", (10, 11), model)
+        predictions = torch.tensor([10], dtype=torch.long)
+        images = torch.zeros((1, 1, 28, 28), dtype=torch.float32)
+        mixed = torch.zeros((1, 62), dtype=torch.float32)
+        folded = torch.zeros((1, 36), dtype=torch.float32)
+
+        kept = apply_family_probe(predictions, images, mixed, folded, probe, probe_confidence=0.9)
+        changed = apply_family_probe(predictions, images, mixed, folded, probe, probe_confidence=0.0)
+
+        self.assertEqual(kept.tolist(), [10])
+        self.assertEqual(changed.tolist(), [11])
 
     def test_fit_tensors_appends_capped_extra_roots(self) -> None:
         """Optional adviser data should be capped before joining fit tensors."""
@@ -124,9 +159,11 @@ class MixedcaseFeatureRerankerTests(unittest.TestCase):
         }
         candidate = {**base, "test_accuracy": 90.1, "upper_test_accuracy": 87.9}
         safe_candidate = {**base, "test_accuracy": 90.1}
+        target_safe_candidate = {**base, "test_accuracy": 90.1, "digit_test_accuracy": 95.5}
 
         self.assertFalse(_is_promotable(base, candidate))
         self.assertTrue(_is_promotable(base, safe_candidate))
+        self.assertTrue(_is_promotable({**base, "digit_test_accuracy": 96.0}, target_safe_candidate, min_digit=95.0))
 
     def test_final_gate_rejects_protected_test_regression(self) -> None:
         """Family adapters should be rejected when final test split accuracy regresses."""
@@ -141,6 +178,7 @@ class MixedcaseFeatureRerankerTests(unittest.TestCase):
         upper_regression = {**base, "test_accuracy": 87.2, "upper_test_accuracy": 84.9}
         tiny_gain = {**base, "test_accuracy": 87.005}
         safe = {**base, "test_accuracy": 87.02}
+        above_target_digit = {**base, "test_accuracy": 87.02, "digit_test_accuracy": 95.5}
 
         self.assertEqual(
             _final_gate_rejection(base, upper_regression, min_delta=0.01),
@@ -148,6 +186,14 @@ class MixedcaseFeatureRerankerTests(unittest.TestCase):
         )
         self.assertEqual(_final_gate_rejection(base, tiny_gain, min_delta=0.01), "final_delta_below_floor")
         self.assertIsNone(_final_gate_rejection(base, safe, min_delta=0.01))
+        self.assertIsNone(
+            _final_gate_rejection(
+                {**base, "digit_test_accuracy": 96.0},
+                above_target_digit,
+                min_delta=0.01,
+                min_digit=95.0,
+            )
+        )
 
     def test_run_probe_reports_adapter_shape_and_promotion_state(self) -> None:
         """Probe JSON should expose enough fields for automation to reject regressions."""
@@ -188,6 +234,17 @@ class MixedcaseFeatureRerankerTests(unittest.TestCase):
         self.assertEqual(report["confirmation_ratio"], 0.5)
         self.assertEqual(report["family_names"], ["AB"])
         self.assertEqual(report["source_groups"], ["digit", "upper", "lower"])
+        self.assertFalse(report["include_digit_features"])
+        self.assertEqual(
+            report["minimum_gates"],
+            {
+                "case_or_ambiguity_aware_test_accuracy": None,
+                "digit_test_accuracy": None,
+                "upper_test_accuracy": None,
+                "lower_test_accuracy": None,
+            },
+        )
+        self.assertEqual(report["probe_thresholds"], {"confidence": 0.0, "margin": 0.0})
         self.assertEqual(report["selection_samples"], 1)
         self.assertEqual(report["confirmation_samples"], 2)
         self.assertEqual(report["test_delta"], 0.0)

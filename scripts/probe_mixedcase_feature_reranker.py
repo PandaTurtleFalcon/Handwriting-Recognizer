@@ -31,6 +31,7 @@ from alnum_model import (  # noqa: E402
     load_mixedcase_model,
     mixedcase_labels_match_with_ambiguity,
 )
+from mnist_model import MNIST_MEAN, MNIST_STD, load_model as load_digit_model  # noqa: E402
 from mnist_model import get_device  # noqa: E402
 from scripts.calibrate_mixedcase_hybrid import hybrid_predictions  # noqa: E402
 
@@ -172,6 +173,21 @@ def _model_outputs(images: torch.Tensor, batch_size: int) -> tuple[torch.Tensor,
     return torch.cat(mixed_outputs), torch.cat(folded_outputs)
 
 
+def _digit_outputs(images: torch.Tensor, batch_size: int) -> torch.Tensor:
+    """Return MNIST digit-specialist logits for EMNIST-normalized tensors."""
+
+    device = get_device()
+    digit_model = load_digit_model(device=device)
+    foreground = (images * EMNIST_STD + EMNIST_MEAN).clamp(0.0, 1.0)
+    digit_inputs = (foreground - MNIST_MEAN) / MNIST_STD
+    loader = DataLoader(TensorDataset(digit_inputs), batch_size=batch_size, shuffle=False)
+    outputs: list[torch.Tensor] = []
+    with torch.no_grad():
+        for (batch_images,) in loader:
+            outputs.append(digit_model(batch_images.to(device)).cpu())
+    return torch.cat(outputs)
+
+
 def geometry_features(images: torch.Tensor) -> torch.Tensor:
     """Extract simple shape features from normalized handwriting tensors."""
 
@@ -247,6 +263,7 @@ def family_features(
     mixed_outputs: torch.Tensor,
     folded_outputs: torch.Tensor,
     family_indices: tuple[int, ...],
+    digit_outputs: torch.Tensor | None = None,
 ) -> torch.Tensor:
     """Build reranker features for one visual family."""
 
@@ -262,7 +279,19 @@ def family_features(
         else:
             folded_parts.append(torch.zeros((folded_outputs.shape[0], 1), dtype=folded_outputs.dtype))
     folded_logits = torch.cat(folded_parts, dim=1)
-    return torch.cat((family_logits, family_probs, folded_logits, geometry_features(images)), dim=1).float()
+    parts = [family_logits, family_probs, folded_logits, geometry_features(images)]
+    if digit_outputs is not None:
+        digit_probs = digit_outputs.softmax(dim=1)
+        digit_top2 = digit_probs.topk(2, dim=1).values
+        parts.extend(
+            (
+                digit_outputs,
+                digit_probs,
+                digit_top2[:, :1],
+                (digit_top2[:, :1] - digit_top2[:, 1:2]),
+            )
+        )
+    return torch.cat(parts, dim=1).float()
 
 
 def train_family_probe(
@@ -308,6 +337,9 @@ def apply_family_probe(
     folded_outputs: torch.Tensor,
     probe: FamilyProbe,
     source_groups: tuple[str, ...] = ("digit", "upper", "lower"),
+    digit_outputs: torch.Tensor | None = None,
+    probe_confidence: float = 0.0,
+    probe_margin: float = 0.0,
 ) -> torch.Tensor:
     """Return predictions after one family probe replaces in-family guesses."""
 
@@ -317,15 +349,26 @@ def apply_family_probe(
     current_in_family &= source_group_mask(predictions, source_groups)
     if not bool(current_in_family.any()):
         return predictions
-    features = family_features(images, mixed_outputs, folded_outputs, probe.family_indices)
+    features = family_features(images, mixed_outputs, folded_outputs, probe.family_indices, digit_outputs)
     with torch.no_grad():
-        local_predictions = probe.model(features[current_in_family]).argmax(dim=1)
+        logits = probe.model(features[current_in_family])
+        probabilities = logits.softmax(dim=1)
+        top2 = probabilities.topk(min(2, probabilities.shape[1]), dim=1)
+        local_predictions = top2.indices[:, 0]
+        confidence = top2.values[:, 0]
+        margin = (
+            top2.values[:, 0] - top2.values[:, 1]
+            if top2.values.shape[1] > 1
+            else torch.ones_like(top2.values[:, 0])
+        )
+        replace_mask = (confidence >= probe_confidence) & (margin >= probe_margin)
     replacements = torch.tensor(
         [probe.family_indices[int(index)] for index in local_predictions.tolist()],
         dtype=torch.long,
     )
+    candidate_indices = torch.where(current_in_family)[0]
     next_predictions = predictions.clone()
-    next_predictions[current_in_family] = replacements
+    next_predictions[candidate_indices[replace_mask]] = replacements[replace_mask]
     return next_predictions
 
 
@@ -358,37 +401,54 @@ def _metrics(predictions: torch.Tensor, targets: torch.Tensor) -> dict[str, floa
     }
 
 
-def _is_promotable(base_metrics: dict[str, float], candidate_metrics: dict[str, float]) -> bool:
-    """Return whether a probe improved exact accuracy without split regressions."""
+def _is_promotable(
+    base_metrics: dict[str, float],
+    candidate_metrics: dict[str, float],
+    min_digit: float | None = None,
+    min_upper: float | None = None,
+    min_lower: float | None = None,
+    min_case_or_visual: float | None = None,
+) -> bool:
+    """Return whether a probe improved exact accuracy and preserved gates."""
 
-    protected_metrics = (
-        "case_or_ambiguity_aware_test_accuracy",
-        "digit_test_accuracy",
-        "upper_test_accuracy",
-        "lower_test_accuracy",
-    )
     if candidate_metrics["test_accuracy"] <= base_metrics["test_accuracy"]:
         return False
-    return all(candidate_metrics[name] >= base_metrics[name] for name in protected_metrics)
+    return (
+        _final_gate_rejection(
+            base_metrics,
+            candidate_metrics,
+            min_delta=0.0,
+            min_digit=min_digit,
+            min_upper=min_upper,
+            min_lower=min_lower,
+            min_case_or_visual=min_case_or_visual,
+        )
+        is None
+    )
 
 
 def _final_gate_rejection(
     base_metrics: dict[str, float],
     candidate_metrics: dict[str, float],
     min_delta: float,
+    min_digit: float | None = None,
+    min_upper: float | None = None,
+    min_lower: float | None = None,
+    min_case_or_visual: float | None = None,
 ) -> str | None:
     """Return why a final-test candidate must be rejected, or None if safe."""
 
     if candidate_metrics["test_accuracy"] - base_metrics["test_accuracy"] < min_delta:
         return "final_delta_below_floor"
-    protected_metrics = (
-        "case_or_ambiguity_aware_test_accuracy",
-        "digit_test_accuracy",
-        "upper_test_accuracy",
-        "lower_test_accuracy",
-    )
-    for name in protected_metrics:
-        if candidate_metrics[name] < base_metrics[name]:
+    floors = {
+        "case_or_ambiguity_aware_test_accuracy": min_case_or_visual,
+        "digit_test_accuracy": min_digit,
+        "upper_test_accuracy": min_upper,
+        "lower_test_accuracy": min_lower,
+    }
+    for name, requested_floor in floors.items():
+        floor = base_metrics[name] if requested_floor is None else requested_floor
+        if candidate_metrics[name] < floor:
             return f"final_{name}_regressed"
     return None
 
@@ -408,6 +468,13 @@ def run_probe(
     confirmation_ratio: float = 0.5,
     family_names: tuple[str, ...] | None = None,
     source_groups: tuple[str, ...] = ("digit", "upper", "lower"),
+    include_digit_features: bool = False,
+    min_digit: float | None = None,
+    min_upper: float | None = None,
+    min_lower: float | None = None,
+    min_case_or_visual: float | None = None,
+    probe_confidence: float = 0.0,
+    probe_margin: float = 0.0,
 ) -> dict[str, object]:
     """Train family probes on train split and evaluate on test split."""
 
@@ -445,6 +512,14 @@ def run_probe(
         else (torch.empty((0, len(MIXEDCASE_LABELS))), torch.empty((0, len(LABELS))))
     )
     test_mixed, test_folded = _model_outputs(test_images, batch_size)
+    fit_digit = _digit_outputs(fit_images, batch_size) if include_digit_features else None
+    selection_digit = _digit_outputs(selection_images, batch_size) if include_digit_features else None
+    confirmation_digit = (
+        _digit_outputs(confirmation_images, batch_size)
+        if include_digit_features and int(confirmation_targets.numel()) > 0
+        else None
+    )
+    test_digit = _digit_outputs(test_images, batch_size) if include_digit_features else None
     artifact = _load_hybrid_artifact()
     selection_predictions = hybrid_predictions(selection_mixed, selection_folded, artifact)
     confirmation_predictions = (
@@ -456,7 +531,7 @@ def run_probe(
     probe_predictions = base_predictions.clone()
     family_reports = []
     for family_indices in selected_families(family_limit, family_names):
-        train_features = family_features(fit_images, fit_mixed, fit_folded, family_indices)
+        train_features = family_features(fit_images, fit_mixed, fit_folded, family_indices, fit_digit)
         probe = train_family_probe(train_features, fit_targets, family_indices, epochs, learning_rate, hidden_units)
         if probe is None:
             continue
@@ -467,6 +542,9 @@ def run_probe(
             selection_folded,
             probe,
             source_groups,
+            selection_digit,
+            probe_confidence,
+            probe_margin,
         )
         selection_before = _metrics(selection_predictions, selection_targets)
         selection_after = _metrics(selection_candidate, selection_targets)
@@ -480,6 +558,9 @@ def run_probe(
                 confirmation_folded,
                 probe,
                 source_groups,
+                confirmation_digit,
+                probe_confidence,
+                probe_margin,
             )
             confirmation_before = _metrics(confirmation_predictions, confirmation_targets)
             confirmation_after = _metrics(confirmation_candidate, confirmation_targets)
@@ -514,9 +595,20 @@ def run_probe(
             test_folded,
             probe,
             source_groups,
+            test_digit,
+            probe_confidence,
+            probe_margin,
         )
         after = _metrics(candidate_predictions, test_targets)
-        final_rejection = _final_gate_rejection(before, after, min_family_delta)
+        final_rejection = _final_gate_rejection(
+            before,
+            after,
+            min_family_delta,
+            min_digit=min_digit,
+            min_upper=min_upper,
+            min_lower=min_lower,
+            min_case_or_visual=min_case_or_visual,
+        )
         if final_rejection is not None:
             family_reports.append(
                 {
@@ -552,7 +644,14 @@ def run_probe(
     return {
         "base": base_metrics,
         "reranked": reranked_metrics,
-        "promotable": _is_promotable(base_metrics, reranked_metrics),
+        "promotable": _is_promotable(
+            base_metrics,
+            reranked_metrics,
+            min_digit=min_digit,
+            min_upper=min_upper,
+            min_lower=min_lower,
+            min_case_or_visual=min_case_or_visual,
+        ),
         "test_delta": reranked_metrics["test_accuracy"] - base_metrics["test_accuracy"],
         "families": family_reports,
         "train_samples": int(train_targets.numel()),
@@ -567,6 +666,17 @@ def run_probe(
         "confirmation_ratio": confirmation_ratio,
         "family_names": list(family_names or []),
         "source_groups": list(source_groups),
+        "include_digit_features": include_digit_features,
+        "minimum_gates": {
+            "case_or_ambiguity_aware_test_accuracy": min_case_or_visual,
+            "digit_test_accuracy": min_digit,
+            "upper_test_accuracy": min_upper,
+            "lower_test_accuracy": min_lower,
+        },
+        "probe_thresholds": {
+            "confidence": probe_confidence,
+            "margin": probe_margin,
+        },
     }
 
 
@@ -597,6 +707,17 @@ def main() -> None:
         default="digit,upper,lower",
         help="Comma-separated current prediction groups eligible for reranking: digit, upper, lower.",
     )
+    parser.add_argument(
+        "--include-digit-features",
+        action="store_true",
+        help="Append MNIST digit-specialist logits/probabilities to reranker features.",
+    )
+    parser.add_argument("--min-digit", type=float, default=None)
+    parser.add_argument("--min-upper", type=float, default=None)
+    parser.add_argument("--min-lower", type=float, default=None)
+    parser.add_argument("--min-case-or-visual", type=float, default=None)
+    parser.add_argument("--probe-confidence", type=float, default=0.0)
+    parser.add_argument("--probe-margin", type=float, default=0.0)
     args = parser.parse_args()
     print(
         json.dumps(
@@ -615,6 +736,13 @@ def main() -> None:
                 confirmation_ratio=args.confirmation_ratio,
                 family_names=parse_family_names(args.families),
                 source_groups=parse_source_groups(args.source_groups),
+                include_digit_features=args.include_digit_features,
+                min_digit=args.min_digit,
+                min_upper=args.min_upper,
+                min_lower=args.min_lower,
+                min_case_or_visual=args.min_case_or_visual,
+                probe_confidence=args.probe_confidence,
+                probe_margin=args.probe_margin,
             ),
             indent=2,
         )
