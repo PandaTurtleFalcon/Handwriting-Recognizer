@@ -1089,3 +1089,15 @@ restored, so future improvement loops do not repeat known-bad blends.
   - Result: no deployment artifact changed. The bounded CVL/top-family MLP probe (`family_limit=6`, `train_sample_limit=30000`, `epochs=80`, `hidden_units=32`, `confirmation_ratio=0.5`, CVL extras capped at `80/class`) rejected every tested family and kept deployed metrics unchanged: mixed-case exact `87.7782%`, case-or-visual `98.0479%`, digit `95.0249%`, upper `84.7030%`, lower `73.1513%`.
   - Verification: `test_mixedcase_feature_reranker.py` passed (`8 passed`), the probe reported `promotable: false` with `test_delta: 0.0`, and the output was saved to `tmp/mixedcase_confirmed_reranker_probe.json`.
   - Takeaway: this closes the earlier validation-overfit hole where a family adapter could win one calibration split but regress on the real test set. The current feature-adapter family still has no safe deployable move.
+
+- Rejected targeted mixed-case post-hoc sweep:
+  - Code path: reran bounded dry-run sweeps over the highest-volume visual-twin labels (`O/I/L/S/C` and `0/O/o/1/I/l/i/5/S/s/C/c`) for the hybrid threshold artifact, mixed-case pair rules, and mixed-case greedy bias while preserving deployed floors.
+  - Result: no artifact changed. Hybrid exact stayed `87.7782%` with zero accepted steps; pair rules stayed at the calibrated pre-hybrid stack (`87.5320%`) with no new steps; greedy bias also stayed flat.
+  - Verification: dry-run outputs were saved under `tmp/mixed_hybrid_top5_narrow.json`, `tmp/mixed_pair_top4_narrow.json`, and `tmp/mixed_bias_top_narrow.json`.
+  - Takeaway: the obvious post-hoc threshold/bias space is exhausted for the main mixed-case gap. The next useful work needs a representation/training change or a stronger specialist, not more tiny calibration sweeps.
+
+- Rejected balanced mixed-case representation probe:
+  - Command shape: backed up mixed-case artifacts to `tmp/daily_training_backups/*-mixedcase-balanced-representation-probe`, then ran a one-epoch warm-start CNN with augmentation, NIST SD19 (`600/class`), correction data, CVL twin-family cache, T-H-E Version IV capped at `30/class`, weak visual-twin labels (`0Oo1Iil5SsCc`), folded/type auxiliary losses, focal loss, and strict deployed split floors.
+  - Result: rejected/restored. The probe repeated the known distribution tradeoff: lowercase rose to `86.75%`, but uppercase collapsed to `59.22%`, exact fell to `77.26%`, and the trainer raised because the best checkpoint remained below the deployed floor (`80.50%` raw warm-start vs required `87.78%`).
+  - Verification: restored `mixedcase_cnn.pt`, `mixedcase_training_metrics.json`, `mixedcase_logit_bias.pt`, `mixedcase_pair_rules.json`, and `mixedcase_hybrid.json` from backup; post-restore `scripts/summarize_benchmarks.py --include-uploaded-hardcases --json` returned the deployed baseline.
+  - Takeaway: even a carefully weighted single-epoch blend of CVL/T-H-E/NIST still cannot preserve uppercase. Future work should separate lowercase adaptation from uppercase preservation with an explicit domain/class gate, or train a two-head case resolver rather than updating the shared classifier directly.
