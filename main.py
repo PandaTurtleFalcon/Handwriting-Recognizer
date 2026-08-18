@@ -2421,8 +2421,8 @@ def render_raw_sequence_note(result: dict[str, object]) -> str:
         return ""
     return (
         '<div class="row-output raw-output">'
-        f"<code>model read: {html.escape(raw_display)}</code>"
-        f"<code>shown as: {html.escape(cleaned_display)}</code>"
+        f"<code>raw model read (diagnostic): {html.escape(raw_display)}</code>"
+        f'<code class="final-answer-chip">final answer: {html.escape(cleaned_display)}</code>'
         "</div>"
     )
 

@@ -570,6 +570,12 @@ h2 {
   background: #fbfdff;
 }
 
+.raw-output .final-answer-chip {
+  border-color: #bfdbfe;
+  color: #1d4ed8;
+  background: #eff6ff;
+}
+
 .full-correction {
   display: grid;
   grid-template-columns: minmax(180px, 1fr) auto;

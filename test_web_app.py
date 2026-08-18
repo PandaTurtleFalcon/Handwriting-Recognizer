@@ -666,8 +666,8 @@ class WebAppRenderingTests(unittest.TestCase):
             }
         )
 
-        self.assertIn("model read: xOOh:1i / 7o4", html)
-        self.assertIn("shown as: look behind / you", html)
+        self.assertIn("raw model read (diagnostic): xOOh:1i / 7o4", html)
+        self.assertIn("final answer: look behind / you", html)
 
     def test_result_cards_limit_top_guesses_to_three(self) -> None:
         """The result card should stay compact when many alternatives exist."""

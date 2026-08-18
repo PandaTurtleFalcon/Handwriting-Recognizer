@@ -718,8 +718,8 @@ function renderRows(result, panel) {
     const cleanedRows = rows.length > 0 ? rows.map((row) => text(row)).join(" / ") : displaySequence;
     if (rawRows !== cleanedRows) {
       const rawWrap = makeElement("div", "context-output raw-output");
-      rawWrap.append(makeElement("code", "row-chip", `model read: ${rawRows}`));
-      rawWrap.append(makeElement("code", "row-chip", `shown as: ${cleanedRows}`));
+      rawWrap.append(makeElement("code", "row-chip", `raw model read (diagnostic): ${rawRows}`));
+      rawWrap.append(makeElement("code", "row-chip final-answer-chip", `final answer: ${cleanedRows}`));
       panel.append(rawWrap);
     }
   }
