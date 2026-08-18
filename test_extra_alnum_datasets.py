@@ -23,6 +23,7 @@ from alnum_model import (
     freeze_feature_layers,
     initialize_mixedcase_from_folded_checkpoint,
     load_correction_cache,
+    load_mixedcase_extra_cache,
     mixedcase_auxiliary_loss,
     mixedcase_folded_logits,
     mixedcase_folded_targets,
@@ -127,6 +128,34 @@ class ExtraAlnumDatasetTests(unittest.TestCase):
 
         self.assertEqual(tuple(images.shape), (2, 1, 28, 28))
         self.assertEqual(targets.tolist(), [10, 36])
+
+    def test_load_mixedcase_extra_cache_accepts_tensor_cache(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            cache_path = Path(temp_dir) / "mixedcase_cache.pt"
+            images = torch.zeros((2, 1, 28, 28), dtype=torch.float64)
+            targets = torch.tensor([0, 61], dtype=torch.int32)
+            torch.save({"images": images, "targets": targets}, cache_path)
+
+            loaded_images, loaded_targets = load_mixedcase_extra_cache(cache_path)
+
+        self.assertEqual(tuple(loaded_images.shape), (2, 1, 28, 28))
+        self.assertEqual(loaded_images.dtype, torch.float32)
+        self.assertEqual(loaded_targets.tolist(), [0, 61])
+        self.assertEqual(loaded_targets.dtype, torch.long)
+
+    def test_load_mixedcase_extra_cache_rejects_invalid_tensor_cache(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            cache_path = Path(temp_dir) / "mixedcase_cache.pt"
+            torch.save(
+                {
+                    "images": torch.zeros((1, 1, 28, 27), dtype=torch.float32),
+                    "targets": torch.tensor([0], dtype=torch.long),
+                },
+                cache_path,
+            )
+
+            with self.assertRaises(RuntimeError):
+                load_mixedcase_extra_cache(cache_path)
 
     def test_freeze_feature_layers_keeps_only_final_classifier_trainable(self) -> None:
         model = MODEL_CLASSES["widecnn"](num_classes=len(MIXEDCASE_LABELS))

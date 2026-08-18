@@ -628,6 +628,25 @@ def build_or_load_mixedcase_ascii_folder_cache(root: Path) -> tuple[torch.Tensor
     return image_tensor, target_tensor
 
 
+def load_mixedcase_extra_cache(root: Path) -> tuple[torch.Tensor, torch.Tensor]:
+    """Load a mixed-case extra dataset from an ASCII folder or tensor cache."""
+
+    if root.is_file():
+        cache = torch.load(root, map_location="cpu", weights_only=True)
+        images = cache.get("images")
+        targets = cache.get("targets")
+        if not isinstance(images, torch.Tensor) or not isinstance(targets, torch.Tensor):
+            raise RuntimeError(f"Mixed-case cache is missing images/targets tensors: {root}")
+        valid_images = images.ndim == 4 and tuple(images.shape[1:]) == (1, 28, 28)
+        valid_targets = targets.ndim == 1 and images.shape[0] == targets.shape[0]
+        if not valid_images or not valid_targets:
+            raise RuntimeError(f"Mixed-case cache has invalid tensor shapes: {root}")
+        if targets.numel() and (int(targets.min().item()) < 0 or int(targets.max().item()) >= len(MIXEDCASE_LABELS)):
+            raise RuntimeError(f"Mixed-case cache contains labels outside 0-{len(MIXEDCASE_LABELS) - 1}: {root}")
+        return images.float(), targets.long()
+    return build_or_load_mixedcase_ascii_folder_cache(root)
+
+
 def build_or_load_emnist_byclass_folded_cache(train: bool) -> tuple[torch.Tensor, torch.Tensor]:
     """Load EMNIST ByClass, folding lowercase samples into uppercase labels.
 
@@ -1232,7 +1251,7 @@ def make_mixedcase_loaders(
             train_parts.append(_mixedcase_train_dataset(correction_images, correction_targets, augment))
             train_target_parts.append(correction_targets)
     for extra_root in mixedcase_extra_roots or []:
-        extra_images, extra_targets = build_or_load_mixedcase_ascii_folder_cache(extra_root)
+        extra_images, extra_targets = load_mixedcase_extra_cache(extra_root)
         train_parts.append(_mixedcase_train_dataset(extra_images, extra_targets, augment))
         train_target_parts.append(extra_targets)
 
