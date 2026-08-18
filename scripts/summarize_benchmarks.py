@@ -342,6 +342,30 @@ def summarize_app_hardcases(
     ]
 
 
+def summarize_uploaded_hardcases(target: float = 95.0) -> list[dict[str, object]]:
+    """Return app-level gates for saved real-upload fixtures."""
+
+    from scripts.evaluate_hardcases import evaluate_uploaded_fixtures
+
+    report = evaluate_uploaded_fixtures()
+    return [
+        _counted_gate(
+            "uploaded_hardcase_exact",
+            _float_or_none(report.get("exact_accuracy")),
+            target,
+            report.get("exact_correct", 0),
+            report.get("total", 0),
+        ),
+        _counted_gate(
+            "uploaded_hardcase_ambiguity",
+            _float_or_none(report.get("ambiguity_aware_accuracy")),
+            target,
+            report.get("ambiguity_aware_correct", 0),
+            report.get("total", 0),
+        ),
+    ]
+
+
 def summarize_correction_memory(target: float = 95.0, project_dir: Path = PROJECT_DIR) -> list[dict[str, object]]:
     """Return deployed character correction-memory coverage for priority labels."""
 
@@ -505,6 +529,11 @@ def main() -> None:
         help="Also run rough line-drawn hard cases through the live recognizer.",
     )
     parser.add_argument(
+        "--include-uploaded-hardcases",
+        action="store_true",
+        help="Also run saved real-upload fixture images through the live recognizer.",
+    )
+    parser.add_argument(
         "--include-correction-memory",
         action="store_true",
         help="Also report usable saved-correction memory coverage for priority labels.",
@@ -521,6 +550,8 @@ def main() -> None:
         report.extend(summarize_app_hardcases(target=args.target, all_fonts=not args.single_font_hardcases))
     if args.include_script_hardcases:
         report.extend(summarize_app_hardcases(target=args.target, all_fonts=False, script_cases=True))
+    if args.include_uploaded_hardcases:
+        report.extend(summarize_uploaded_hardcases(target=args.target))
     if args.include_correction_memory:
         report.extend(summarize_correction_memory(target=args.target))
     if args.include_correction_training:

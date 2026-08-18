@@ -4,7 +4,13 @@ from unittest.mock import patch
 
 from PIL import Image, ImageFont
 
-from scripts.evaluate_hardcases import display_matches, evaluate_cases, render_script_case, sequence_matches_with_ambiguity
+from scripts.evaluate_hardcases import (
+    display_matches,
+    evaluate_cases,
+    evaluate_uploaded_fixtures,
+    render_script_case,
+    sequence_matches_with_ambiguity,
+)
 
 
 class HardCaseEvaluationTests(unittest.TestCase):
@@ -49,6 +55,32 @@ class HardCaseEvaluationTests(unittest.TestCase):
         self.assertEqual(report["total"], 2)
         self.assertEqual(classifier.call_count, 2)
         self.assertEqual(report["results"][1]["font"], "script")
+
+    def test_evaluate_uploaded_fixtures_reports_real_upload_results(self) -> None:
+        """Saved upload fixtures should use the same classifier path as the site."""
+
+        with patch("scripts.evaluate_hardcases.load_web_models", return_value=(object(), object())):
+            with patch("scripts.evaluate_hardcases.main.classify_files") as classifier:
+                classifier.return_value = [{"sequence": "look behind\nyou"}]
+
+                report = evaluate_uploaded_fixtures(
+                    [{"path": __file__, "target": "look behind you"}]
+                )
+
+        self.assertEqual(report["total"], 1)
+        self.assertEqual(report["exact_accuracy"], 100.0)
+        self.assertEqual(report["results"][0]["font"], "uploaded")
+
+    def test_evaluate_uploaded_fixtures_skips_missing_files(self) -> None:
+        """Missing local fixture files should not crash the evaluator."""
+
+        with patch("scripts.evaluate_hardcases.load_web_models", return_value=(object(), object())):
+            report = evaluate_uploaded_fixtures(
+                [{"path": "/tmp/does-not-exist-handwriting-fixture.png", "target": "Hi"}]
+            )
+
+        self.assertEqual(report["total"], 0)
+        self.assertEqual(report["exact_accuracy"], 0.0)
 
     def test_script_case_renderer_is_deterministic_png(self) -> None:
         """Generated script hardcases should be stable for regression testing."""

@@ -12,6 +12,7 @@ from scripts.summarize_benchmarks import (
     summarize_correction_memory,
     summarize_correction_training,
     summarize_saved_metrics,
+    summarize_uploaded_hardcases,
 )
 
 
@@ -761,6 +762,26 @@ class BenchmarkSummaryTests(unittest.TestCase):
         self.assertFalse(by_name["app_script_hardcase_exact"]["passed"])
         self.assertTrue(by_name["app_script_hardcase_ambiguity"]["passed"])
         self.assertEqual(by_name["app_script_hardcase_exact"]["correct"], 1)
+
+    def test_summarizes_uploaded_hardcase_gates_on_demand(self) -> None:
+        with patch(
+            "scripts.evaluate_hardcases.evaluate_uploaded_fixtures",
+            return_value={
+                "exact_accuracy": 100.0,
+                "exact_correct": 1,
+                "ambiguity_aware_accuracy": 100.0,
+                "ambiguity_aware_correct": 1,
+                "total": 1,
+            },
+        ) as evaluate:
+            report = summarize_uploaded_hardcases(target=95.0)
+
+        evaluate.assert_called_once_with()
+        by_name = {str(item["name"]): item for item in report}
+        self.assertTrue(by_name["uploaded_hardcase_exact"]["passed"])
+        self.assertTrue(by_name["uploaded_hardcase_ambiguity"]["passed"])
+        self.assertEqual(by_name["uploaded_hardcase_exact"]["correct"], 1)
+        self.assertEqual(by_name["uploaded_hardcase_exact"]["total"], 1)
 
     def test_summarizes_correction_memory_priority_coverage(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

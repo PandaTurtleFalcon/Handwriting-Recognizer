@@ -69,6 +69,12 @@ DEFAULT_CASES = [
     "look behind you",
     "you",
 ]
+UPLOADED_FIXTURES = [
+    {
+        "path": PROJECT_DIR / "data" / "app_hardcase_fixtures" / "look_behind_you_reported.png",
+        "target": "look behind\nyou",
+    }
+]
 FONT_CANDIDATES = [
     "/System/Library/Fonts/Supplemental/Bradley Hand Bold.ttf",
     "/System/Library/Fonts/Supplemental/Comic Sans MS.ttf",
@@ -542,6 +548,40 @@ def evaluate_cases(cases: list[str] | None = None, all_fonts: bool = False, scri
     }
 
 
+def evaluate_uploaded_fixtures(fixtures: list[dict[str, object]] | None = None) -> dict[str, object]:
+    """Run saved real-upload fixtures through the app classifier."""
+
+    selected_fixtures = fixtures if fixtures is not None else UPLOADED_FIXTURES
+    model, device = load_web_models()
+    results: list[HardCaseResult] = []
+    for fixture in selected_fixtures:
+        path = Path(str(fixture.get("path", "")))
+        target = str(fixture.get("target", ""))
+        if not path.exists() or not target:
+            continue
+        classified = main.classify_files([(path.name, path.read_bytes())], model, device, save_sources=False)[0]
+        prediction = str(classified.get("sequence", ""))
+        results.append(
+            HardCaseResult(
+                target=target,
+                prediction=prediction,
+                exact=display_matches(target, prediction),
+                ambiguity_aware=sequence_matches_with_ambiguity(target, prediction),
+                font="uploaded",
+            )
+        )
+    exact = sum(result.exact for result in results)
+    ambiguity = sum(result.ambiguity_aware for result in results)
+    return {
+        "total": len(results),
+        "exact_correct": exact,
+        "exact_accuracy": 100.0 * exact / max(len(results), 1),
+        "ambiguity_aware_correct": ambiguity,
+        "ambiguity_aware_accuracy": 100.0 * ambiguity / max(len(results), 1),
+        "results": [result.__dict__ for result in results],
+    }
+
+
 def main_cli() -> None:
     """CLI entrypoint."""
 
@@ -549,9 +589,14 @@ def main_cli() -> None:
     parser.add_argument("--case", action="append", default=[], help="Specific case to evaluate; repeatable.")
     parser.add_argument("--all-fonts", action="store_true", help="Evaluate every available configured font.")
     parser.add_argument("--script-cases", action="store_true", help="Also evaluate rough line-drawn handwriting cases.")
+    parser.add_argument("--uploaded-fixtures", action="store_true", help="Evaluate saved real-upload fixture images.")
     parser.add_argument("--json", action="store_true", help="Print machine-readable JSON.")
     args = parser.parse_args()
-    report = evaluate_cases(args.case or None, all_fonts=args.all_fonts, script_cases=args.script_cases)
+    report = (
+        evaluate_uploaded_fixtures()
+        if args.uploaded_fixtures
+        else evaluate_cases(args.case or None, all_fonts=args.all_fonts, script_cases=args.script_cases)
+    )
     if args.json:
         print(json.dumps(report, indent=2))
         return
