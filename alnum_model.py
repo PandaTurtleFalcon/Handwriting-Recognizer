@@ -39,7 +39,7 @@ from emnist_experiment import (
     build_or_load_emnist_cache,
 )
 from extra_alnum_datasets import load_labeled_image_folder
-from mnist_model import get_device, segment_digit_regions
+from mnist_model import MNIST_MEAN, MNIST_STD, get_device, load_model as load_digit_model, segment_digit_regions
 
 
 PROJECT_DIR = Path(__file__).resolve().parent
@@ -63,12 +63,14 @@ MIXEDCASE_METRICS_PATH = PROJECT_DIR / "mixedcase_training_metrics.json"
 MIXEDCASE_LOGIT_BIAS_PATH = PROJECT_DIR / "mixedcase_logit_bias.pt"
 MIXEDCASE_PAIR_RULES_PATH = PROJECT_DIR / "mixedcase_pair_rules.json"
 MIXEDCASE_HYBRID_PATH = PROJECT_DIR / "mixedcase_hybrid.json"
+MIXEDCASE_FAMILY_RERANKER_PATH = PROJECT_DIR / "mixedcase_family_reranker.pt"
 MIXEDCASE_ARTIFACT_PATHS = (
     MIXEDCASE_WEIGHTS_PATH,
     MIXEDCASE_METRICS_PATH,
     MIXEDCASE_LOGIT_BIAS_PATH,
     MIXEDCASE_PAIR_RULES_PATH,
     MIXEDCASE_HYBRID_PATH,
+    MIXEDCASE_FAMILY_RERANKER_PATH,
 )
 DEFAULT_MIXEDCASE_BENCHMARK_GATES = (
     "mixedcase_exact",
@@ -1504,6 +1506,7 @@ def load_mixedcase_model(
     logit_bias_path: Path | None = MIXEDCASE_LOGIT_BIAS_PATH,
     pair_rules_path: Path | None = MIXEDCASE_PAIR_RULES_PATH,
     hybrid_path: Path | None = MIXEDCASE_HYBRID_PATH,
+    family_reranker_path: Path | None = MIXEDCASE_FAMILY_RERANKER_PATH,
 ) -> tuple[nn.Module, list[str]] | tuple[None, None]:
     """Load the trained mixed-case recognizer if its checkpoint exists."""
 
@@ -1529,6 +1532,18 @@ def load_mixedcase_model(
             hybrid_path,
             weights_path,
             WEIGHTS_PATH,
+        )
+    if family_reranker_path is not None:
+        model = attach_mixedcase_family_reranker(
+            model,
+            labels,
+            selected_device,
+            family_reranker_path,
+            weights_path,
+            WEIGHTS_PATH,
+            MIXEDCASE_LOGIT_BIAS_PATH,
+            MIXEDCASE_PAIR_RULES_PATH,
+            MIXEDCASE_HYBRID_PATH,
         )
     return model, labels
 
@@ -1607,6 +1622,265 @@ def _float_threshold_map(value: object) -> dict[str, float]:
         except (TypeError, ValueError):
             continue
     return thresholds
+
+
+def _mixedcase_source_group_mask(predictions: torch.Tensor, groups: tuple[str, ...]) -> torch.Tensor:
+    """Return a mask for predictions belonging to selected mixed-case groups."""
+
+    if set(groups) == {"digit", "upper", "lower"}:
+        return torch.ones_like(predictions, dtype=torch.bool)
+    mask = torch.zeros_like(predictions, dtype=torch.bool)
+    if "digit" in groups:
+        mask |= predictions < 10
+    if "upper" in groups:
+        mask |= (predictions >= 10) & (predictions < 36)
+    if "lower" in groups:
+        mask |= predictions >= 36
+    return mask
+
+
+def _mixedcase_geometry_features(inputs: torch.Tensor) -> torch.Tensor:
+    """Extract shape features from EMNIST-normalized mixed-case tensors."""
+
+    foreground = (inputs.squeeze(1) * EMNIST_STD + EMNIST_MEAN).clamp(0.0, 1.0)
+    mask = foreground > 0.18
+    rows = torch.linspace(0.0, 1.0, foreground.shape[1], dtype=foreground.dtype, device=foreground.device).view(1, -1, 1)
+    cols = torch.linspace(0.0, 1.0, foreground.shape[2], dtype=foreground.dtype, device=foreground.device).view(1, 1, -1)
+    mass = foreground.sum(dim=(1, 2)).clamp_min(1e-6)
+    binary_mass = mask.float().sum(dim=(1, 2)).clamp_min(1.0)
+    row_weight = (foreground * rows).sum(dim=(1, 2)) / mass
+    col_weight = (foreground * cols).sum(dim=(1, 2)) / mass
+    row_var = (foreground * (rows - row_weight.view(-1, 1, 1)).pow(2)).sum(dim=(1, 2)) / mass
+    col_var = (foreground * (cols - col_weight.view(-1, 1, 1)).pow(2)).sum(dim=(1, 2)) / mass
+    any_row = mask.any(dim=2)
+    any_col = mask.any(dim=1)
+    height = any_row.float().sum(dim=1) / foreground.shape[1]
+    width = any_col.float().sum(dim=1) / foreground.shape[2]
+    density = mass / binary_mass
+    aspect = width / height.clamp_min(1e-6)
+    top_mass = foreground[:, :14, :].sum(dim=(1, 2)) / mass
+    bottom_mass = foreground[:, 14:, :].sum(dim=(1, 2)) / mass
+    left_mass = foreground[:, :, :14].sum(dim=(1, 2)) / mass
+    right_mass = foreground[:, :, 14:].sum(dim=(1, 2)) / mass
+    quadrants = torch.stack(
+        (
+            foreground[:, :14, :14].sum(dim=(1, 2)) / mass,
+            foreground[:, :14, 14:].sum(dim=(1, 2)) / mass,
+            foreground[:, 14:, :14].sum(dim=(1, 2)) / mass,
+            foreground[:, 14:, 14:].sum(dim=(1, 2)) / mass,
+        ),
+        dim=1,
+    )
+    vertical_symmetry = (foreground - torch.flip(foreground, dims=(2,))).abs().mean(dim=(1, 2))
+    horizontal_symmetry = (foreground - torch.flip(foreground, dims=(1,))).abs().mean(dim=(1, 2))
+    center_row = mask[:, 14, :].float()
+    center_col = mask[:, :, 14].float()
+    row_transitions = (center_row[:, 1:] != center_row[:, :-1]).float().sum(dim=1) / foreground.shape[2]
+    col_transitions = (center_col[:, 1:] != center_col[:, :-1]).float().sum(dim=1) / foreground.shape[1]
+    inner_mass = foreground[:, 7:21, 7:21].sum(dim=(1, 2)) / mass
+    return torch.cat(
+        (
+            torch.stack(
+                (
+                    mass / foreground[0].numel(),
+                    density,
+                    row_weight,
+                    col_weight,
+                    row_var,
+                    col_var,
+                    height,
+                    width,
+                    aspect,
+                    top_mass,
+                    bottom_mass,
+                    left_mass,
+                    right_mass,
+                    vertical_symmetry,
+                    horizontal_symmetry,
+                    row_transitions,
+                    col_transitions,
+                    inner_mass,
+                ),
+                dim=1,
+            ),
+            quadrants,
+        ),
+        dim=1,
+    )
+
+
+def _mixedcase_family_features(
+    inputs: torch.Tensor,
+    mixed_outputs: torch.Tensor,
+    folded_outputs: torch.Tensor,
+    family_indices: tuple[int, ...],
+    digit_outputs: torch.Tensor | None = None,
+) -> torch.Tensor:
+    """Build feature-reranker inputs for one visual family."""
+
+    family_logits = mixed_outputs[:, list(family_indices)]
+    family_probs = family_logits.softmax(dim=1)
+    folded_parts = []
+    for index in family_indices:
+        label = MIXEDCASE_LABELS[index]
+        if label.isalpha():
+            folded_parts.append(folded_outputs[:, 10 + ord(label.upper()) - ord("A")].unsqueeze(1))
+        elif label.isdigit():
+            folded_parts.append(folded_outputs[:, int(label)].unsqueeze(1))
+        else:
+            folded_parts.append(torch.zeros((folded_outputs.shape[0], 1), dtype=folded_outputs.dtype, device=folded_outputs.device))
+    parts = [family_logits, family_probs, torch.cat(folded_parts, dim=1), _mixedcase_geometry_features(inputs)]
+    if digit_outputs is not None:
+        digit_probs = digit_outputs.softmax(dim=1)
+        digit_top2 = digit_probs.topk(2, dim=1).values
+        parts.extend((digit_outputs, digit_probs, digit_top2[:, :1], digit_top2[:, :1] - digit_top2[:, 1:2]))
+    return torch.cat(parts, dim=1).float()
+
+
+class FamilyRerankedMixedcaseModel(nn.Module):
+    """Apply accepted visual-family probes after mixed-case hybrid inference."""
+
+    def __init__(
+        self,
+        base_model: nn.Module,
+        folded_model: nn.Module,
+        probes: list[dict[str, object]],
+        digit_model: nn.Module | None = None,
+    ) -> None:
+        super().__init__()
+        self.base_model = base_model
+        self.folded_model = folded_model
+        self.digit_model = digit_model
+        self.probes = nn.ModuleList()
+        self.probe_configs: list[dict[str, object]] = []
+        for probe in probes:
+            indices = tuple(int(index) for index in probe.get("family_indices", []))
+            hidden_units = int(probe.get("hidden_units", 0))
+            input_dim = int(probe.get("input_dim", 0))
+            if len(indices) < 2 or input_dim <= 0:
+                continue
+            if hidden_units > 0:
+                module: nn.Module = nn.Sequential(
+                    nn.Linear(input_dim, hidden_units),
+                    nn.ReLU(),
+                    nn.Linear(hidden_units, len(indices)),
+                )
+            else:
+                module = nn.Linear(input_dim, len(indices))
+            state = probe.get("state_dict")
+            if not isinstance(state, dict):
+                continue
+            module.load_state_dict(state)
+            module.eval()
+            self.probes.append(module)
+            self.probe_configs.append(
+                {
+                    "family_indices": indices,
+                    "source_groups": tuple(str(group) for group in probe.get("source_groups", ("digit", "upper", "lower"))),
+                    "probe_confidence": float(probe.get("probe_confidence", 0.0)),
+                    "probe_margin": float(probe.get("probe_margin", 0.0)),
+                    "include_digit_features": bool(probe.get("include_digit_features", False)),
+                }
+            )
+
+    def forward(self, inputs: torch.Tensor) -> torch.Tensor:
+        mixed_outputs = self.base_model(inputs)
+        folded_outputs = self.folded_model(inputs)
+        digit_outputs = None
+        if self.digit_model is not None:
+            foreground = (inputs * EMNIST_STD + EMNIST_MEAN).clamp(0.0, 1.0)
+            digit_inputs = (foreground - MNIST_MEAN) / MNIST_STD
+            digit_outputs = self.digit_model(digit_inputs)
+        outputs = mixed_outputs.clone()
+        predictions = outputs.argmax(dim=1)
+        row_max = outputs.max(dim=1).values + 1e-4
+        for module, config in zip(self.probes, self.probe_configs):
+            family_indices = config["family_indices"]
+            current_in_family = torch.zeros_like(predictions, dtype=torch.bool)
+            for family_index in family_indices:
+                current_in_family |= predictions == family_index
+            current_in_family &= _mixedcase_source_group_mask(predictions, config["source_groups"])
+            if not bool(current_in_family.any()):
+                continue
+            features = _mixedcase_family_features(
+                inputs,
+                mixed_outputs,
+                folded_outputs,
+                family_indices,
+                digit_outputs if config["include_digit_features"] else None,
+            )
+            logits = module(features[current_in_family])
+            probabilities = logits.softmax(dim=1)
+            top2 = probabilities.topk(min(2, probabilities.shape[1]), dim=1)
+            confidence = top2.values[:, 0]
+            margin = top2.values[:, 0] - top2.values[:, 1] if top2.values.shape[1] > 1 else torch.ones_like(confidence)
+            replace_mask = (confidence >= config["probe_confidence"]) & (margin >= config["probe_margin"])
+            local_predictions = top2.indices[:, 0]
+            replacements = torch.tensor(
+                [family_indices[int(index)] for index in local_predictions.tolist()],
+                dtype=torch.long,
+                device=inputs.device,
+            )
+            candidate_indices = torch.where(current_in_family)[0]
+            selected_indices = candidate_indices[replace_mask]
+            selected_replacements = replacements[replace_mask]
+            if not int(selected_indices.numel()):
+                continue
+            outputs[selected_indices, selected_replacements] = row_max[selected_indices]
+            predictions[selected_indices] = selected_replacements
+        return outputs
+
+
+def attach_mixedcase_family_reranker(
+    model: nn.Module,
+    labels: list[str],
+    device: torch.device,
+    artifact_path: Path = MIXEDCASE_FAMILY_RERANKER_PATH,
+    mixedcase_weights_path: Path = MIXEDCASE_WEIGHTS_PATH,
+    folded_weights_path: Path = WEIGHTS_PATH,
+    logit_bias_path: Path = MIXEDCASE_LOGIT_BIAS_PATH,
+    pair_rules_path: Path = MIXEDCASE_PAIR_RULES_PATH,
+    hybrid_path: Path = MIXEDCASE_HYBRID_PATH,
+) -> nn.Module:
+    """Wrap a mixed-case model with accepted visual-family rerankers."""
+
+    if not artifact_path.exists():
+        return model
+    try:
+        artifact = torch.load(artifact_path, map_location=device, weights_only=True)
+    except (OSError, RuntimeError, ValueError, pickle.UnpicklingError):
+        return model
+    if not artifact.get("enabled", True) or list(labels) != list(MIXEDCASE_LABELS):
+        return model
+    if list(artifact.get("labels", [])) != list(MIXEDCASE_LABELS):
+        return model
+    if not _artifact_hash_matches(artifact, "mixedcase_checkpoint_sha256", mixedcase_weights_path):
+        return model
+    if not _artifact_hash_matches(artifact, "folded_checkpoint_sha256", folded_weights_path):
+        return model
+    if not _artifact_dependency_hash_matches(artifact, "mixedcase_logit_bias_sha256", logit_bias_path):
+        return model
+    if not _artifact_dependency_hash_matches(artifact, "mixedcase_pair_rules_sha256", pair_rules_path):
+        return model
+    if not _artifact_dependency_hash_matches(artifact, "mixedcase_hybrid_sha256", hybrid_path):
+        return model
+    probes = artifact.get("probes", [])
+    if not isinstance(probes, list) or not probes:
+        return model
+    folded_model, folded_labels = load_alnum_model(folded_weights_path, device=device)
+    if folded_model is None or list(folded_labels) != list(LABELS):
+        return model
+    digit_model = load_digit_model(device=device) if any(bool(probe.get("include_digit_features", False)) for probe in probes if isinstance(probe, dict)) else None
+    valid_probes = [probe for probe in probes if isinstance(probe, dict)]
+    if not valid_probes:
+        return model
+    wrapped = FamilyRerankedMixedcaseModel(model, folded_model, valid_probes, digit_model=digit_model)
+    if not wrapped.probes:
+        return model
+    wrapped.to(device)
+    wrapped.eval()
+    wrapped.mixedcase_family_reranker = artifact  # type: ignore[attr-defined]
+    return wrapped
 
 
 def attach_mixedcase_hybrid(

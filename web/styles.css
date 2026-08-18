@@ -589,6 +589,19 @@ h2 {
   background: #eff6ff;
 }
 
+.correction-memory-output {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin: 0 0 18px;
+}
+
+.correction-memory-output .row-chip {
+  border-color: #a7d8bd;
+  color: #146c43;
+  background: #f0fbf5;
+}
+
 .full-correction {
   display: grid;
   grid-template-columns: minmax(180px, 1fr) auto;

@@ -63,6 +63,7 @@ def summarize_saved_metrics(project_dir: Path = PROJECT_DIR, target: float = 95.
     mixed_calibration = _read_mixedcase_calibration(project_dir)
     mixed_pair_rules = _read_mixedcase_pair_rules(project_dir)
     mixed_hybrid = _read_mixedcase_hybrid(project_dir)
+    mixed_family_reranker = _read_mixedcase_family_reranker(project_dir)
     character_calibration = _read_character_calibration(project_dir)
     character_pair_rules = _read_character_pair_rules(project_dir)
 
@@ -78,6 +79,8 @@ def summarize_saved_metrics(project_dir: Path = PROJECT_DIR, target: float = 95.
         mixed_best = mixed_calibration
     if mixed_hybrid is not None:
         mixed_best = mixed_hybrid
+    if mixed_family_reranker is not None:
+        mixed_best = mixed_family_reranker
     if character_calibration is not None:
         character_best = character_calibration
     if character_pair_rules is not None:
@@ -180,6 +183,50 @@ def _read_mixedcase_hybrid(project_dir: Path) -> dict[str, object] | None:
         artifact,
         "mixedcase_pair_rules_sha256",
         project_dir / "mixedcase_pair_rules.json",
+    ):
+        return None
+    best = artifact.get("best_checkpoint")
+    return best if isinstance(best, dict) else None
+
+
+def _read_mixedcase_family_reranker(project_dir: Path) -> dict[str, object] | None:
+    """Return mixed-case family-reranker metrics when dependency hashes match."""
+
+    import torch
+
+    artifact_path = project_dir / "mixedcase_family_reranker.pt"
+    if not artifact_path.exists():
+        return None
+    try:
+        from alnum_model import MIXEDCASE_LABELS
+
+        artifact = torch.load(artifact_path, map_location="cpu", weights_only=True)
+    except (ImportError, OSError, RuntimeError, TypeError, ValueError, pickle.UnpicklingError):
+        return None
+    if not isinstance(artifact, dict) or not artifact.get("enabled", True):
+        return None
+    if list(artifact.get("labels", [])) != list(MIXEDCASE_LABELS):
+        return None
+    if not _artifact_hash_matches(artifact, "mixedcase_checkpoint_sha256", project_dir / "mixedcase_cnn.pt"):
+        return None
+    if not _artifact_hash_matches(artifact, "folded_checkpoint_sha256", project_dir / "alnum_cnn.pt"):
+        return None
+    if not _artifact_dependency_hash_matches(
+        artifact,
+        "mixedcase_logit_bias_sha256",
+        project_dir / "mixedcase_logit_bias.pt",
+    ):
+        return None
+    if not _artifact_dependency_hash_matches(
+        artifact,
+        "mixedcase_pair_rules_sha256",
+        project_dir / "mixedcase_pair_rules.json",
+    ):
+        return None
+    if not _artifact_dependency_hash_matches(
+        artifact,
+        "mixedcase_hybrid_sha256",
+        project_dir / "mixedcase_hybrid.json",
     ):
         return None
     best = artifact.get("best_checkpoint")

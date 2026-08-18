@@ -59,6 +59,53 @@ class BenchmarkSummaryTests(unittest.TestCase):
         self.assertEqual(by_name["mixedcase_exact"]["value"], 91.25)
         self.assertEqual(by_name["mixedcase_case_or_visual"]["value"], 98.25)
 
+    def test_summarizes_matching_mixedcase_family_reranker_metrics(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            mixed_weights = root / "mixedcase_cnn.pt"
+            folded_weights = root / "alnum_cnn.pt"
+            bias_path = root / "mixedcase_logit_bias.pt"
+            pair_rules_path = root / "mixedcase_pair_rules.json"
+            hybrid_path = root / "mixedcase_hybrid.json"
+            mixed_weights.write_bytes(b"mixed checkpoint")
+            folded_weights.write_bytes(b"folded checkpoint")
+            bias_path.write_bytes(b"current bias")
+            pair_rules_path.write_bytes(b"current pair rules")
+            hybrid_path.write_bytes(b"current hybrid")
+            (root / "training_metrics.json").write_text(json.dumps({"best_checkpoint": {"test_accuracy": 99.0}}))
+            (root / "alnum_training_metrics.json").write_text(json.dumps({"best_checkpoint": {"test_accuracy": 96.0}}))
+            (root / "mixedcase_training_metrics.json").write_text(
+                json.dumps({"best_checkpoint": {"test_accuracy": 80.0, "case_or_ambiguity_aware_test_accuracy": 97.0}})
+            )
+            (root / "character_training_metrics.json").write_text(json.dumps({"best_checkpoint": {"validation_accuracy": 90.0}}))
+            torch.save(
+                {
+                    "enabled": True,
+                    "labels": [str(index) for index in range(10)]
+                    + [chr(ord("A") + index) for index in range(26)]
+                    + [chr(ord("a") + index) for index in range(26)],
+                    "mixedcase_checkpoint_sha256": hashlib.sha256(b"mixed checkpoint").hexdigest(),
+                    "folded_checkpoint_sha256": hashlib.sha256(b"folded checkpoint").hexdigest(),
+                    "mixedcase_logit_bias_sha256": hashlib.sha256(b"current bias").hexdigest(),
+                    "mixedcase_pair_rules_sha256": hashlib.sha256(b"current pair rules").hexdigest(),
+                    "mixedcase_hybrid_sha256": hashlib.sha256(b"current hybrid").hexdigest(),
+                    "best_checkpoint": {
+                        "test_accuracy": 91.5,
+                        "case_or_ambiguity_aware_test_accuracy": 98.3,
+                        "digit_test_accuracy": 95.1,
+                        "upper_test_accuracy": 92.2,
+                        "lower_test_accuracy": 80.2,
+                    },
+                },
+                root / "mixedcase_family_reranker.pt",
+            )
+
+            report = summarize_saved_metrics(root, target=95.0)
+
+        by_name = {str(item["name"]): item for item in report}
+        self.assertEqual(by_name["mixedcase_exact"]["value"], 91.5)
+        self.assertEqual(by_name["mixedcase_lower_exact"]["value"], 80.2)
+
     def test_summarizes_stale_mixedcase_hybrid_as_base_metrics(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)

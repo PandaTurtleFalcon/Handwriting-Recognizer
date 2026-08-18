@@ -425,6 +425,38 @@ class WebAppRenderingTests(unittest.TestCase):
         self.assertEqual(results[0]["raw_sequence"], "xOOh:1i7o4")
         self.assertEqual(results[0]["row_sequences"], ["look behind", "you"])
         self.assertEqual(results[0]["raw_row_sequences"], ["xOOh:1i", "7o4"])
+        self.assertFalse(results[0]["used_sequence_correction"])
+
+    def test_classify_files_marks_exact_sequence_correction_replay(self) -> None:
+        """Repeat uploads should say when saved user labels supplied the answer."""
+
+        fake_predictions = [
+            {"label": "7", "confidence": 0.4, "x": 1, "y": 1, "width": 10, "height": 20, "row": 1},
+            {"label": "O", "confidence": 0.4, "x": 20, "y": 1, "width": 10, "height": 20, "row": 1},
+        ]
+        previous_kind = main.MnistWebHandler.recognizer_kind
+        previous_labels = main.MnistWebHandler.labels
+        main.MnistWebHandler.recognizer_kind = "characters"
+        main.MnistWebHandler.labels = ["l", "o"]
+        try:
+            with patch.object(main, "predict_characters", return_value=fake_predictions):
+                with patch.object(main, "load_model", return_value=object()):
+                    with patch.object(main, "predict_digits", return_value=[]):
+                        with patch.object(
+                            main,
+                            "relabel_predictions_from_exact_sequence_correction",
+                            return_value=[
+                                {**fake_predictions[0], "label": "l", "confidence": 0.99, "user_corrected": True},
+                                {**fake_predictions[1], "label": "o", "confidence": 0.99, "user_corrected": True},
+                            ],
+                        ):
+                            results = main.classify_files([("repeat.png", png_bytes())], model=object(), device=object())
+        finally:
+            main.MnistWebHandler.recognizer_kind = previous_kind
+            main.MnistWebHandler.labels = previous_labels
+
+        self.assertEqual(results[0]["sequence"], "lo")
+        self.assertTrue(results[0]["used_sequence_correction"])
 
     def test_classify_files_keeps_visible_boxes_for_dropped_context_rows(self) -> None:
         """Dropped display rows should not make sequence corrections untrainable."""
@@ -784,6 +816,7 @@ class WebAppRenderingTests(unittest.TestCase):
                 "row_sequences": ["look behind", "you"],
                 "raw_row_sequences": ["xOOh:1i", "7o4"],
                 "context_notes": ["Read a whole-row common word using known visual lookalikes."],
+                "used_sequence_correction": True,
                 "preview": "data:image/png;base64,",
                 "image_width": 100,
                 "image_height": 100,
@@ -796,6 +829,7 @@ class WebAppRenderingTests(unittest.TestCase):
         self.assertIn("<summary>Diagnostics: raw read, not final</summary>", html)
         self.assertIn("raw read only: xOOh:1i / 7o4", html)
         self.assertIn("displayed final answer: look behind / you", html)
+        self.assertIn("used saved correction for this exact upload", html)
         self.assertIn("final answer", html)
 
     def test_result_cards_limit_top_guesses_to_three(self) -> None:

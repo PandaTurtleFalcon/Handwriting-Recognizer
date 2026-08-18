@@ -733,6 +733,11 @@ function renderRows(result, panel) {
       panel.append(rawWrap);
     }
   }
+  if (result.used_sequence_correction) {
+    const correctionWrap = makeElement("div", "correction-memory-output");
+    correctionWrap.append(makeElement("code", "row-chip", "used saved correction for this exact upload"));
+    panel.append(correctionWrap);
+  }
 }
 
 function renderFullCorrection(result, panel) {

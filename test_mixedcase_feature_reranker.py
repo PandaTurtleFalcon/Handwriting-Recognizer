@@ -1,3 +1,4 @@
+import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -408,6 +409,87 @@ class MixedcaseFeatureRerankerTests(unittest.TestCase):
         self.assertEqual(report["families"][0]["rejection_reason"], "final_upper_test_accuracy_regressed")
         self.assertEqual(report["families"][0]["before_metrics"]["upper_test_accuracy"], 88.0)
         self.assertEqual(report["families"][0]["after_metrics"]["upper_test_accuracy"], 87.9)
+
+    def test_run_probe_writes_promotable_family_reranker_artifact(self) -> None:
+        """Promotable probes should be saveable as hash-checked artifacts."""
+
+        train_images = torch.zeros((8, 1, 28, 28), dtype=torch.float32)
+        train_targets = torch.tensor([10, 11, 10, 11, 10, 11, 10, 11], dtype=torch.long)
+        test_images = torch.zeros((4, 1, 28, 28), dtype=torch.float32)
+        test_targets = torch.tensor([10, 11, 10, 11], dtype=torch.long)
+        probe_model = torch.nn.Linear(1, 2)
+        protected_base = {
+            "test_accuracy": 80.0,
+            "case_or_ambiguity_aware_test_accuracy": 98.0,
+            "digit_test_accuracy": 95.0,
+            "upper_test_accuracy": 88.0,
+            "lower_test_accuracy": 75.0,
+        }
+        improved = {**protected_base, "test_accuracy": 80.2}
+
+        with tempfile.TemporaryDirectory() as directory:
+            output_path = Path(directory) / "mixedcase_family_reranker.pt"
+            with (
+                patch(
+                    "scripts.probe_mixedcase_feature_reranker._split_tensors",
+                    side_effect=[(train_images, train_targets), (test_images, test_targets)],
+                ),
+                patch(
+                    "scripts.probe_mixedcase_feature_reranker._model_outputs",
+                    side_effect=lambda images, _batch_size: (
+                        torch.zeros((images.shape[0], 62), dtype=torch.float32),
+                        torch.zeros((images.shape[0], 36), dtype=torch.float32),
+                    ),
+                ),
+                patch("scripts.probe_mixedcase_feature_reranker._load_hybrid_artifact", return_value={"enabled": False}),
+                patch(
+                    "scripts.probe_mixedcase_feature_reranker.hybrid_predictions",
+                    side_effect=lambda mixed, _folded, _artifact: torch.full((mixed.shape[0],), 10, dtype=torch.long),
+                ),
+                patch("scripts.probe_mixedcase_feature_reranker.selected_families", return_value=[(10, 11)]),
+                patch("scripts.probe_mixedcase_feature_reranker.family_features", return_value=torch.zeros((6, 1))),
+                patch(
+                    "scripts.probe_mixedcase_feature_reranker.train_family_probe",
+                    return_value=FamilyProbe("AB", (10, 11), probe_model),
+                ),
+                patch(
+                    "scripts.probe_mixedcase_feature_reranker.apply_family_probe",
+                    side_effect=lambda predictions, *_args, **_kwargs: predictions,
+                ),
+                patch(
+                    "scripts.probe_mixedcase_feature_reranker._metrics",
+                    side_effect=[
+                        {"test_accuracy": 50.0},
+                        {"test_accuracy": 60.0},
+                        {"test_accuracy": 50.0},
+                        {"test_accuracy": 60.0},
+                        protected_base,
+                        improved,
+                        protected_base,
+                        improved,
+                    ],
+                ),
+                patch("scripts.probe_mixedcase_feature_reranker._file_sha256", return_value="hash"),
+            ):
+                report = run_probe(
+                    batch_size=8,
+                    epochs=1,
+                    learning_rate=0.01,
+                    train_sample_limit=None,
+                    family_limit=None,
+                    calibration_ratio=0.5,
+                    min_family_delta=0.01,
+                    seed=3,
+                    confirmation_ratio=0.5,
+                    output_path=output_path,
+                    write=True,
+                )
+
+            artifact = torch.load(output_path, map_location="cpu", weights_only=True)
+
+        self.assertTrue(report["wrote"])
+        self.assertEqual(artifact["probes"][0]["family"], "AB")
+        self.assertEqual(artifact["best_checkpoint"]["test_accuracy"], 80.2)
 
 
 if __name__ == "__main__":

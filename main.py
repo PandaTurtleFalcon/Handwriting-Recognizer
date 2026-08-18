@@ -582,6 +582,11 @@ input[type="text"]:focus-visible {
   background: #eef2ff;
   color: #3730a3;
 }
+.correction-memory-output code {
+  border-color: var(--ok-line);
+  background: var(--ok-bg);
+  color: var(--ok);
+}
 .digits {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
@@ -1386,6 +1391,10 @@ def classify_files(
         else:
             predictions = predict_digits(model, image, device)
         predictions = relabel_predictions_from_exact_sequence_correction(image_id, predictions)
+        used_sequence_correction = any(
+            isinstance(prediction, dict) and bool(prediction.get("user_corrected"))
+            for prediction in predictions
+        )
         if not predictions:
             results.append(
                 {
@@ -1417,6 +1426,7 @@ def classify_files(
                 "row_sequences": context.rows,
                 "raw_row_sequences": raw_row_sequences,
                 "context_notes": context.notes,
+                "used_sequence_correction": used_sequence_correction,
                 "predictions": predictions,
                 "correction_predictions": correction_predictions,
                 "preview": image_to_data_url(image),
@@ -2433,6 +2443,7 @@ def render_result(result: dict[str, object]) -> str:
   </div>
   {row_html}
   {context_html}
+  {render_correction_memory_note(result)}
   {render_raw_sequence_note(result)}
   {full_correction_html}
   {overlay_html}
@@ -2558,6 +2569,18 @@ def render_context_notes(notes: object) -> str:
         return ""
     items = "".join(f"<code>{html.escape(str(note))}</code>" for note in notes)
     return f'<div class="row-output">{items}</div>'
+
+
+def render_correction_memory_note(result: dict[str, object]) -> str:
+    """Show when the answer came from a saved exact user correction."""
+
+    if not result.get("used_sequence_correction"):
+        return ""
+    return (
+        '<div class="row-output correction-memory-output">'
+        "<code>used saved correction for this exact upload</code>"
+        "</div>"
+    )
 
 
 def render_raw_sequence_note(result: dict[str, object]) -> str:

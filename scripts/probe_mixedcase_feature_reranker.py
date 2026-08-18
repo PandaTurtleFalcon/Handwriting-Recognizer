@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import sys
 from dataclasses import dataclass
@@ -21,8 +22,13 @@ from alnum_model import (  # noqa: E402
     EMNIST_STD,
     LABELS,
     MIXEDCASE_AMBIGUITY_GROUPS,
+    MIXEDCASE_FAMILY_RERANKER_PATH,
     MIXEDCASE_HYBRID_PATH,
     MIXEDCASE_LABELS,
+    MIXEDCASE_LOGIT_BIAS_PATH,
+    MIXEDCASE_PAIR_RULES_PATH,
+    MIXEDCASE_WEIGHTS_PATH,
+    WEIGHTS_PATH,
     build_or_load_emnist_byclass_mixedcase_cache,
     build_or_load_mnist_cache,
     limit_mixedcase_extra_cache,
@@ -34,6 +40,19 @@ from alnum_model import (  # noqa: E402
 from mnist_model import MNIST_MEAN, MNIST_STD, load_model as load_digit_model  # noqa: E402
 from mnist_model import get_device  # noqa: E402
 from scripts.calibrate_mixedcase_hybrid import hybrid_predictions  # noqa: E402
+
+
+def _file_sha256(path: Path) -> str | None:
+    """Return a stable digest for an artifact dependency."""
+
+    try:
+        digest = hashlib.sha256()
+        with path.open("rb") as handle:
+            for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+                digest.update(chunk)
+        return digest.hexdigest()
+    except OSError:
+        return None
 
 
 @dataclass(frozen=True)
@@ -475,6 +494,8 @@ def run_probe(
     min_case_or_visual: float | None = None,
     probe_confidence: float = 0.0,
     probe_margin: float = 0.0,
+    output_path: Path = MIXEDCASE_FAMILY_RERANKER_PATH,
+    write: bool = False,
 ) -> dict[str, object]:
     """Train family probes on train split and evaluate on test split."""
 
@@ -530,6 +551,7 @@ def run_probe(
     base_predictions = hybrid_predictions(test_mixed, test_folded, artifact)
     probe_predictions = base_predictions.clone()
     family_reports = []
+    accepted_probe_artifacts: list[dict[str, object]] = []
     for family_indices in selected_families(family_limit, family_names):
         train_features = family_features(fit_images, fit_mixed, fit_folded, family_indices, fit_digit)
         probe = train_family_probe(train_features, fit_targets, family_indices, epochs, learning_rate, hidden_units)
@@ -638,20 +660,53 @@ def run_probe(
                 "delta": after["test_accuracy"] - before["test_accuracy"],
             }
         )
+        accepted_probe_artifacts.append(
+            {
+                "family": probe.name,
+                "family_indices": family_indices,
+                "state_dict": {key: value.detach().cpu() for key, value in probe.model.state_dict().items()},
+                "input_dim": int(train_features.shape[1]),
+                "hidden_units": hidden_units,
+                "source_groups": source_groups,
+                "probe_confidence": probe_confidence,
+                "probe_margin": probe_margin,
+                "include_digit_features": include_digit_features,
+            }
+        )
         probe_predictions = candidate_predictions
     base_metrics = _metrics(base_predictions, test_targets)
     reranked_metrics = _metrics(probe_predictions, test_targets)
+    promotable = _is_promotable(
+        base_metrics,
+        reranked_metrics,
+        min_digit=min_digit,
+        min_upper=min_upper,
+        min_lower=min_lower,
+        min_case_or_visual=min_case_or_visual,
+    )
+    wrote = False
+    if write and promotable and accepted_probe_artifacts:
+        torch.save(
+            {
+                "enabled": True,
+                "source": "mixedcase_feature_family_reranker_probe",
+                "labels": list(MIXEDCASE_LABELS),
+                "probes": accepted_probe_artifacts,
+                "best_checkpoint": reranked_metrics,
+                "base_checkpoint": base_metrics,
+                "mixedcase_checkpoint_sha256": _file_sha256(MIXEDCASE_WEIGHTS_PATH),
+                "folded_checkpoint_sha256": _file_sha256(WEIGHTS_PATH),
+                "mixedcase_logit_bias_sha256": _file_sha256(MIXEDCASE_LOGIT_BIAS_PATH),
+                "mixedcase_pair_rules_sha256": _file_sha256(MIXEDCASE_PAIR_RULES_PATH),
+                "mixedcase_hybrid_sha256": _file_sha256(MIXEDCASE_HYBRID_PATH),
+            },
+            output_path,
+        )
+        wrote = True
     return {
         "base": base_metrics,
         "reranked": reranked_metrics,
-        "promotable": _is_promotable(
-            base_metrics,
-            reranked_metrics,
-            min_digit=min_digit,
-            min_upper=min_upper,
-            min_lower=min_lower,
-            min_case_or_visual=min_case_or_visual,
-        ),
+        "promotable": promotable,
         "test_delta": reranked_metrics["test_accuracy"] - base_metrics["test_accuracy"],
         "families": family_reports,
         "train_samples": int(train_targets.numel()),
@@ -677,6 +732,8 @@ def run_probe(
             "confidence": probe_confidence,
             "margin": probe_margin,
         },
+        "wrote": wrote,
+        "output_path": str(output_path),
     }
 
 
@@ -718,6 +775,8 @@ def main() -> None:
     parser.add_argument("--min-case-or-visual", type=float, default=None)
     parser.add_argument("--probe-confidence", type=float, default=0.0)
     parser.add_argument("--probe-margin", type=float, default=0.0)
+    parser.add_argument("--output-path", type=Path, default=MIXEDCASE_FAMILY_RERANKER_PATH)
+    parser.add_argument("--write", action="store_true")
     args = parser.parse_args()
     print(
         json.dumps(
@@ -743,6 +802,8 @@ def main() -> None:
                 min_case_or_visual=args.min_case_or_visual,
                 probe_confidence=args.probe_confidence,
                 probe_margin=args.probe_margin,
+                output_path=args.output_path,
+                write=args.write,
             ),
             indent=2,
         )
