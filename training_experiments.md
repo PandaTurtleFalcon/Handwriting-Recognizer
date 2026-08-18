@@ -1008,3 +1008,9 @@ restored, so future improvement loops do not repeat known-bad blends.
   - Research: CVL provides English/German handwritten pages from `310` writers with word bounding boxes; the published license is CC BY-NC 3.0, and punctuation is not included in its word-level ground-truth viewer example.
   - Source: https://cvl.tuwien.ac.at/research/cvl-databases/an-off-line-database-for-writer-retrieval-writer-identification-and-word-spotting/ and https://creativecommons.org/licenses/by-nc/3.0/
   - Takeaway: CVL is a plausible local-only source for writer-diverse letter crops in the hard visual families (`0Oo`, `1Iil`, `5Ss`, `Cc`, `Uuv`, `Pp`, `2Zz`), but it should be mined into capped twin-family caches rather than mixed into broad training unfiltered. It will not directly solve punctuation.
+
+- CVL local importer scaffold:
+  - Code path: added `scripts/prepare_cvl_letters.py`, which consumes a locally downloaded CVL folder, parses common word-box XML schemas, crops word images, splits word crops into approximate character crops by cumulative ink mass, and writes a mixed-case `images`/`targets` tensor cache for `--mixedcase-extra-root`.
+  - Result: no dataset or model artifact changed. `data/cvl` is not present on this machine, so the conversion command correctly skipped local cache creation.
+  - Verification: `test_prepare_cvl_letters.py test_extra_alnum_datasets.py` passed (`41` tests), and `scripts/prepare_cvl_letters.py` compiled.
+  - Takeaway: the project now has the local-only ingestion path needed for CVL once the `cvl-database-cropped-1-1.zip`/XML contents are placed under ignored `data/cvl`.
