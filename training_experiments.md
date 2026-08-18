@@ -1051,3 +1051,9 @@ restored, so future improvement loops do not repeat known-bad blends.
   - Probe result: rejected/no artifact write. The MLP adviser with CVL extras regressed exact from `87.7774%` to `87.7315%`; the linear adviser regressed to `87.7354%`. Both preserved ambiguity-aware accuracy but traded uppercase exactness for tiny lowercase gains.
   - Verification: `test_prepare_cvl_letters.py` passed (`10 passed`), and both `scripts/probe_mixedcase_feature_reranker.py` runs reported `promotable: false`.
   - Takeaway: CVL word crops are now available locally for experiments, but the current feature-reranker path still does not transfer safely. Next CVL work should be a representation/pretraining or sequence-recognition experiment, not the existing adviser.
+
+- Rejected CVL mixed-case direct warm-start:
+  - Command shape: backed up the five mixed-case artifacts to `tmp/daily_training_backups/20260818T163420Z-mixedcase-cvl-cache-probe`, then ran one warm-start CNN epoch with NIST SD19, correction data, augmentation, CVL capped extra cache, weak-label weighting for the CVL hard families, folded/type auxiliary losses, focal loss, and strict deployed split floors.
+  - Result: rejected/restored. The epoch improved lowercase pressure (`86.39%`) but collapsed uppercase (`66.03%`) and exact (`76.64%`); the trainer raised instead of accepting a checkpoint. Only `mixedcase_training_metrics.json` changed during the failed run, and it was restored from backup.
+  - Verification: post-restore `scripts/summarize_benchmarks.py --include-uploaded-hardcases --json` returned the deployed baseline: mixed-case exact `87.7774%`, case-or-visual `98.0471%`, digit `95.0249%`, upper `84.7030%`, lower `73.1476%`.
+  - Takeaway: direct CVL cache blending repeats the known lowercase/uppercase tradeoff. CVL should not be used as ordinary extra supervised crops for the current classifier.
