@@ -25,6 +25,12 @@ class CorrectionCase:
     target: str
 
 
+def compact_sequence(value: object) -> str:
+    """Return sequence text without visual layout whitespace."""
+
+    return "".join(character for character in str(value) if not character.isspace())
+
+
 def load_cases(
     corrections_path: Path = main.CORRECTIONS_PATH,
     upload_dir: Path = main.CORRECTION_UPLOAD_DIR,
@@ -79,7 +85,7 @@ def evaluate_cases(cases: list[CorrectionCase]) -> dict[str, object]:
     for case in cases:
         classified = main.classify_files([(case.filename, case.image_path.read_bytes())], model, device)[0]
         prediction = str(classified.get("sequence", ""))
-        is_correct = prediction == case.target
+        is_correct = compact_sequence(prediction) == compact_sequence(case.target)
         correct += int(is_correct)
         results.append(
             {

@@ -180,9 +180,25 @@ class WebAppRenderingTests(unittest.TestCase):
         script = Path("web/app.js").read_text(encoding="utf-8")
 
         self.assertIn('makeElement("details", "raw-output")', script)
-        self.assertIn('makeElement("summary", "", "Model diagnostics")', script)
-        self.assertIn("raw model read:", script)
-        self.assertIn("final answer:", script)
+        self.assertIn('makeElement("summary", "", "Diagnostics: raw read, not final")', script)
+        self.assertIn("raw read only:", script)
+        self.assertIn("displayed final answer:", script)
+
+    def test_static_html_cache_busts_assets_with_revision(self) -> None:
+        """Fast iteration should not leave the browser on stale app assets."""
+
+        with patch.object(main, "app_revision", return_value="abc1234"):
+            html = main.static_response_body(Path("web/index.html")).decode("utf-8")
+
+        self.assertIn('href="/styles.css?v=abc1234"', html)
+        self.assertIn('src="/app.js?v=abc1234"', html)
+
+    def test_json_responses_are_not_cached(self) -> None:
+        """API results should not be reused by browser caches."""
+
+        source = Path("main.py").read_text(encoding="utf-8")
+
+        self.assertIn('self.send_header("Cache-Control", "no-store, max-age=0")', source)
 
     def test_static_ui_shows_serving_revision(self) -> None:
         """The browser should expose the active server revision."""
@@ -777,9 +793,9 @@ class WebAppRenderingTests(unittest.TestCase):
             }
         )
 
-        self.assertIn("<summary>Diagnostics</summary>", html)
-        self.assertIn("raw model read, not final answer: xOOh:1i / 7o4", html)
-        self.assertIn("final answer: look behind / you", html)
+        self.assertIn("<summary>Diagnostics: raw read, not final</summary>", html)
+        self.assertIn("raw read only: xOOh:1i / 7o4", html)
+        self.assertIn("displayed final answer: look behind / you", html)
         self.assertIn("final answer", html)
 
     def test_result_cards_limit_top_guesses_to_three(self) -> None:

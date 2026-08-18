@@ -1114,7 +1114,7 @@ class MnistWebHandler(BaseHTTPRequestHandler):
         if content_type is None:
             self.send_error(HTTPStatus.NOT_FOUND)
             return
-        body = resolved.read_bytes()
+        body = static_response_body(resolved)
         self.send_response(HTTPStatus.OK)
         self.send_header("Content-Type", content_type)
         self.send_header("Cache-Control", "no-store, max-age=0")
@@ -1139,6 +1139,7 @@ class MnistWebHandler(BaseHTTPRequestHandler):
         encoded = json.dumps(payload).encode("utf-8")
         self.send_response(status)
         self.send_header("Content-Type", "application/json")
+        self.send_header("Cache-Control", "no-store, max-age=0")
         self.send_header("Content-Length", str(len(encoded)))
         self.end_headers()
         self.wfile.write(encoded)
@@ -1218,6 +1219,19 @@ def decode_heic_with_sips(payload: bytes) -> Image.Image | None:
         image = Image.open(target)
         image.load()
         return image
+
+
+def static_response_body(path: Path) -> bytes:
+    """Return static file bytes with revisioned assets for the HTML shell."""
+
+    body = path.read_bytes()
+    if path.suffix != ".html":
+        return body
+    revision = app_revision()
+    text = body.decode("utf-8")
+    text = text.replace('href="/styles.css"', f'href="/styles.css?v={revision}"')
+    text = text.replace('src="/app.js"', f'src="/app.js?v={revision}"')
+    return text.encode("utf-8")
 
 
 def resize_for_recognition(image: Image.Image) -> Image.Image:
@@ -2561,9 +2575,9 @@ def render_raw_sequence_note(result: dict[str, object]) -> str:
         return ""
     return (
         '<details class="row-output raw-output">'
-        "<summary>Diagnostics</summary>"
-        f"<code>raw model read, not final answer: {html.escape(raw_display)}</code>"
-        f'<code class="final-answer-chip">final answer: {html.escape(cleaned_display)}</code>'
+        "<summary>Diagnostics: raw read, not final</summary>"
+        f"<code>raw read only: {html.escape(raw_display)}</code>"
+        f'<code class="final-answer-chip">displayed final answer: {html.escape(cleaned_display)}</code>'
         "</details>"
     )
 

@@ -4,7 +4,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from scripts.evaluate_corrections import CorrectionCase, evaluate_cases, load_cases
+from scripts.evaluate_corrections import CorrectionCase, compact_sequence, evaluate_cases, load_cases
 
 
 class EvaluateCorrectionsTests(unittest.TestCase):
@@ -53,6 +53,24 @@ class EvaluateCorrectionsTests(unittest.TestCase):
         self.assertEqual(report["correct"], 1)
         self.assertEqual(report["accuracy"], 100.0)
         self.assertEqual(report["results"][0]["prediction"], "Hi")
+
+    def test_evaluate_cases_compares_sequence_layout_insensitively(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            image_path = Path(directory) / "sample.png"
+            image_path.write_bytes(b"image")
+            cases = [CorrectionCase(filename="sample.png", image_path=image_path, target="lookbehindyou")]
+
+            with patch("scripts.evaluate_corrections.load_web_models", return_value=(object(), object())):
+                with patch(
+                    "scripts.evaluate_corrections.main.classify_files",
+                    return_value=[{"sequence": "look behind\nyou"}],
+                ):
+                    report = evaluate_cases(cases)
+
+        self.assertEqual(report["correct"], 1)
+
+    def test_compact_sequence_removes_layout_whitespace(self) -> None:
+        self.assertEqual(compact_sequence("look behind\nyou"), "lookbehindyou")
 
     def test_saved_user_corrections_are_replayed_exactly(self) -> None:
         """The deployed recognizer should honor saved user-labeled examples."""

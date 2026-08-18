@@ -718,10 +718,10 @@ function renderRows(result, panel) {
     const cleanedRows = rows.length > 0 ? rows.map((row) => text(row)).join(" / ") : displaySequence;
     if (rawRows !== cleanedRows) {
       const rawWrap = makeElement("details", "raw-output");
-      rawWrap.append(makeElement("summary", "", "Model diagnostics"));
+      rawWrap.append(makeElement("summary", "", "Diagnostics: raw read, not final"));
       const rawBody = makeElement("div", "context-output raw-output-body");
-      rawBody.append(makeElement("code", "row-chip", `raw model read: ${rawRows}`));
-      rawBody.append(makeElement("code", "row-chip final-answer-chip", `final answer: ${cleanedRows}`));
+      rawBody.append(makeElement("code", "row-chip", `raw read only: ${rawRows}`));
+      rawBody.append(makeElement("code", "row-chip final-answer-chip", `displayed final answer: ${cleanedRows}`));
       rawWrap.append(rawBody);
       panel.append(rawWrap);
     }

@@ -10,6 +10,7 @@ from scripts.probe_mixedcase_family_specialists import (
     parse_families,
     probe_family_specialists,
     split_holdout,
+    threshold_is_confirmed,
 )
 
 
@@ -20,6 +21,7 @@ class MixedcaseFamilySpecialistTests(unittest.TestCase):
 
     def test_parse_families_uses_default_when_blank(self) -> None:
         self.assertIn("0Oo", parse_families(""))
+        self.assertIn("MNmn", parse_families(""))
         self.assertEqual(parse_families("0Oo, 5Ss"), ("0Oo", "5Ss"))
 
     def test_apply_specialists_only_replaces_matching_family_predictions(self) -> None:
@@ -100,6 +102,46 @@ class MixedcaseFamilySpecialistTests(unittest.TestCase):
 
         self.assertIsNone(selected["confidence"])
         self.assertEqual(selected["replacement_report"], {"changed": 0, "fixed": 0, "broken": 0})
+
+    def test_threshold_confirmation_requires_gain_on_second_holdout(self) -> None:
+        class HelpfulSpecialist(torch.nn.Module):
+            def forward(self, images: torch.Tensor) -> torch.Tensor:
+                return torch.tensor([[0.0, 4.0]], dtype=torch.float32)
+
+        confirmed, report = threshold_is_confirmed(
+            torch.tensor([0], dtype=torch.long),
+            torch.zeros((1, 1, 28, 28), dtype=torch.float32),
+            torch.tensor([24], dtype=torch.long),
+            [Specialist("0O", (0, 24), HelpfulSpecialist())],
+            batch_size=8,
+            device=torch.device("cpu"),
+            confidence=0.0,
+            margin=0.0,
+            min_gain=0.1,
+        )
+
+        self.assertTrue(confirmed)
+        self.assertEqual(report["replacement_report"], {"changed": 1, "fixed": 1, "broken": 0})
+
+    def test_threshold_confirmation_rejects_flat_second_holdout(self) -> None:
+        class FlatSpecialist(torch.nn.Module):
+            def forward(self, images: torch.Tensor) -> torch.Tensor:
+                return torch.tensor([[4.0, 0.0]], dtype=torch.float32)
+
+        confirmed, report = threshold_is_confirmed(
+            torch.tensor([0], dtype=torch.long),
+            torch.zeros((1, 1, 28, 28), dtype=torch.float32),
+            torch.tensor([0], dtype=torch.long),
+            [Specialist("0O", (0, 24), FlatSpecialist())],
+            batch_size=8,
+            device=torch.device("cpu"),
+            confidence=0.0,
+            margin=0.0,
+            min_gain=0.1,
+        )
+
+        self.assertFalse(confirmed)
+        self.assertEqual(report["gain"], 0.0)
 
     def test_probe_uses_true_abstention_when_auto_threshold_finds_no_gain(self) -> None:
         class CertainSpecialist(torch.nn.Module):
