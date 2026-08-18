@@ -623,6 +623,12 @@ restored, so future improvement loops do not repeat known-bad blends.
   - Command shape: first rejected a write that improved lower exact to `72.66%` but dropped aggregate exact from `87.4449%` to `87.4401%`; then restored the prior artifact and reran with `--min-test 87.44488335457518`. The accepted command was `python3 scripts/calibrate_mixedcase_logits.py --batch-size 4096 --greedy-labels 'ocsumlfqpiIvVg9S5CUMNO0l1' --greedy-rounds 4 --greedy-deltas=-0.08,-0.06,-0.04,-0.02,0.02,0.04,0.06,0.08 --objective lower_test_accuracy --min-test 87.44488335457518 --min-case-or-visual 97.70 --min-digit 94.90 --min-upper 83.90 --min-lower 72.63 --write --require-app-gates`.
   - Result: accepted two tiny bias steps (`q +0.02`, `f +0.02`), keeping aggregate mixed-case exact at `87.44%` while improving lower exact from `72.63%` to `72.64%`. Clean app remains `100.00% (45/45)` and script app remains `95.56% (86/90)`.
 
+- Mixed-case upper probe and character-letter continuation:
+  - Mixed-case command shape: `python3 scripts/calibrate_mixedcase_logits.py --batch-size 4096 --greedy-labels 'O0Il1CUMNSVYPKXWFAZBGTJQDRHE' --greedy-rounds 4 --greedy-deltas=-0.08,-0.06,-0.04,-0.02,0.02,0.04,0.06,0.08 --objective upper_test_accuracy --min-test 87.44488335457518 --min-case-or-visual 97.70 --min-digit 94.90 --min-upper 83.95 --min-lower 72.64 --write --require-app-gates`.
+  - Mixed-case result: rejected by the minimum-improvement guard. The only no-regression step was `W +0.02`, improving upper exact by just `0.0032%`, below `--min-improvement`, so no mixed-case artifact was written.
+  - Character command shape: `python3 scripts/calibrate_character_logits.py --batch-size 4096 --greedy-labels 'OolISsciCvxXPpUuVvMmNnYyKkWwFfzZBbdgqQRG6AaEeHhJj' --greedy-rounds 4 --greedy-deltas=-0.06,-0.04,-0.02,0.02,0.04,0.06 --objective letter_validation_accuracy --min-validation 93.56 --min-ambiguity 98.85 --min-digit 95.0 --min-letter 92.72 --min-punctuation 96.0 --require-app-gates`.
+  - Character result: accepted one tiny bias step (`e -0.06`), improving character exact from `93.58%` to `93.59%` and character letter exact from `92.72%` to `92.73%`. Digit, punctuation, clean app, and script app gates stayed green.
+
 ## Next Higher-Value Directions
 
 - Interrupted full calibration/analyzer startup probe:
