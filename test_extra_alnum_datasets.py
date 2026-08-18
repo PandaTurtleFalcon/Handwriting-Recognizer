@@ -97,6 +97,35 @@ class ExtraAlnumDatasetTests(unittest.TestCase):
 
         self.assertEqual(MIXEDCASE_LABELS[prediction], "Q")
 
+    def test_hybrid_mixedcase_uses_per_letter_case_thresholds(self) -> None:
+        class FixedModel(nn.Module):
+            def __init__(self, outputs: torch.Tensor) -> None:
+                super().__init__()
+                self.outputs = outputs
+
+            def forward(self, inputs: torch.Tensor) -> torch.Tensor:
+                return self.outputs[: inputs.size(0)].clone()
+
+        mixed_outputs = torch.full((2, len(MIXEDCASE_LABELS)), -10.0)
+        mixed_outputs[0, MIXEDCASE_LABELS.index("A")] = 5.0
+        mixed_outputs[0, MIXEDCASE_LABELS.index("a")] = 5.2
+        mixed_outputs[1, MIXEDCASE_LABELS.index("B")] = 5.0
+        mixed_outputs[1, MIXEDCASE_LABELS.index("b")] = 5.2
+        folded_outputs = torch.full((2, len(LABELS)), -10.0)
+        folded_outputs[0, LABELS.index("A")] = 9.0
+        folded_outputs[1, LABELS.index("B")] = 9.0
+        model = HybridMixedcaseModel(
+            FixedModel(mixed_outputs),
+            FixedModel(folded_outputs),
+            letter_case_threshold=0.0,
+            letter_case_thresholds={"A": 1.0},
+        )
+
+        predictions = model(torch.zeros(2, 1, 28, 28)).argmax(dim=1).tolist()
+
+        self.assertEqual(MIXEDCASE_LABELS[predictions[0]], "A")
+        self.assertEqual(MIXEDCASE_LABELS[predictions[1]], "b")
+
     def test_attach_mixedcase_hybrid_rejects_stale_checkpoint_hashes(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)

@@ -731,3 +731,9 @@ restored, so future improvement loops do not repeat known-bad blends.
 - Add more real user-labeled correction uploads for exact visual twins, then use `scripts/train_from_corrections.py`.
 - Try training changes that alter objective/architecture for exact mixed case, not just adding broad or synthetic extra datasets.
 - Keep using `python3 scripts/evaluate_hardcases.py --json` after app-level changes; it catches failures that aggregate model metrics miss.
+
+- Per-letter mixed-case hybrid threshold calibration:
+  - Command shape: cached deployed mixed-case logits plus folded alnum logits, then greedily tuned per-letter case thresholds, folded confidence gates, and folded margin gates while requiring digit exact `>=95.0%`, case-or-visual `>=97.95%`, upper exact `>=84.0%`, and lower exact `>=73.0%`.
+  - Result: accepted per-letter thresholds in `mixedcase_hybrid.json`, improving deployable mixed-case exact from `87.70%` to `87.78%` and case-or-visual from `98.00%` to `98.05%`. Digit exact stayed `95.02%`; upper exact improved from `84.41%` to `84.80%`; lower exact moved from `73.14%` to `73.04%`.
+  - Verification: `scripts/analyze_mixedcase_confusions.py --top 8 --batch-size 4096` matched the artifact metrics, `scripts/summarize_benchmarks.py` reports the new mixed-case gates, focused hybrid tests passed, app hardcases stayed `100.00% (45/45)`, and script hardcases stayed `96.67% (87/90)`.
+  - Remaining blocker: this is only a small inference-calibration gain. Exact mixed-case is still far below the 95% target, dominated by visual-twin/case families (`1/I/l/i`, `0/O/o`, and `5/S/s`), so the next useful work needs better family-specific training data or a changed exact-case objective.
