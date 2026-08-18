@@ -8,7 +8,9 @@ from scripts.probe_mixedcase_family_specialists import (
     choose_thresholds,
     family_indices,
     parse_families,
+    parse_source_groups,
     probe_family_specialists,
+    source_group_mask,
     split_holdout,
     threshold_is_confirmed,
 )
@@ -23,6 +25,14 @@ class MixedcaseFamilySpecialistTests(unittest.TestCase):
         self.assertIn("0Oo", parse_families(""))
         self.assertIn("MNmn", parse_families(""))
         self.assertEqual(parse_families("0Oo, 5Ss"), ("0Oo", "5Ss"))
+
+    def test_source_group_mask_filters_current_prediction_groups(self) -> None:
+        predictions = torch.tensor([1, 10, 35, 36, 61], dtype=torch.long)
+
+        self.assertEqual(parse_source_groups(" lower, digit "), ("lower", "digit"))
+        self.assertEqual(source_group_mask(predictions, ("lower", "digit")).tolist(), [True, False, False, True, True])
+        with self.assertRaisesRegex(ValueError, "Unknown source group"):
+            parse_source_groups("symbol")
 
     def test_apply_specialists_only_replaces_matching_family_predictions(self) -> None:
         class FixedSpecialist(torch.nn.Module):
@@ -45,6 +55,29 @@ class MixedcaseFamilySpecialistTests(unittest.TestCase):
 
         self.assertEqual(predictions.tolist(), [24, 24, 2])
         self.assertEqual(reports, [{"family": "0O", "eligible": 2, "changed": 1}])
+
+    def test_apply_specialists_respects_source_groups(self) -> None:
+        class FixedSpecialist(torch.nn.Module):
+            def forward(self, images: torch.Tensor) -> torch.Tensor:
+                return torch.tensor([[2.0, 0.0]], dtype=torch.float32).repeat(images.size(0), 1)
+
+        images = torch.zeros((2, 1, 28, 28), dtype=torch.float32)
+        base_predictions = torch.tensor([10, 36], dtype=torch.long)
+        specialist = Specialist("Aa", (10, 36), FixedSpecialist())
+
+        predictions, reports = apply_specialists(
+            base_predictions,
+            images,
+            [specialist],
+            batch_size=8,
+            device=torch.device("cpu"),
+            confidence_threshold=0.0,
+            margin_threshold=0.0,
+            source_groups=("lower",),
+        )
+
+        self.assertEqual(predictions.tolist(), [10, 10])
+        self.assertEqual(reports, [{"family": "Aa", "eligible": 1, "changed": 1}])
 
     def test_apply_specialists_respects_confidence_and_margin_gates(self) -> None:
         class UncertainSpecialist(torch.nn.Module):

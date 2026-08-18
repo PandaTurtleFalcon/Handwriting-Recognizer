@@ -30,6 +30,7 @@ from scripts.calibrate_mixedcase_logits import _metrics  # noqa: E402
 
 
 DEFAULT_FAMILIES = ("1Ili", "0Oo", "5Ss", "MNmn", "9qg", "Uuv")
+SOURCE_GROUPS = ("digit", "upper", "lower")
 
 
 @dataclass(frozen=True)
@@ -82,6 +83,33 @@ def parse_families(value: str) -> tuple[str, ...]:
     if requested:
         return requested
     return DEFAULT_FAMILIES
+
+
+def parse_source_groups(value: str) -> tuple[str, ...]:
+    """Parse current prediction groups that specialists may rewrite."""
+
+    groups = tuple(part.strip() for part in value.split(",") if part.strip())
+    if not groups:
+        return SOURCE_GROUPS
+    unknown = sorted(set(groups) - set(SOURCE_GROUPS))
+    if unknown:
+        raise ValueError(f"Unknown source group(s): {', '.join(unknown)}")
+    return groups
+
+
+def source_group_mask(predictions: torch.Tensor, groups: tuple[str, ...]) -> torch.Tensor:
+    """Return a mask for predictions whose current labels are in selected groups."""
+
+    if set(groups) == set(SOURCE_GROUPS):
+        return torch.ones_like(predictions, dtype=torch.bool)
+    mask = torch.zeros_like(predictions, dtype=torch.bool)
+    if "digit" in groups:
+        mask |= predictions < 10
+    if "upper" in groups:
+        mask |= (predictions >= 10) & (predictions < 36)
+    if "lower" in groups:
+        mask |= predictions >= 36
+    return mask
 
 
 def load_split_tensors(train: bool) -> tuple[torch.Tensor, torch.Tensor]:
@@ -227,15 +255,18 @@ def apply_specialists(
     device: torch.device,
     confidence_threshold: float = 0.0,
     margin_threshold: float = 0.0,
+    source_groups: tuple[str, ...] = SOURCE_GROUPS,
 ) -> tuple[torch.Tensor, list[dict[str, object]]]:
     """Replace predictions only when the deployed label is in a trained family."""
 
     predictions = base_predictions.clone()
+    allowed_sources = source_group_mask(predictions, source_groups)
     reports: list[dict[str, object]] = []
     for specialist in specialists:
         family_mask = torch.zeros_like(predictions, dtype=torch.bool)
         for index in specialist.indices:
             family_mask |= predictions == index
+        family_mask &= allowed_sources
         candidate_indices = torch.where(family_mask)[0]
         if not int(candidate_indices.numel()):
             reports.append({"family": specialist.family, "replaced": 0})
@@ -290,6 +321,7 @@ def choose_thresholds(
     device: torch.device,
     confidence_values: tuple[float, ...],
     margin_values: tuple[float, ...],
+    source_groups: tuple[str, ...] = SOURCE_GROUPS,
 ) -> dict[str, object]:
     """Select confidence/margin gates on held-out train data."""
 
@@ -320,6 +352,7 @@ def choose_thresholds(
                 device,
                 confidence_threshold=confidence,
                 margin_threshold=margin,
+                source_groups=source_groups,
             )
             candidate_metrics, replacements = threshold_report(
                 validation_predictions,
@@ -357,6 +390,7 @@ def threshold_is_confirmed(
     confidence: float,
     margin: float,
     min_gain: float = 0.0,
+    source_groups: tuple[str, ...] = SOURCE_GROUPS,
 ) -> tuple[bool, dict[str, object]]:
     """Return whether a selected threshold also improves a second holdout."""
 
@@ -376,6 +410,7 @@ def threshold_is_confirmed(
         device,
         confidence_threshold=confidence,
         margin_threshold=margin,
+        source_groups=source_groups,
     )
     candidate_metrics, replacements = threshold_report(
         validation_predictions,
@@ -421,6 +456,7 @@ def probe_family_specialists(
     confirmation_ratio: float,
     confidence_grid: tuple[float, ...],
     margin_grid: tuple[float, ...],
+    source_groups: tuple[str, ...],
     seed: int,
 ) -> dict[str, object]:
     """Train and evaluate visual-family specialists without deploying them."""
@@ -495,6 +531,7 @@ def probe_family_specialists(
             device,
             confidence_grid,
             margin_grid,
+            source_groups,
         )
         if threshold_selection.get("confidence") is not None and threshold_selection.get("margin") is not None:
             selected_confidence = float(threshold_selection["confidence"])
@@ -517,6 +554,7 @@ def probe_family_specialists(
                 selected_confidence,
                 selected_margin,
                 min_gain=min_gain,
+                source_groups=source_groups,
             )
             threshold_selection["confirmation"] = confirmation_report
             threshold_selection["confirmed"] = confirmed
@@ -543,6 +581,7 @@ def probe_family_specialists(
         device,
         confidence_threshold=specialist_confidence,
         margin_threshold=specialist_margin,
+        source_groups=source_groups,
     )
     base_metrics = _metrics(base_predictions, test_targets, list(MIXEDCASE_LABELS))
     candidate_metrics = _metrics(candidate_predictions, test_targets, list(MIXEDCASE_LABELS))
@@ -558,6 +597,7 @@ def probe_family_specialists(
             for key in sorted(candidate_metrics)
         },
         "family_reports": family_reports,
+        "source_groups": list(source_groups),
         "selection_samples": int(selection_targets.numel()),
         "confirmation_samples": int(confirmation_targets.numel()),
         "promotable": (
@@ -591,6 +631,11 @@ def main() -> None:
     parser.add_argument("--confirmation-ratio", type=float, default=0.5)
     parser.add_argument("--confidence-grid", default="0.5,0.6,0.7,0.8,0.85,0.9,0.95")
     parser.add_argument("--margin-grid", default="0,0.1,0.2,0.35,0.5,0.7")
+    parser.add_argument(
+        "--source-groups",
+        default="digit,upper,lower",
+        help="Comma-separated current prediction groups eligible for specialist rewrites.",
+    )
     parser.add_argument("--seed", type=int, default=5150)
     args = parser.parse_args()
     report = probe_family_specialists(
@@ -610,6 +655,7 @@ def main() -> None:
         confirmation_ratio=args.confirmation_ratio,
         confidence_grid=parse_float_grid(args.confidence_grid),
         margin_grid=parse_float_grid(args.margin_grid),
+        source_groups=parse_source_groups(args.source_groups),
         seed=args.seed,
     )
     print(json.dumps(report, indent=2))
