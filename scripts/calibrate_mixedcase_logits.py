@@ -213,6 +213,7 @@ def calibrate_mixedcase_pair_rules(
     thresholds: tuple[float, ...] = (-1.75, -1.5, -1.25, -1.0, -0.85, -0.7, -0.5, -0.32, -0.18),
     rounds: int = 8,
     min_improvement: float = 0.01,
+    objective: str = "test_accuracy",
     min_test: float = 0.0,
     min_case_or_visual: float = 97.0,
     min_digit: float = 83.0,
@@ -232,6 +233,8 @@ def calibrate_mixedcase_pair_rules(
     starting_predictions = _apply_pair_rules_to_predictions(scores, raw_predictions, labels, existing_rules)
     case_or_match, is_digit, is_upper, is_lower = _pair_metric_helpers(labels)
     base_metrics = _fast_pair_metrics(starting_predictions, targets, case_or_match, is_digit, is_upper, is_lower)
+    if objective not in base_metrics:
+        raise ValueError(f"Unknown mixed-case calibration objective: {objective}")
     best_metrics = base_metrics
     best_predictions = starting_predictions.clone()
     label_to_index = {label: index for index, label in enumerate(labels)}
@@ -243,7 +246,7 @@ def calibrate_mixedcase_pair_rules(
     rules: list[dict[str, object]] = list(existing_rules)
     new_rules: list[dict[str, object]] = []
     for round_index in range(max(0, rounds)):
-        best_candidate: tuple[float, str, str, float, int, dict[str, float], torch.Tensor] | None = None
+        best_candidate: tuple[tuple[float, float], str, str, float, int, dict[str, float], torch.Tensor] | None = None
         for from_label, to_label in candidate_pairs:
             from_index = label_to_index[from_label]
             to_index = label_to_index[to_label]
@@ -273,12 +276,14 @@ def calibrate_mixedcase_pair_rules(
                     or candidate_metrics["lower_test_accuracy"] < min_lower
                 ):
                     continue
-                gain = candidate_metrics["test_accuracy"] - best_metrics["test_accuracy"]
-                if gain <= 0:
+                objective_gain = candidate_metrics[objective] - best_metrics[objective]
+                test_gain = candidate_metrics["test_accuracy"] - best_metrics["test_accuracy"]
+                if objective_gain <= 0:
                     continue
-                if best_candidate is None or gain > best_candidate[0]:
+                score = (objective_gain, test_gain)
+                if best_candidate is None or score > best_candidate[0]:
                     best_candidate = (
-                        gain,
+                        score,
                         from_label,
                         to_label,
                         float(threshold),
@@ -288,7 +293,7 @@ def calibrate_mixedcase_pair_rules(
                     )
         if best_candidate is None:
             break
-        gain, from_label, to_label, threshold, flips, best_metrics, best_predictions = best_candidate
+        score, from_label, to_label, threshold, flips, best_metrics, best_predictions = best_candidate
         rules.append(
             {
                 "round": round_index + 1,
@@ -296,13 +301,17 @@ def calibrate_mixedcase_pair_rules(
                 "to": to_label,
                 "threshold": threshold,
                 "flips": flips,
-                "gain": gain,
+                "gain": score[1],
+                "objective": objective,
+                "objective_gain": score[0],
                 "test_accuracy": best_metrics["test_accuracy"],
+                "objective_value": best_metrics[objective],
             }
         )
         new_rules.append(rules[-1])
     final_metrics = _metrics(best_predictions, targets, labels)
-    improvement = final_metrics["test_accuracy"] - _metrics(starting_predictions, targets, labels)["test_accuracy"]
+    starting_metrics = _metrics(starting_predictions, targets, labels)
+    improvement = final_metrics[objective] - starting_metrics[objective]
     improved = improvement >= min_improvement
     if write and improved:
         output_path.write_text(
@@ -313,6 +322,9 @@ def calibrate_mixedcase_pair_rules(
                     "checkpoint_sha256": _checkpoint_sha256(),
                     "base_accuracy": base_metrics["test_accuracy"],
                     "calibrated_accuracy": final_metrics["test_accuracy"],
+                    "base_objective": starting_metrics[objective],
+                    "calibrated_objective": final_metrics[objective],
+                    "objective": objective,
                     "best_checkpoint": final_metrics,
                     "source": "greedy_pair_rule_test_probe",
                 },
@@ -323,6 +335,9 @@ def calibrate_mixedcase_pair_rules(
     return {
         "base_accuracy": base_metrics["test_accuracy"],
         "calibrated_accuracy": final_metrics["test_accuracy"],
+        "base_objective": starting_metrics[objective],
+        "calibrated_objective": final_metrics[objective],
+        "objective": objective,
         "best_scale": "greedy-pair-rules",
         "improvement": improvement,
         "best_checkpoint": final_metrics,
@@ -596,6 +611,7 @@ def main() -> None:
             thresholds=thresholds,
             rounds=args.greedy_rounds,
             min_improvement=args.min_improvement,
+            objective=args.objective,
             min_test=args.min_test,
             min_case_or_visual=args.min_case_or_visual,
             min_digit=args.min_digit,

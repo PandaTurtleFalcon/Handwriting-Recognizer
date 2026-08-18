@@ -292,6 +292,92 @@ class MixedcaseCalibrationCliTests(unittest.TestCase):
             self.assertEqual(artifact["rules"][0]["from"], "0")
             self.assertEqual(artifact["rules"][0]["to"], "O")
 
+    def test_pair_rules_can_optimize_lowercase_split(self) -> None:
+        """Pair-rule mode should support targeting lowercase with safety floors."""
+
+        logits = torch.tensor(
+            [
+                [0.50, 0.00, 0.00],
+                [0.00, 0.50, 0.00],
+                [0.00, 0.20, 0.10],
+                [0.00, 0.30, 0.20],
+            ],
+            dtype=torch.float32,
+        )
+        targets = torch.tensor([0, 1, 2, 2], dtype=torch.long)
+        train_targets = torch.tensor([0, 1, 2], dtype=torch.long)
+        labels = ["0", "A", "a"]
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            output_path = Path(temp_dir) / "mixedcase_pair_rules.json"
+            with (
+                patch("scripts.calibrate_mixedcase_logits._mixedcase_logits", return_value=(logits, targets, train_targets, labels)),
+                patch("scripts.calibrate_mixedcase_logits.MIXEDCASE_LABELS", labels),
+                patch("scripts.calibrate_mixedcase_logits.MIXEDCASE_LOGIT_BIAS_PATH", Path(temp_dir) / "missing.pt"),
+            ):
+                report = calibrate_mixedcase_pair_rules(
+                    output_path=output_path,
+                    batch_size=4,
+                    families=("Aa",),
+                    thresholds=(-0.15,),
+                    rounds=2,
+                    min_improvement=0.01,
+                    objective="lower_test_accuracy",
+                    min_case_or_visual=0.0,
+                    min_digit=100.0,
+                    min_upper=100.0,
+                    min_lower=0.0,
+                    write=True,
+                )
+
+            self.assertTrue(report["wrote"])
+            self.assertEqual(report["objective"], "lower_test_accuracy")
+            self.assertGreater(report["calibrated_objective"], report["base_objective"])
+            artifact = json.loads(output_path.read_text(encoding="utf-8"))
+            self.assertEqual(artifact["objective"], "lower_test_accuracy")
+
+    def test_pair_rules_reject_test_gain_when_objective_regresses(self) -> None:
+        """Optimizing lowercase should not accept rules that only help total accuracy."""
+
+        logits = torch.tensor(
+            [
+                [0.30, 0.40, 0.00],
+                [0.30, 0.40, 0.00],
+                [0.30, 0.40, 0.00],
+                [0.00, 0.00, 0.50],
+            ],
+            dtype=torch.float32,
+        )
+        targets = torch.tensor([0, 0, 1, 2], dtype=torch.long)
+        train_targets = torch.tensor([0, 1, 2], dtype=torch.long)
+        labels = ["0", "a", "A"]
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            output_path = Path(temp_dir) / "mixedcase_pair_rules.json"
+            with (
+                patch("scripts.calibrate_mixedcase_logits._mixedcase_logits", return_value=(logits, targets, train_targets, labels)),
+                patch("scripts.calibrate_mixedcase_logits.MIXEDCASE_LABELS", labels),
+                patch("scripts.calibrate_mixedcase_logits.MIXEDCASE_LOGIT_BIAS_PATH", Path(temp_dir) / "missing.pt"),
+            ):
+                report = calibrate_mixedcase_pair_rules(
+                    output_path=output_path,
+                    batch_size=4,
+                    families=("0a",),
+                    thresholds=(-0.15,),
+                    rounds=1,
+                    min_improvement=0.01,
+                    objective="lower_test_accuracy",
+                    min_case_or_visual=0.0,
+                    min_digit=0.0,
+                    min_upper=100.0,
+                    min_lower=0.0,
+                    write=True,
+                )
+
+            self.assertFalse(report["wrote"])
+            self.assertEqual(report["calibrated_objective"], report["base_objective"])
+            self.assertFalse(output_path.exists())
+
 
 if __name__ == "__main__":
     unittest.main()
