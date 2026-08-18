@@ -233,6 +233,7 @@ class ContextRulesTests(unittest.TestCase):
         self.assertEqual(cleanup_context("100Kbehind").display, "look behind")
         self.assertEqual(cleanup_context("1OOkb9HiNd").display, "look behind")
         self.assertEqual(cleanup_context("1ookb9HiNd").display, "look behind")
+        self.assertEqual(cleanup_context("1ookbQHiNd").display, "look behind")
         self.assertEqual(cleanup_context("7o4").display, "you")
         self.assertEqual(cleanup_context("4oU").display, "you")
         self.assertEqual(cleanup_context("Y0U").display, "you")
@@ -311,6 +312,14 @@ class ContextRulesTests(unittest.TestCase):
         """The reported screenshot should clean when the lower row reads as YOu."""
 
         cleanup = cleanup_context("xOOh:1iYOu", ["xOOh:1iYOu"])
+
+        self.assertEqual(cleanup.display, "look behind\nyou")
+        self.assertEqual(cleanup.rows, ["look behind", "you"])
+
+    def test_common_word_cleanup_splits_script_look_behind_you_variant(self) -> None:
+        """Script rendering can read behind as a bQHiNd-shaped visual variant."""
+
+        cleanup = cleanup_context("1ookbQHiNd4oU", ["1ookbQHiNd4oU"])
 
         self.assertEqual(cleanup.display, "look behind\nyou")
         self.assertEqual(cleanup.rows, ["look behind", "you"])

@@ -24,6 +24,7 @@ LOOK_BEHIND_RAW_VARIANTS = {
     "100Kbehind",
     "1OOkb9HiNd",
     "1ookb9HiNd",
+    "1ookbQHiNd",
 }
 YOU_RAW_VARIANTS = {"7o4", "4oU", "Y0U", "YOu", "YOU", "You", "Y04"}
 
