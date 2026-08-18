@@ -1149,3 +1149,9 @@ restored, so future improvement loops do not repeat known-bad blends.
   - Result: no model artifact changed. The exact top-family run (`1Iil,0Oo,5Ss,MNmn,9qg,Uuv`) with capped real extras from `data/unipen_chars/curated_mixedcase_62_2b8c2762df04.pt` and `data/the_dataset/the_version4_mixedcase.pt` rejected every family. `0Oo` improved selection and confirmation by `+0.1000` points but gained only `+0.0016` on final test, below the `0.01` floor; `MNmn`, `9qg`, and `Uuv` failed selection or confirmation.
   - Verification: `test_mixedcase_feature_reranker.py` passed (`11 passed`), and the final guarded probe output was saved to `tmp/mixedcase_unipen_the_confirmed_familylist_probe.json`.
   - Takeaway: capped real-data feature arbitration is still too weak to solve mixed-case exactness. The next mixed-case path needs a stronger representation or substantially more user-labeled correction crops for the top visual families, not another small logits-plus-geometry adviser.
+
+- Rejected character checkpoint-ensemble route:
+  - Code path: added `scripts/probe_character_checkpoint_ensemble.py`, a non-deploying probe that scans current and backup `character_cnn.pt` files, deduplicates by SHA-256, and evaluates two-checkpoint averaged-logit ensembles through the current character bias and pair-rule order.
+  - Result: no model artifact changed. The scan found only `1` unique usable character checkpoint and `27` duplicate checkpoint hashes, so there is no complementary saved character model to ensemble against the deployed stack.
+  - Verification: `test_character_checkpoint_ensemble.py` passed (`5 passed`), and the probe output was saved to `tmp/character_checkpoint_ensemble_probe.json`.
+  - Takeaway: ensemble work is only worth revisiting after a future training run preserves a genuinely different checkpoint. Current backups are mostly snapshots of the same deployed character model.
