@@ -18,6 +18,7 @@ from scripts.probe_mixedcase_feature_reranker import source_group_mask
 from scripts.probe_mixedcase_feature_reranker import train_family_probe
 from scripts.probe_mixedcase_feature_reranker import run_probe
 from scripts.probe_mixedcase_feature_reranker import apply_family_probe
+from scripts.probe_mixedcase_feature_reranker import merge_family_probe_artifacts
 
 
 class MixedcaseFeatureRerankerTests(unittest.TestCase):
@@ -490,6 +491,26 @@ class MixedcaseFeatureRerankerTests(unittest.TestCase):
         self.assertTrue(report["wrote"])
         self.assertEqual(artifact["probes"][0]["family"], "AB")
         self.assertEqual(artifact["best_checkpoint"]["test_accuracy"], 80.2)
+
+    def test_merge_family_probe_artifacts_preserves_unrelated_existing_probe(self) -> None:
+        """New artifact writes should accumulate safe families across iterations."""
+
+        existing = [{"family": "1Iil", "state_dict": {"weight": torch.tensor([1.0])}}]
+        accepted = [{"family": "0Oo", "state_dict": {"weight": torch.tensor([2.0])}}]
+
+        merged = merge_family_probe_artifacts(existing, accepted)
+
+        self.assertEqual([probe["family"] for probe in merged], ["1Iil", "0Oo"])
+
+    def test_merge_family_probe_artifacts_replaces_same_family_probe(self) -> None:
+        """A rerun for the same visual family should replace stale probe weights."""
+
+        existing = [{"family": "0Oo", "version": "old"}, {"family": "5Ss", "version": "kept"}]
+        accepted = [{"family": "0Oo", "version": "new"}]
+
+        merged = merge_family_probe_artifacts(existing, accepted)
+
+        self.assertEqual(merged, [{"family": "5Ss", "version": "kept"}, {"family": "0Oo", "version": "new"}])
 
 
 if __name__ == "__main__":

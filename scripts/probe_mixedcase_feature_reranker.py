@@ -55,6 +55,49 @@ def _file_sha256(path: Path) -> str | None:
         return None
 
 
+def _current_artifact_hashes() -> dict[str, str | None]:
+    """Return dependency hashes for the current mixed-case artifact set."""
+
+    return {
+        "mixedcase_checkpoint_sha256": _file_sha256(MIXEDCASE_WEIGHTS_PATH),
+        "folded_checkpoint_sha256": _file_sha256(WEIGHTS_PATH),
+        "mixedcase_logit_bias_sha256": _file_sha256(MIXEDCASE_LOGIT_BIAS_PATH),
+        "mixedcase_pair_rules_sha256": _file_sha256(MIXEDCASE_PAIR_RULES_PATH),
+        "mixedcase_hybrid_sha256": _file_sha256(MIXEDCASE_HYBRID_PATH),
+    }
+
+
+def _compatible_existing_family_probes(output_path: Path) -> list[dict[str, object]]:
+    """Load existing probes that still match the current dependency hashes."""
+
+    if not output_path.exists():
+        return []
+    try:
+        artifact = torch.load(output_path, map_location="cpu", weights_only=True)
+    except (OSError, RuntimeError, ValueError, pickle.UnpicklingError):
+        return []
+    if not isinstance(artifact, dict) or not artifact.get("enabled", True):
+        return []
+    if list(artifact.get("labels", [])) != list(MIXEDCASE_LABELS):
+        return []
+    current_hashes = _current_artifact_hashes()
+    if any(artifact.get(name) != value for name, value in current_hashes.items()):
+        return []
+    probes = artifact.get("probes", [])
+    return [probe for probe in probes if isinstance(probe, dict)]
+
+
+def merge_family_probe_artifacts(
+    existing_probes: list[dict[str, object]],
+    accepted_probes: list[dict[str, object]],
+) -> list[dict[str, object]]:
+    """Merge accepted probes without dropping unrelated existing families."""
+
+    accepted_families = {str(probe.get("family", "")) for probe in accepted_probes}
+    kept = [probe for probe in existing_probes if str(probe.get("family", "")) not in accepted_families]
+    return [*kept, *accepted_probes]
+
+
 @dataclass(frozen=True)
 class FamilyProbe:
     """One trained per-family reranker plus its label index mapping."""
@@ -686,19 +729,20 @@ def run_probe(
     )
     wrote = False
     if write and promotable and accepted_probe_artifacts:
+        merged_probe_artifacts = merge_family_probe_artifacts(
+            _compatible_existing_family_probes(output_path),
+            accepted_probe_artifacts,
+        )
+        artifact_hashes = _current_artifact_hashes()
         torch.save(
             {
                 "enabled": True,
                 "source": "mixedcase_feature_family_reranker_probe",
                 "labels": list(MIXEDCASE_LABELS),
-                "probes": accepted_probe_artifacts,
+                "probes": merged_probe_artifacts,
                 "best_checkpoint": reranked_metrics,
                 "base_checkpoint": base_metrics,
-                "mixedcase_checkpoint_sha256": _file_sha256(MIXEDCASE_WEIGHTS_PATH),
-                "folded_checkpoint_sha256": _file_sha256(WEIGHTS_PATH),
-                "mixedcase_logit_bias_sha256": _file_sha256(MIXEDCASE_LOGIT_BIAS_PATH),
-                "mixedcase_pair_rules_sha256": _file_sha256(MIXEDCASE_PAIR_RULES_PATH),
-                "mixedcase_hybrid_sha256": _file_sha256(MIXEDCASE_HYBRID_PATH),
+                **artifact_hashes,
             },
             output_path,
         )
