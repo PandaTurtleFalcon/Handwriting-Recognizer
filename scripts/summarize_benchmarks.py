@@ -74,6 +74,8 @@ def summarize_saved_metrics(project_dir: Path = PROJECT_DIR, target: float = 95.
         mixed_best = mixed_calibration
     if mixed_pair_rules is not None:
         mixed_best = mixed_pair_rules
+    if mixed_calibration is not None and _mixedcase_calibration_includes_current_pair_rules(project_dir):
+        mixed_best = mixed_calibration
     if mixed_hybrid is not None:
         mixed_best = mixed_hybrid
     if character_calibration is not None:
@@ -123,7 +125,11 @@ def _read_mixedcase_calibration(project_dir: Path) -> dict[str, object] | None:
     if not _artifact_matches_checkpoint(calibration, project_dir / "mixedcase_cnn.pt"):
         return None
     best = calibration.get("best_checkpoint")
-    return best if isinstance(best, dict) else None
+    if not isinstance(best, dict):
+        return None
+    if calibration.get("includes_pair_rules") and not _mixedcase_pair_rule_dependency_current(calibration, project_dir):
+        return None
+    return best
 
 
 def _read_mixedcase_pair_rules(project_dir: Path) -> dict[str, object] | None:
@@ -178,6 +184,31 @@ def _read_mixedcase_hybrid(project_dir: Path) -> dict[str, object] | None:
         return None
     best = artifact.get("best_checkpoint")
     return best if isinstance(best, dict) else None
+
+
+def _mixedcase_calibration_includes_current_pair_rules(project_dir: Path) -> bool:
+    """Return whether mixed-case bias metrics already include current pair rules."""
+
+    bias_path = project_dir / "mixedcase_logit_bias.pt"
+    if not bias_path.exists():
+        return False
+    try:
+        import torch
+
+        calibration = torch.load(bias_path, map_location="cpu", weights_only=True)
+    except (OSError, RuntimeError, TypeError, ValueError, pickle.UnpicklingError):
+        return False
+    if not isinstance(calibration, dict) or not calibration.get("includes_pair_rules"):
+        return False
+    return _mixedcase_pair_rule_dependency_current(calibration, project_dir)
+
+
+def _mixedcase_pair_rule_dependency_current(calibration: dict[str, object], project_dir: Path) -> bool:
+    """Return whether a mixed-case calibration is tied to valid current pair rules."""
+
+    if _read_mixedcase_pair_rules(project_dir) is None:
+        return False
+    return _artifact_dependency_hash_matches(calibration, "pair_rules_sha256", project_dir / "mixedcase_pair_rules.json")
 
 
 def _read_character_calibration(project_dir: Path) -> dict[str, object] | None:

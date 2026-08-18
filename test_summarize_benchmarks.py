@@ -435,6 +435,238 @@ class BenchmarkSummaryTests(unittest.TestCase):
         self.assertEqual(by_name["mixedcase_exact"]["value"], 87.5)
         self.assertEqual(by_name["mixedcase_digit_exact"]["value"], 95.1)
 
+    def test_summarizes_mixedcase_bias_that_includes_current_pair_rules(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            mixed_weights = root / "mixedcase_cnn.pt"
+            mixed_weights.write_bytes(b"current mixedcase checkpoint")
+            (root / "training_metrics.json").write_text(json.dumps({"best_checkpoint": {"test_accuracy": 99.0}}))
+            (root / "alnum_training_metrics.json").write_text(json.dumps({"best_checkpoint": {"test_accuracy": 96.0}}))
+            (root / "mixedcase_training_metrics.json").write_text(
+                json.dumps({"best_checkpoint": {"test_accuracy": 80.0, "case_or_ambiguity_aware_test_accuracy": 97.0}})
+            )
+            (root / "character_training_metrics.json").write_text(
+                json.dumps(
+                    {
+                        "best_checkpoint": {
+                            "validation_accuracy": 91.0,
+                            "ambiguity_aware_validation_accuracy": 98.0,
+                            "punctuation_validation_accuracy": 95.0,
+                            "punctuation_ambiguity_aware_validation_accuracy": 99.0,
+                        }
+                    }
+                )
+            )
+            from alnum_model import MIXEDCASE_LABELS
+
+            pair_rules_bytes = json.dumps(
+                {
+                    "labels": list(MIXEDCASE_LABELS),
+                    "checkpoint_sha256": hashlib.sha256(b"current mixedcase checkpoint").hexdigest(),
+                    "best_checkpoint": {
+                        "test_accuracy": 87.5,
+                        "case_or_ambiguity_aware_test_accuracy": 97.8,
+                        "digit_test_accuracy": 95.1,
+                        "upper_test_accuracy": 84.1,
+                        "lower_test_accuracy": 72.7,
+                    },
+                }
+            ).encode("utf-8")
+            (root / "mixedcase_pair_rules.json").write_bytes(pair_rules_bytes)
+            torch.save(
+                {
+                    "labels": list(MIXEDCASE_LABELS),
+                    "checkpoint_sha256": hashlib.sha256(b"current mixedcase checkpoint").hexdigest(),
+                    "includes_pair_rules": True,
+                    "pair_rules_sha256": hashlib.sha256(pair_rules_bytes).hexdigest(),
+                    "best_checkpoint": {
+                        "test_accuracy": 88.2,
+                        "case_or_ambiguity_aware_test_accuracy": 98.1,
+                        "digit_test_accuracy": 95.3,
+                        "upper_test_accuracy": 84.8,
+                        "lower_test_accuracy": 73.2,
+                    },
+                },
+                root / "mixedcase_logit_bias.pt",
+            )
+
+            report = summarize_saved_metrics(root, target=95.0)
+
+        by_name = {str(item["name"]): item for item in report}
+        self.assertEqual(by_name["mixedcase_exact"]["value"], 88.2)
+        self.assertEqual(by_name["mixedcase_case_or_visual"]["value"], 98.1)
+        self.assertEqual(by_name["mixedcase_digit_exact"]["value"], 95.3)
+
+    def test_stale_mixedcase_combined_bias_uses_pair_rule_metrics(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            (root / "mixedcase_cnn.pt").write_bytes(b"current mixedcase checkpoint")
+            (root / "training_metrics.json").write_text(json.dumps({"best_checkpoint": {"test_accuracy": 99.0}}))
+            (root / "alnum_training_metrics.json").write_text(json.dumps({"best_checkpoint": {"test_accuracy": 96.0}}))
+            (root / "mixedcase_training_metrics.json").write_text(
+                json.dumps({"best_checkpoint": {"test_accuracy": 80.0, "case_or_ambiguity_aware_test_accuracy": 97.0}})
+            )
+            (root / "character_training_metrics.json").write_text(
+                json.dumps(
+                    {
+                        "best_checkpoint": {
+                            "validation_accuracy": 91.0,
+                            "ambiguity_aware_validation_accuracy": 98.0,
+                            "punctuation_validation_accuracy": 95.0,
+                            "punctuation_ambiguity_aware_validation_accuracy": 99.0,
+                        }
+                    }
+                )
+            )
+            from alnum_model import MIXEDCASE_LABELS
+
+            (root / "mixedcase_pair_rules.json").write_text(
+                json.dumps(
+                    {
+                        "labels": list(MIXEDCASE_LABELS),
+                        "checkpoint_sha256": hashlib.sha256(b"current mixedcase checkpoint").hexdigest(),
+                        "best_checkpoint": {
+                            "test_accuracy": 87.5,
+                            "case_or_ambiguity_aware_test_accuracy": 97.8,
+                        },
+                    }
+                )
+            )
+            torch.save(
+                {
+                    "labels": list(MIXEDCASE_LABELS),
+                    "checkpoint_sha256": hashlib.sha256(b"current mixedcase checkpoint").hexdigest(),
+                    "includes_pair_rules": True,
+                    "pair_rules_sha256": "stale",
+                    "best_checkpoint": {
+                        "test_accuracy": 88.2,
+                        "case_or_ambiguity_aware_test_accuracy": 98.1,
+                    },
+                },
+                root / "mixedcase_logit_bias.pt",
+            )
+
+            report = summarize_saved_metrics(root, target=95.0)
+
+        by_name = {str(item["name"]): item for item in report}
+        self.assertEqual(by_name["mixedcase_exact"]["value"], 87.5)
+        self.assertEqual(by_name["mixedcase_case_or_visual"]["value"], 97.8)
+
+    def test_mixedcase_combined_bias_rejected_when_pair_rule_checkpoint_is_stale(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            (root / "mixedcase_cnn.pt").write_bytes(b"current mixedcase checkpoint")
+            (root / "training_metrics.json").write_text(json.dumps({"best_checkpoint": {"test_accuracy": 99.0}}))
+            (root / "alnum_training_metrics.json").write_text(json.dumps({"best_checkpoint": {"test_accuracy": 96.0}}))
+            (root / "mixedcase_training_metrics.json").write_text(
+                json.dumps(
+                    {
+                        "best_checkpoint": {
+                            "test_accuracy": 80.0,
+                            "case_or_ambiguity_aware_test_accuracy": 97.0,
+                        }
+                    }
+                )
+            )
+            (root / "character_training_metrics.json").write_text(
+                json.dumps(
+                    {
+                        "best_checkpoint": {
+                            "validation_accuracy": 91.0,
+                            "ambiguity_aware_validation_accuracy": 98.0,
+                            "punctuation_validation_accuracy": 95.0,
+                            "punctuation_ambiguity_aware_validation_accuracy": 99.0,
+                        }
+                    }
+                )
+            )
+            from alnum_model import MIXEDCASE_LABELS
+
+            pair_rules_bytes = json.dumps(
+                {
+                    "labels": list(MIXEDCASE_LABELS),
+                    "checkpoint_sha256": "stale",
+                    "best_checkpoint": {
+                        "test_accuracy": 87.5,
+                        "case_or_ambiguity_aware_test_accuracy": 97.8,
+                    },
+                }
+            ).encode("utf-8")
+            (root / "mixedcase_pair_rules.json").write_bytes(pair_rules_bytes)
+            torch.save(
+                {
+                    "labels": list(MIXEDCASE_LABELS),
+                    "checkpoint_sha256": hashlib.sha256(b"current mixedcase checkpoint").hexdigest(),
+                    "includes_pair_rules": True,
+                    "pair_rules_sha256": hashlib.sha256(pair_rules_bytes).hexdigest(),
+                    "best_checkpoint": {
+                        "test_accuracy": 88.2,
+                        "case_or_ambiguity_aware_test_accuracy": 98.1,
+                    },
+                },
+                root / "mixedcase_logit_bias.pt",
+            )
+
+            report = summarize_saved_metrics(root, target=95.0)
+
+        by_name = {str(item["name"]): item for item in report}
+        self.assertEqual(by_name["mixedcase_exact"]["value"], 80.0)
+        self.assertEqual(by_name["mixedcase_case_or_visual"]["value"], 97.0)
+
+    def test_mixedcase_combined_bias_requires_pair_rule_hash(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            (root / "mixedcase_cnn.pt").write_bytes(b"current mixedcase checkpoint")
+            (root / "training_metrics.json").write_text(json.dumps({"best_checkpoint": {"test_accuracy": 99.0}}))
+            (root / "alnum_training_metrics.json").write_text(json.dumps({"best_checkpoint": {"test_accuracy": 96.0}}))
+            (root / "mixedcase_training_metrics.json").write_text(
+                json.dumps({"best_checkpoint": {"test_accuracy": 80.0, "case_or_ambiguity_aware_test_accuracy": 97.0}})
+            )
+            (root / "character_training_metrics.json").write_text(
+                json.dumps(
+                    {
+                        "best_checkpoint": {
+                            "validation_accuracy": 91.0,
+                            "ambiguity_aware_validation_accuracy": 98.0,
+                            "punctuation_validation_accuracy": 95.0,
+                            "punctuation_ambiguity_aware_validation_accuracy": 99.0,
+                        }
+                    }
+                )
+            )
+            from alnum_model import MIXEDCASE_LABELS
+
+            (root / "mixedcase_pair_rules.json").write_text(
+                json.dumps(
+                    {
+                        "labels": list(MIXEDCASE_LABELS),
+                        "checkpoint_sha256": hashlib.sha256(b"current mixedcase checkpoint").hexdigest(),
+                        "best_checkpoint": {
+                            "test_accuracy": 87.5,
+                            "case_or_ambiguity_aware_test_accuracy": 97.8,
+                        },
+                    }
+                )
+            )
+            torch.save(
+                {
+                    "labels": list(MIXEDCASE_LABELS),
+                    "checkpoint_sha256": hashlib.sha256(b"current mixedcase checkpoint").hexdigest(),
+                    "includes_pair_rules": True,
+                    "best_checkpoint": {
+                        "test_accuracy": 88.2,
+                        "case_or_ambiguity_aware_test_accuracy": 98.1,
+                    },
+                },
+                root / "mixedcase_logit_bias.pt",
+            )
+
+            report = summarize_saved_metrics(root, target=95.0)
+
+        by_name = {str(item["name"]): item for item in report}
+        self.assertEqual(by_name["mixedcase_exact"]["value"], 87.5)
+        self.assertEqual(by_name["mixedcase_case_or_visual"]["value"], 97.8)
+
     def test_ignores_stale_mixedcase_pair_rule_metrics(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
