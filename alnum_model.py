@@ -13,6 +13,7 @@ import hashlib
 import io
 import json
 import pickle
+import shutil
 import tarfile
 import time
 import urllib.request
@@ -62,6 +63,20 @@ MIXEDCASE_METRICS_PATH = PROJECT_DIR / "mixedcase_training_metrics.json"
 MIXEDCASE_LOGIT_BIAS_PATH = PROJECT_DIR / "mixedcase_logit_bias.pt"
 MIXEDCASE_PAIR_RULES_PATH = PROJECT_DIR / "mixedcase_pair_rules.json"
 MIXEDCASE_HYBRID_PATH = PROJECT_DIR / "mixedcase_hybrid.json"
+MIXEDCASE_ARTIFACT_PATHS = (
+    MIXEDCASE_WEIGHTS_PATH,
+    MIXEDCASE_METRICS_PATH,
+    MIXEDCASE_LOGIT_BIAS_PATH,
+    MIXEDCASE_PAIR_RULES_PATH,
+    MIXEDCASE_HYBRID_PATH,
+)
+DEFAULT_MIXEDCASE_BENCHMARK_GATES = (
+    "mixedcase_exact",
+    "mixedcase_case_or_visual",
+    "mixedcase_digit_exact",
+    "mixedcase_upper_exact",
+    "mixedcase_lower_exact",
+)
 MIXEDCASE_LABELS = (
     [str(index) for index in range(10)]
     + [chr(ord("A") + index) for index in range(26)]
@@ -1972,6 +1987,76 @@ def save_mixedcase_checkpoint(
     )
 
 
+def backup_mixedcase_artifacts(backup_dir: Path) -> dict[str, bool]:
+    """Copy current mixed-case artifacts before a risky training run."""
+
+    backup_dir.mkdir(parents=True, exist_ok=True)
+    manifest = {}
+    for artifact_path in MIXEDCASE_ARTIFACT_PATHS:
+        existed = artifact_path.exists()
+        manifest[artifact_path.name] = existed
+        if existed:
+            shutil.copy2(artifact_path, backup_dir / artifact_path.name)
+    (backup_dir / "manifest.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+    return manifest
+
+
+def restore_mixedcase_artifacts(backup_dir: Path) -> None:
+    """Restore mixed-case artifacts from a benchmark-gate backup."""
+
+    manifest_path = backup_dir / "manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8")) if manifest_path.exists() else {}
+    for artifact_path in MIXEDCASE_ARTIFACT_PATHS:
+        backup_path = backup_dir / artifact_path.name
+        if backup_path.exists():
+            shutil.copy2(backup_path, artifact_path)
+        elif manifest.get(artifact_path.name) is False and artifact_path.exists():
+            artifact_path.unlink()
+
+
+def parse_mixedcase_benchmark_gate_names(value: str) -> tuple[str, ...]:
+    """Parse comma-separated mixed-case benchmark gate names."""
+
+    names = tuple(name.strip() for name in value.split(",") if name.strip())
+    return names or DEFAULT_MIXEDCASE_BENCHMARK_GATES
+
+
+def saved_mixedcase_benchmark_values(gate_names: tuple[str, ...]) -> dict[str, float]:
+    """Return selected saved benchmark values from the repository summary."""
+
+    from scripts.summarize_benchmarks import summarize_saved_metrics
+
+    rows = summarize_saved_metrics(PROJECT_DIR)
+    values = {}
+    for row in rows:
+        name = str(row.get("name", ""))
+        value = row.get("value")
+        if name in gate_names and value is not None:
+            values[name] = float(value)
+    missing = sorted(set(gate_names) - set(values))
+    if missing:
+        raise RuntimeError(f"Missing mixed-case benchmark gate(s): {', '.join(missing)}")
+    return values
+
+
+def mixedcase_benchmark_gate_failures(
+    before: dict[str, float],
+    after: dict[str, float],
+    tolerance: float = 0.0,
+    target: float | None = None,
+) -> list[str]:
+    """Return mixed-case benchmark gates that regressed or missed a target."""
+
+    failures = []
+    for name, before_value in before.items():
+        after_value = after[name]
+        if after_value + tolerance < before_value:
+            failures.append(f"{name} {after_value:.4f}% < baseline {before_value:.4f}%")
+        if target is not None and after_value + tolerance < target:
+            failures.append(f"{name} {after_value:.4f}% < target {target:.4f}%")
+    return failures
+
+
 def train_mixedcase(
     epochs: int,
     batch_size: int,
@@ -2550,8 +2635,47 @@ def main() -> None:
         default=0.0,
         help="Minimum lowercase accuracy required before an epoch can become the best checkpoint.",
     )
+    parser.add_argument(
+        "--mixedcase-require-benchmark-gates",
+        action="store_true",
+        help="After mixed-case training, reject and restore artifacts if saved benchmark gates regress.",
+    )
+    parser.add_argument(
+        "--mixedcase-benchmark-gate-names",
+        default=",".join(DEFAULT_MIXEDCASE_BENCHMARK_GATES),
+        help="Comma-separated saved benchmark gates protected by --mixedcase-require-benchmark-gates.",
+    )
+    parser.add_argument(
+        "--mixedcase-benchmark-gate-target",
+        type=float,
+        default=None,
+        help="Optional absolute target each protected mixed-case benchmark gate must meet.",
+    )
+    parser.add_argument(
+        "--mixedcase-benchmark-gate-tolerance",
+        type=float,
+        default=0.0,
+        help="Allowed protected mixed-case benchmark regression tolerance in percentage points.",
+    )
+    parser.add_argument(
+        "--mixedcase-benchmark-backup-dir",
+        type=Path,
+        default=None,
+        help="Backup directory used by --mixedcase-require-benchmark-gates.",
+    )
     args = parser.parse_args()
     if args.mixed_case:
+        mixedcase_gate_names = parse_mixedcase_benchmark_gate_names(args.mixedcase_benchmark_gate_names)
+        mixedcase_backup_dir = args.mixedcase_benchmark_backup_dir
+        mixedcase_baseline_gates = None
+        if args.mixedcase_require_benchmark_gates:
+            mixedcase_baseline_gates = saved_mixedcase_benchmark_values(mixedcase_gate_names)
+            if mixedcase_backup_dir is None:
+                mixedcase_backup_dir = PROJECT_DIR / "tmp" / "mixedcase_benchmark_gate_backups" / time.strftime(
+                    "%Y%m%dT%H%M%SZ",
+                    time.gmtime(),
+                )
+            backup_mixedcase_artifacts(mixedcase_backup_dir)
         train_mixedcase(
             epochs=args.epochs,
             batch_size=args.batch_size,
@@ -2587,6 +2711,22 @@ def main() -> None:
             min_checkpoint_upper=args.mixedcase_min_checkpoint_upper,
             min_checkpoint_lower=args.mixedcase_min_checkpoint_lower,
         )
+        if mixedcase_baseline_gates is not None:
+            mixedcase_candidate_gates = saved_mixedcase_benchmark_values(mixedcase_gate_names)
+            failures = mixedcase_benchmark_gate_failures(
+                mixedcase_baseline_gates,
+                mixedcase_candidate_gates,
+                tolerance=args.mixedcase_benchmark_gate_tolerance,
+                target=args.mixedcase_benchmark_gate_target,
+            )
+            if failures:
+                restore_mixedcase_artifacts(mixedcase_backup_dir)
+                joined = "; ".join(failures)
+                raise RuntimeError(
+                    f"Rejected mixed-case training checkpoint: {joined}. "
+                    f"Restored artifacts from {mixedcase_backup_dir}."
+                )
+            print(f"Mixed-case benchmark gates passed: {', '.join(mixedcase_gate_names)}")
         return
     train(
         epochs=args.epochs,

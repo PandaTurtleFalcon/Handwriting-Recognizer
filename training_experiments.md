@@ -1184,3 +1184,9 @@ restored, so future improvement loops do not repeat known-bad blends.
   - Result: rejected/restored automatically. Raw validation hovered near `92.9%`, but saved benchmark gates would have regressed to `92.9753%` character exact, `94.3430%` character digit exact, `92.1427%` character letter exact, and `95.7103%` punctuation exact.
   - Verification: the guard restored artifacts from `tmp/daily_training_backups/20260818T1920-character-hasy-twin-trainonly-probe`; post-restore benchmark returned the deployed baseline (`94.1666%` character exact, `95.1090%` character digit exact, `93.5908%` character letter exact, `96.0619%` punctuation exact).
   - Takeaway: the existing Hasy twin subset is too distribution-shifted to fine-tune the shared character checkpoint safely, even when kept out of validation. Future character work should use candidate-only artifacts plus post-calibration evaluation, or real user correction crops for the top visual families.
+
+- Mixed-case benchmark-gated training guardrail:
+  - Code path: added optional `alnum_model.py --mixedcase-require-benchmark-gates`, which backs up the mixed-case weights, metrics, logit bias, pair rules, and hybrid config before training, then restores all of them if selected saved benchmark gates regress or miss an optional target.
+  - Result: no model artifact changed. This makes the next mixed-case data/model experiments safer because checkpoint calibration artifacts stay hash-aligned with the deployed weights after a rejected run.
+  - Verification: `test_extra_alnum_datasets.py` passed (`40 passed`), `py_compile` passed for `alnum_model.py`, and `git diff --check` passed.
+  - Takeaway: mixed-case exact, uppercase, and lowercase remain below target, but future mixed-case training can now fail closed the same way character training does.

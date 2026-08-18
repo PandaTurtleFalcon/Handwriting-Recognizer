@@ -2,6 +2,7 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 import numpy as np
 import torch
@@ -14,6 +15,7 @@ from alnum_model import (
     FocalCrossEntropyLoss,
     HybridMixedcaseModel,
     LABELS,
+    DEFAULT_MIXEDCASE_BENCHMARK_GATES,
     MIXEDCASE_LABELS,
     MODEL_CLASSES,
     _chars74k_sample_label,
@@ -29,6 +31,7 @@ from alnum_model import (
     load_correction_cache,
     load_mixedcase_extra_cache,
     mixedcase_auxiliary_loss,
+    mixedcase_benchmark_gate_failures,
     mixedcase_checkpoint_meets_floors,
     mixedcase_checkpoint_score,
     mixedcase_folded_logits,
@@ -38,8 +41,10 @@ from alnum_model import (
     mixedcase_labels_match_with_visual_ambiguity,
     mixedcase_type_logits,
     mixedcase_type_targets,
+    parse_mixedcase_benchmark_gate_names,
     validate_mixedcase_warm_start_checkpoint,
 )
+import alnum_model
 from extra_alnum_datasets import load_labeled_image_folder
 
 
@@ -389,6 +394,95 @@ class ExtraAlnumDatasetTests(unittest.TestCase):
                 min_lower=73.0,
             )
         )
+
+    def test_parse_mixedcase_benchmark_gate_names_defaults_to_mixedcase_gates(self) -> None:
+        """Empty mixed-case benchmark gate values should use the mixed-case gates."""
+
+        self.assertEqual(
+            parse_mixedcase_benchmark_gate_names(" mixedcase_exact, mixedcase_lower_exact "),
+            ("mixedcase_exact", "mixedcase_lower_exact"),
+        )
+        self.assertEqual(parse_mixedcase_benchmark_gate_names(""), DEFAULT_MIXEDCASE_BENCHMARK_GATES)
+
+    def test_mixedcase_benchmark_gate_failures_report_regressions_and_targets(self) -> None:
+        """Post-training mixed-case gates should explain rejected candidates."""
+
+        failures = mixedcase_benchmark_gate_failures(
+            {"mixedcase_exact": 87.8, "mixedcase_lower_exact": 73.1},
+            {"mixedcase_exact": 87.9, "mixedcase_lower_exact": 72.9},
+            target=95.0,
+        )
+
+        self.assertEqual(
+            failures,
+            [
+                "mixedcase_exact 87.9000% < target 95.0000%",
+                "mixedcase_lower_exact 72.9000% < baseline 73.1000%",
+                "mixedcase_lower_exact 72.9000% < target 95.0000%",
+            ],
+        )
+
+    def test_mixedcase_cli_can_require_saved_benchmark_gates(self) -> None:
+        """Protected mixed-case training should check saved benchmark gates."""
+
+        with (
+            tempfile.TemporaryDirectory() as directory,
+            patch(
+                "sys.argv",
+                [
+                    "alnum_model.py",
+                    "--mixed-case",
+                    "--mixedcase-require-benchmark-gates",
+                    "--mixedcase-benchmark-gate-names",
+                    "mixedcase_exact",
+                    "--mixedcase-benchmark-backup-dir",
+                    str(Path(directory) / "backup"),
+                ],
+            ),
+            patch(
+                "alnum_model.saved_mixedcase_benchmark_values",
+                side_effect=[{"mixedcase_exact": 87.7}, {"mixedcase_exact": 87.8}],
+            ) as gates,
+            patch("alnum_model.backup_mixedcase_artifacts") as backup,
+            patch("alnum_model.restore_mixedcase_artifacts") as restore,
+            patch("alnum_model.train_mixedcase") as train,
+        ):
+            alnum_model.main()
+
+        self.assertEqual(gates.call_count, 2)
+        self.assertTrue(backup.called)
+        self.assertTrue(train.called)
+        self.assertFalse(restore.called)
+
+    def test_mixedcase_cli_restores_artifacts_when_benchmark_gate_regresses(self) -> None:
+        """Protected mixed-case training should restore artifacts after regression."""
+
+        with (
+            tempfile.TemporaryDirectory() as directory,
+            patch(
+                "sys.argv",
+                [
+                    "alnum_model.py",
+                    "--mixed-case",
+                    "--mixedcase-require-benchmark-gates",
+                    "--mixedcase-benchmark-gate-names",
+                    "mixedcase_exact",
+                    "--mixedcase-benchmark-backup-dir",
+                    str(Path(directory) / "backup"),
+                ],
+            ),
+            patch(
+                "alnum_model.saved_mixedcase_benchmark_values",
+                side_effect=[{"mixedcase_exact": 87.8}, {"mixedcase_exact": 87.7}],
+            ),
+            patch("alnum_model.backup_mixedcase_artifacts"),
+            patch("alnum_model.restore_mixedcase_artifacts") as restore,
+            patch("alnum_model.train_mixedcase"),
+        ):
+            with self.assertRaisesRegex(RuntimeError, "Rejected mixed-case training checkpoint"):
+                alnum_model.main()
+
+        self.assertTrue(restore.called)
 
     def test_mixedcase_warm_start_rejects_model_type_mismatch(self) -> None:
         """Warm-start training should fail fast instead of random-initializing."""
