@@ -13,9 +13,12 @@ from scripts.train_from_corrections import export_character_correction_folder
 from scripts.train_from_corrections import (
     DEFAULT_MIXEDCASE_PRIORITY_LABELS,
     DEFAULT_PRIORITY_LABELS,
+    best_checkpoint_from_metrics,
     correction_item_label_counts,
     correction_recommendation,
     correction_readiness_summary,
+    deployed_character_checkpoint_floors,
+    deployed_mixedcase_checkpoint_floors,
     dry_run_report,
     exportable_character_correction_counts,
     exported_character_crop_counts,
@@ -329,6 +332,110 @@ class TrainFromCorrectionsTests(unittest.TestCase):
         self.assertEqual(counts["1"], 2)
         self.assertEqual(counts["a"], 1)
         self.assertNotIn("A", counts)
+
+    def test_checkpoint_floor_helpers_read_saved_best_metrics(self) -> None:
+        """Daily training should inherit deployed non-regression floors."""
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            character_metrics = root / "character.json"
+            mixed_metrics = root / "mixed.json"
+            character_metrics.write_text(
+                json.dumps(
+                    {
+                        "best_checkpoint": {
+                            "validation_accuracy": 94.1,
+                            "ambiguity_aware_validation_accuracy": 99.0,
+                            "digit_validation_accuracy": 95.2,
+                            "letter_validation_accuracy": 93.7,
+                            "punctuation_validation_accuracy": 96.1,
+                        }
+                    }
+                ),
+                encoding="utf-8",
+            )
+            mixed_metrics.write_text(
+                json.dumps(
+                    {
+                        "best_checkpoint": {
+                            "case_or_ambiguity_aware_test_accuracy": 98.0,
+                            "digit_test_accuracy": 95.1,
+                            "upper_test_accuracy": 84.7,
+                            "lower_test_accuracy": 73.1,
+                        }
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            self.assertEqual(best_checkpoint_from_metrics(character_metrics)["validation_accuracy"], 94.1)
+            self.assertEqual(
+                deployed_character_checkpoint_floors(character_metrics),
+                {
+                    "min_checkpoint_validation": 94.1,
+                    "min_checkpoint_ambiguity": 99.0,
+                    "min_checkpoint_digit": 95.2,
+                    "min_checkpoint_letter": 93.7,
+                    "min_checkpoint_punctuation": 96.1,
+                },
+            )
+            self.assertEqual(
+                deployed_mixedcase_checkpoint_floors(mixed_metrics),
+                {
+                    "min_checkpoint_case_or_visual": 98.0,
+                    "min_checkpoint_digit": 95.1,
+                    "min_checkpoint_upper": 84.7,
+                    "min_checkpoint_lower": 73.1,
+                },
+            )
+
+    def test_main_force_passes_checkpoint_floors_to_daily_training(self) -> None:
+        """Forced daily training should still preserve current split floors."""
+
+        fake_corrections = (object(), [0] * 12)
+        with (
+            patch.object(train_from_corrections, "load_correction_cache", return_value=fake_corrections),
+            patch.object(train_from_corrections, "load_character_labels", return_value=["A"]),
+            patch.object(train_from_corrections, "export_character_correction_folder", return_value=12),
+            patch.object(
+                train_from_corrections,
+                "deployed_character_checkpoint_floors",
+                return_value={
+                    "min_checkpoint_validation": 94.1,
+                    "min_checkpoint_ambiguity": 99.0,
+                    "min_checkpoint_digit": 95.2,
+                    "min_checkpoint_letter": 93.7,
+                    "min_checkpoint_punctuation": 96.1,
+                },
+            ),
+            patch.object(
+                train_from_corrections,
+                "deployed_mixedcase_checkpoint_floors",
+                return_value={
+                    "min_checkpoint_case_or_visual": 98.0,
+                    "min_checkpoint_digit": 95.1,
+                    "min_checkpoint_upper": 84.7,
+                    "min_checkpoint_lower": 73.1,
+                },
+            ),
+            patch.object(train_from_corrections, "train_character_model") as train_character,
+            patch.object(train_from_corrections, "train") as train_folded,
+            patch.object(train_from_corrections, "train_mixedcase") as train_mixed,
+        ):
+            train_from_corrections.main(["--force"])
+
+        self.assertEqual(train_character.call_args.kwargs["checkpoint_objective"], "letter_validation_accuracy")
+        self.assertEqual(train_character.call_args.kwargs["min_checkpoint_validation"], 94.1)
+        self.assertEqual(train_character.call_args.kwargs["min_checkpoint_ambiguity"], 99.0)
+        self.assertEqual(train_character.call_args.kwargs["min_checkpoint_digit"], 95.2)
+        self.assertEqual(train_character.call_args.kwargs["min_checkpoint_letter"], 93.7)
+        self.assertEqual(train_character.call_args.kwargs["min_checkpoint_punctuation"], 96.1)
+        train_folded.assert_called_once()
+        self.assertEqual(train_mixed.call_args.kwargs["checkpoint_objective"], "lower_test_accuracy")
+        self.assertEqual(train_mixed.call_args.kwargs["min_checkpoint_case_or_visual"], 98.0)
+        self.assertEqual(train_mixed.call_args.kwargs["min_checkpoint_digit"], 95.1)
+        self.assertEqual(train_mixed.call_args.kwargs["min_checkpoint_upper"], 84.7)
+        self.assertEqual(train_mixed.call_args.kwargs["min_checkpoint_lower"], 73.1)
 
     def test_counts_exportable_character_corrections_before_export(self) -> None:
         """Practice samples should appear in dry-run coverage before training export."""

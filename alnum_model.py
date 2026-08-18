@@ -12,6 +12,7 @@ import argparse
 import hashlib
 import io
 import json
+import pickle
 import tarfile
 import time
 import urllib.request
@@ -1582,6 +1583,8 @@ def attach_mixedcase_hybrid(
     hybrid_path: Path = MIXEDCASE_HYBRID_PATH,
     mixedcase_weights_path: Path = MIXEDCASE_WEIGHTS_PATH,
     folded_weights_path: Path = WEIGHTS_PATH,
+    logit_bias_path: Path = MIXEDCASE_LOGIT_BIAS_PATH,
+    pair_rules_path: Path = MIXEDCASE_PAIR_RULES_PATH,
 ) -> nn.Module:
     """Wrap a mixed-case model with folded identity inference when configured."""
 
@@ -1596,6 +1599,10 @@ def attach_mixedcase_hybrid(
     if not _artifact_hash_matches(artifact, "mixedcase_checkpoint_sha256", mixedcase_weights_path):
         return model
     if not _artifact_hash_matches(artifact, "folded_checkpoint_sha256", folded_weights_path):
+        return model
+    if not _artifact_dependency_hash_matches(artifact, "mixedcase_logit_bias_sha256", logit_bias_path):
+        return model
+    if not _artifact_dependency_hash_matches(artifact, "mixedcase_pair_rules_sha256", pair_rules_path):
         return model
     folded_model, folded_labels = load_alnum_model(folded_weights_path, device=device)
     if folded_model is None or list(folded_labels) != list(LABELS):
@@ -1628,7 +1635,7 @@ def attach_mixedcase_logit_bias(
         return False
     try:
         artifact = torch.load(bias_path, map_location=device, weights_only=True)
-    except (OSError, RuntimeError, ValueError):
+    except (OSError, RuntimeError, ValueError, pickle.UnpicklingError):
         return False
     if list(artifact.get("labels", [])) != list(labels):
         return False
@@ -1715,6 +1722,16 @@ def _artifact_hash_matches(artifact: object, key: str, weights_path: Path) -> bo
     if not expected:
         return True
     return expected == _file_sha256(weights_path)
+
+
+def _artifact_dependency_hash_matches(artifact: object, key: str, dependency_path: Path) -> bool:
+    """Require matching dependency hashes when optional artifacts exist."""
+
+    if not dependency_path.exists():
+        return not isinstance(artifact, dict) or not artifact.get(key)
+    if not isinstance(artifact, dict) or not artifact.get(key):
+        return False
+    return artifact.get(key) == _file_sha256(dependency_path)
 
 
 def _file_sha256(path: Path) -> str | None:

@@ -20,6 +20,7 @@ from alnum_model import (
     CORRECTIONS_PATH,
     LABELS,
     MIXEDCASE_LABELS,
+    MIXEDCASE_METRICS_PATH,
     _correction_training_items,
     _record_with_legacy_sequence_boxes,
     load_correction_cache,
@@ -28,6 +29,7 @@ from alnum_model import (
 )
 from character_model import DATASET_ROOT as CHARACTER_DATASET_ROOT
 from character_model import LABELS_PATH as CHARACTER_LABELS_PATH
+from character_model import METRICS_PATH as CHARACTER_METRICS_PATH
 from character_model import train_character_model
 from main import (
     CHARACTER_PRACTICE_PRIORITY_LABELS,
@@ -43,6 +45,49 @@ DEFAULT_MIN_CHARACTER_CORRECTIONS = 10
 DEFAULT_MIN_ALNUM_CORRECTIONS = 10
 DEFAULT_PRIORITY_LABELS = "".join(CHARACTER_PRACTICE_PRIORITY_LABELS)
 DEFAULT_MIXEDCASE_PRIORITY_LABELS = "".join(MIXEDCASE_PRACTICE_PRIORITY_LABELS)
+
+
+def best_checkpoint_from_metrics(metrics_path: Path) -> dict[str, float]:
+    """Load the best-checkpoint metrics from a saved training report."""
+
+    if not metrics_path.exists():
+        return {}
+    try:
+        payload = json.loads(metrics_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    if isinstance(payload, dict):
+        checkpoint = payload.get("best_checkpoint", {})
+        return checkpoint if isinstance(checkpoint, dict) else {}
+    if isinstance(payload, list) and payload:
+        latest = payload[-1]
+        return latest if isinstance(latest, dict) else {}
+    return {}
+
+
+def deployed_character_checkpoint_floors(metrics_path: Path = CHARACTER_METRICS_PATH) -> dict[str, float]:
+    """Return non-regression floors for daily character fine-tuning."""
+
+    checkpoint = best_checkpoint_from_metrics(metrics_path)
+    return {
+        "min_checkpoint_validation": float(checkpoint.get("validation_accuracy", 0.0)),
+        "min_checkpoint_ambiguity": float(checkpoint.get("ambiguity_aware_validation_accuracy", 0.0)),
+        "min_checkpoint_digit": float(checkpoint.get("digit_validation_accuracy", 0.0)),
+        "min_checkpoint_letter": float(checkpoint.get("letter_validation_accuracy", 0.0)),
+        "min_checkpoint_punctuation": float(checkpoint.get("punctuation_validation_accuracy", 0.0)),
+    }
+
+
+def deployed_mixedcase_checkpoint_floors(metrics_path: Path = MIXEDCASE_METRICS_PATH) -> dict[str, float]:
+    """Return non-regression floors for daily mixed-case fine-tuning."""
+
+    checkpoint = best_checkpoint_from_metrics(metrics_path)
+    return {
+        "min_checkpoint_case_or_visual": float(checkpoint.get("case_or_ambiguity_aware_test_accuracy", 0.0)),
+        "min_checkpoint_digit": float(checkpoint.get("digit_test_accuracy", 0.0)),
+        "min_checkpoint_upper": float(checkpoint.get("upper_test_accuracy", 0.0)),
+        "min_checkpoint_lower": float(checkpoint.get("lower_test_accuracy", 0.0)),
+    }
 
 
 def export_character_correction_folder(
@@ -566,6 +611,7 @@ def main(argv: list[str] | None = None) -> None:
             extra_roots = [CHARACTER_CORRECTION_ROOT]
             if HASY_CHARACTER_ROOT.exists():
                 extra_roots.insert(0, HASY_CHARACTER_ROOT)
+            floors = deployed_character_checkpoint_floors()
             train_character_model(
                 epochs=2,
                 batch_size=128,
@@ -579,6 +625,8 @@ def main(argv: list[str] | None = None) -> None:
                 warm_start=True,
                 augment=True,
                 extra_roots=extra_roots,
+                checkpoint_objective="letter_validation_accuracy",
+                **floors,
             )
 
     if folded_corrections is not None:
@@ -615,6 +663,7 @@ def main(argv: list[str] | None = None) -> None:
             )
         else:
             print(f"Fine-tuning mixed-case model with {mixed_count} correction samples.")
+            mixedcase_floors = deployed_mixedcase_checkpoint_floors()
             train_mixedcase(
                 epochs=3,
                 batch_size=2048,
@@ -626,6 +675,8 @@ def main(argv: list[str] | None = None) -> None:
                 device_name="auto",
                 include_corrections=True,
                 warm_start=True,
+                checkpoint_objective="lower_test_accuracy",
+                **mixedcase_floors,
             )
 
 

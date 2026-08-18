@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import pickle
 import sys
 from collections import Counter
 from pathlib import Path
@@ -20,7 +21,10 @@ def _read_json(path: Path) -> Any:
 
     if not path.exists():
         return {}
-    return json.loads(path.read_text(encoding="utf-8"))
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
 
 
 def _gate(name: str, value: float | None, target: float) -> dict[str, object]:
@@ -112,7 +116,7 @@ def _read_mixedcase_calibration(project_dir: Path) -> dict[str, object] | None:
         from alnum_model import MIXEDCASE_LABELS
 
         calibration = torch.load(bias_path, map_location="cpu", weights_only=True)
-    except (ImportError, OSError, RuntimeError, ValueError):
+    except (ImportError, OSError, RuntimeError, ValueError, pickle.UnpicklingError):
         return None
     if list(calibration.get("labels", [])) != list(MIXEDCASE_LABELS):
         return None
@@ -160,6 +164,18 @@ def _read_mixedcase_hybrid(project_dir: Path) -> dict[str, object] | None:
         return None
     if not _artifact_hash_matches(artifact, "folded_checkpoint_sha256", project_dir / "alnum_cnn.pt"):
         return None
+    if not _artifact_dependency_hash_matches(
+        artifact,
+        "mixedcase_logit_bias_sha256",
+        project_dir / "mixedcase_logit_bias.pt",
+    ):
+        return None
+    if not _artifact_dependency_hash_matches(
+        artifact,
+        "mixedcase_pair_rules_sha256",
+        project_dir / "mixedcase_pair_rules.json",
+    ):
+        return None
     best = artifact.get("best_checkpoint")
     return best if isinstance(best, dict) else None
 
@@ -178,7 +194,7 @@ def _read_character_calibration(project_dir: Path) -> dict[str, object] | None:
         return None
     try:
         calibration = torch.load(bias_path, map_location="cpu", weights_only=True)
-    except (OSError, RuntimeError, TypeError, ValueError):
+    except (OSError, RuntimeError, TypeError, ValueError, pickle.UnpicklingError):
         return None
     if list(calibration.get("labels", [])) != list(labels):
         return None
@@ -219,7 +235,7 @@ def _character_calibration_includes_current_pair_rules(project_dir: Path) -> boo
         import torch
 
         calibration = torch.load(bias_path, map_location="cpu", weights_only=True)
-    except (OSError, RuntimeError, TypeError, ValueError):
+    except (OSError, RuntimeError, TypeError, ValueError, pickle.UnpicklingError):
         return False
     if not isinstance(calibration, dict) or not calibration.get("includes_pair_rules"):
         return False
@@ -241,6 +257,16 @@ def _artifact_hash_matches(artifact: object, key: str, weights_path: Path) -> bo
     if not expected:
         return True
     return expected == _file_sha256(weights_path)
+
+
+def _artifact_dependency_hash_matches(artifact: object, key: str, dependency_path: Path) -> bool:
+    """Require matching dependency hashes when optional artifacts exist."""
+
+    if not dependency_path.exists():
+        return not isinstance(artifact, dict) or not artifact.get(key)
+    if not isinstance(artifact, dict) or not artifact.get(key):
+        return False
+    return artifact.get(key) == _file_sha256(dependency_path)
 
 
 def _file_sha256(path: Path) -> str | None:

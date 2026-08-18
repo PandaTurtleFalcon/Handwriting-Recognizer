@@ -113,6 +113,8 @@
   },
   "mixedcase_checkpoint_sha256": "75f3263d7d16344780d2a4efbb3f539959fd0b95a6f5930f74391a0f2aa964eb",
   "folded_checkpoint_sha256": "0dc123ab7b6962da8a7de49bb828d8db5524f8fda884bdd811a941479e477f40",
+  "mixedcase_logit_bias_sha256": "366e93c61e1fceab31814d690a78a9f933b4fb9ba797074d8a09480a2732a8b4",
+  "mixedcase_pair_rules_sha256": "397ff0c70fb82ac7e97e1536c88d757b1ec4a8e124cf45d52be1d4f71b521450",
   "best_checkpoint": {
     "test_accuracy": 87.7773642539978,
     "case_or_ambiguity_aware_test_accuracy": 98.04707169532776,

@@ -1,4 +1,5 @@
 import json
+import hashlib
 import tempfile
 import unittest
 from pathlib import Path
@@ -32,7 +33,7 @@ from character_model import (
     load_correction_memory_exemplars,
     stratified_split_indices,
 )
-from alnum_model import attach_mixedcase_logit_bias
+from alnum_model import LABELS, MIXEDCASE_LABELS, attach_mixedcase_hybrid, attach_mixedcase_logit_bias
 from mnist_model import DigitRegion, segment_digit_regions
 from PIL import Image, ImageDraw
 import torch
@@ -335,6 +336,95 @@ class CharacterPostprocessingTests(unittest.TestCase):
         self.assertFalse(attached)
         self.assertFalse(hasattr(model, "mixedcase_logit_bias"))
         self.assertTrue(torch.allclose(output, torch.zeros((1, 2))))
+
+    def test_mixedcase_hybrid_rejects_stale_dependency_hash(self) -> None:
+        """Hybrid artifacts must match the bias and pair-rule files they summarize."""
+
+        model = torch.nn.Linear(2, len(MIXEDCASE_LABELS), bias=False)
+        folded_model = torch.nn.Linear(2, len(LABELS), bias=False)
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            hybrid_path = root / "mixedcase_hybrid.json"
+            mixed_weights = root / "mixedcase_cnn.pt"
+            folded_weights = root / "alnum_cnn.pt"
+            bias_path = root / "mixedcase_logit_bias.pt"
+            pair_rules_path = root / "mixedcase_pair_rules.json"
+            mixed_weights.write_bytes(b"mixed checkpoint")
+            folded_weights.write_bytes(b"folded checkpoint")
+            bias_path.write_bytes(b"current bias")
+            pair_rules_path.write_bytes(b"current pair rules")
+            hybrid_path.write_text(
+                json.dumps(
+                    {
+                        "enabled": True,
+                        "labels": list(MIXEDCASE_LABELS),
+                        "mixedcase_checkpoint_sha256": hashlib.sha256(b"mixed checkpoint").hexdigest(),
+                        "folded_checkpoint_sha256": hashlib.sha256(b"folded checkpoint").hexdigest(),
+                        "mixedcase_logit_bias_sha256": "stale",
+                        "mixedcase_pair_rules_sha256": hashlib.sha256(b"current pair rules").hexdigest(),
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            with patch("alnum_model.load_alnum_model", return_value=(folded_model, list(LABELS))):
+                attached = attach_mixedcase_hybrid(
+                    model,
+                    list(MIXEDCASE_LABELS),
+                    torch.device("cpu"),
+                    hybrid_path,
+                    mixed_weights,
+                    folded_weights,
+                    bias_path,
+                    pair_rules_path,
+                )
+
+        self.assertIs(attached, model)
+
+    def test_mixedcase_hybrid_accepts_matching_dependency_hashes(self) -> None:
+        """Matching dependency hashes allow the hybrid wrapper to load."""
+
+        model = torch.nn.Linear(2, len(MIXEDCASE_LABELS), bias=False)
+        folded_model = torch.nn.Linear(2, len(LABELS), bias=False)
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            hybrid_path = root / "mixedcase_hybrid.json"
+            mixed_weights = root / "mixedcase_cnn.pt"
+            folded_weights = root / "alnum_cnn.pt"
+            bias_path = root / "mixedcase_logit_bias.pt"
+            pair_rules_path = root / "mixedcase_pair_rules.json"
+            mixed_weights.write_bytes(b"mixed checkpoint")
+            folded_weights.write_bytes(b"folded checkpoint")
+            bias_path.write_bytes(b"current bias")
+            pair_rules_path.write_bytes(b"current pair rules")
+            hybrid_path.write_text(
+                json.dumps(
+                    {
+                        "enabled": True,
+                        "labels": list(MIXEDCASE_LABELS),
+                        "mixedcase_checkpoint_sha256": hashlib.sha256(b"mixed checkpoint").hexdigest(),
+                        "folded_checkpoint_sha256": hashlib.sha256(b"folded checkpoint").hexdigest(),
+                        "mixedcase_logit_bias_sha256": hashlib.sha256(b"current bias").hexdigest(),
+                        "mixedcase_pair_rules_sha256": hashlib.sha256(b"current pair rules").hexdigest(),
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            with patch("alnum_model.load_alnum_model", return_value=(folded_model, list(LABELS))):
+                attached = attach_mixedcase_hybrid(
+                    model,
+                    list(MIXEDCASE_LABELS),
+                    torch.device("cpu"),
+                    hybrid_path,
+                    mixed_weights,
+                    folded_weights,
+                    bias_path,
+                    pair_rules_path,
+                )
+
+        self.assertIsNot(attached, model)
+        self.assertTrue(hasattr(attached, "mixedcase_hybrid"))
 
     def test_character_loss_weights_can_emphasize_punctuation(self) -> None:
         weights = character_loss_weights(["A", "7", "!", "."], punctuation_weight=2.5)
