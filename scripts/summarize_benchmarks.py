@@ -76,6 +76,8 @@ def summarize_saved_metrics(project_dir: Path = PROJECT_DIR, target: float = 95.
         character_best = character_calibration
     if character_pair_rules is not None:
         character_best = character_pair_rules
+    if character_calibration is not None and _character_calibration_includes_current_pair_rules(project_dir):
+        character_best = character_calibration
 
     return [
         _gate("digit_specialist_exact", _float_or_none(digit_best.get("test_accuracy")), target),
@@ -205,6 +207,23 @@ def _read_character_pair_rules(project_dir: Path) -> dict[str, object] | None:
         return None
     best = artifact.get("best_checkpoint")
     return best if isinstance(best, dict) else None
+
+
+def _character_calibration_includes_current_pair_rules(project_dir: Path) -> bool:
+    """Return whether character bias metrics already include current pair rules."""
+
+    bias_path = project_dir / "character_logit_bias.pt"
+    if not bias_path.exists():
+        return False
+    try:
+        import torch
+
+        calibration = torch.load(bias_path, map_location="cpu", weights_only=True)
+    except (OSError, RuntimeError, TypeError, ValueError):
+        return False
+    if not isinstance(calibration, dict) or not calibration.get("includes_pair_rules"):
+        return False
+    return _artifact_hash_matches(calibration, "pair_rules_sha256", project_dir / "character_pair_rules.json")
 
 
 def _artifact_matches_checkpoint(artifact: object, weights_path: Path) -> bool:

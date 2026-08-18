@@ -701,6 +701,11 @@ restored, so future improvement loops do not repeat known-bad blends.
   - Result: selected `folded_confidence_threshold=0.25`, `folded_margin_threshold=0.5`, and `letter_case_threshold=0.0`. This improves the deployable hybrid from `87.69%` to `87.70%` exact and from `73.10%` to `73.14%` lowercase exact, while keeping digit exact at `95.02%`. Case-or-visual is still passing at `98.00%`.
   - Remaining blocker: pair-rule continuation found no useful additional mixed-case rules, and this threshold gain is tiny. The next high-value work likely needs better real lowercase training data or a changed model objective for the `1/I/l/i`, `0/O/o`, `5/S/s`, and lowercase/uppercase twin families.
 
+- Pair-rule-aware character bias calibration:
+  - Code path: `scripts/calibrate_character_logits.py --include-pair-rules` now evaluates greedy bias candidates after applying the current character pair rules, and stamps the bias artifact with the `character_pair_rules.json` hash. `scripts/summarize_benchmarks.py` trusts that stacked bias metric over the older pair-rule summary only when the pair-rule hash still matches.
+  - Command shape: `python3 scripts/calibrate_character_logits.py --batch-size 4096 --greedy-labels 'SOlI0ociCvsuUPpXxzZ|/;._-' --greedy-rounds 8 --greedy-deltas=-0.12,-0.1,-0.08,-0.06,-0.04,-0.03,-0.02,-0.01,0.01,0.02,0.03,0.04,0.06,0.08,0.1,0.12 --objective letter_validation_accuracy --min-validation 94.09 --min-ambiguity 99.09 --min-digit 95.20 --min-letter 93.39 --min-punctuation 96.30 --min-improvement 0.005 --include-pair-rules --require-app-gates`.
+  - Result: accepted two tiny bias steps (`c -0.10`, `z -0.01`), improving character exact from `94.09%` to `94.11%` and character-letter exact from `93.39%` to `93.42%`. Digit exact stayed `95.29%`, punctuation stayed above target at `96.34%`, clean app stayed `100.00% (45/45)`, and script app stayed `96.67% (87/90)`.
+
 ## Next Higher-Value Directions
 
 - Interrupted full calibration/analyzer startup probe:

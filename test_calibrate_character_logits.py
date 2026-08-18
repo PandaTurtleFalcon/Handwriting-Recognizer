@@ -103,6 +103,42 @@ class CharacterCalibrationCliTests(unittest.TestCase):
             self.assertTrue(report["app_gates"]["passed"])
             self.assertEqual(output_path.read_bytes(), b"candidate")
 
+    def test_pair_rules_cli_ignores_pair_rule_bias_flag(self) -> None:
+        """The stacked-bias flag should not be sent to pair-rule calibration."""
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            output_path = Path(temp_dir) / "character_pair_rules.json"
+            output = StringIO()
+            with (
+                patch(
+                    "sys.argv",
+                    [
+                        "calibrate_character_logits.py",
+                        "--pair-rules",
+                        "--include-pair-rules",
+                        "--output-path",
+                        str(output_path),
+                        "--dry-run",
+                    ],
+                ),
+                patch(
+                    "scripts.calibrate_character_logits.calibrate_character_pair_rules",
+                    return_value={
+                        "base_accuracy": 93.0,
+                        "calibrated_accuracy": 93.0,
+                        "best_scale": "greedy-pair-rules",
+                        "improvement": 0.0,
+                        "best_checkpoint": {"validation_accuracy": 93.0},
+                        "wrote": False,
+                        "output_path": str(output_path),
+                    },
+                ) as calibrate,
+                patch("sys.stdout", output),
+            ):
+                main()
+
+            self.assertNotIn("include_pair_rules", calibrate.call_args.kwargs)
+
     def test_greedy_bias_tunes_requested_labels(self) -> None:
         """Greedy mode should write a better per-label bias when one exists."""
 
@@ -180,6 +216,57 @@ class CharacterCalibrationCliTests(unittest.TestCase):
             self.assertGreater(report["calibrated_objective"], report["base_objective"])
             artifact = torch.load(output_path, map_location="cpu", weights_only=True)
             self.assertEqual(artifact["objective"], "letter_validation_accuracy")
+
+    def test_greedy_bias_can_evaluate_after_existing_pair_rules(self) -> None:
+        """Stacked greedy mode should stamp the pair-rule artifact it measured."""
+
+        logits = torch.tensor(
+            [
+                [0.40, 0.39, 0.00],
+                [0.60, 0.30, 0.00],
+                [0.29, 0.30, 0.00],
+            ],
+            dtype=torch.float32,
+        )
+        targets = torch.tensor([1, 0, 2], dtype=torch.long)
+        train_targets = torch.tensor([0, 1, 2], dtype=torch.long)
+        labels = ["A", "B", "."]
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            output_path = root / "character_logit_bias.pt"
+            pair_rules_path = root / "character_pair_rules.json"
+            pair_rules_path.write_text(
+                json.dumps(
+                    {
+                        "labels": labels,
+                        "rules": [{"from": "A", "to": "B", "threshold": -0.02}],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            with (
+                patch("scripts.calibrate_character_logits._validation_logits", return_value=(logits, targets, train_targets, labels)),
+                patch("scripts.calibrate_character_logits.PAIR_RULES_PATH", pair_rules_path),
+            ):
+                report = calibrate_character_greedy_bias(
+                    output_path=output_path,
+                    batch_size=3,
+                    labels_to_tune=".",
+                    deltas=(0.32,),
+                    rounds=1,
+                    min_improvement=0.01,
+                    min_ambiguity=0.0,
+                    min_punctuation=0.0,
+                    include_pair_rules=True,
+                    write=True,
+                )
+
+            self.assertTrue(report["wrote"])
+            self.assertTrue(report["includes_pair_rules"])
+            artifact = torch.load(output_path, map_location="cpu", weights_only=True)
+            self.assertTrue(artifact["includes_pair_rules"])
+            self.assertIsNotNone(artifact["pair_rules_sha256"])
 
     def test_greedy_bias_rejects_unknown_objective(self) -> None:
         """Invalid objective names should fail before writing an artifact."""

@@ -225,6 +225,47 @@ class BenchmarkSummaryTests(unittest.TestCase):
         self.assertEqual(by_name["character_exact"]["value"], 93.7)
         self.assertEqual(by_name["character_letter_exact"]["value"], 92.9)
 
+    def test_pair_rule_aware_character_bias_overrides_pair_rule_summary(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            pair_rules_bytes = json.dumps(
+                {
+                    "labels": ["A", "B"],
+                    "best_checkpoint": {
+                        "validation_accuracy": 93.7,
+                        "letter_validation_accuracy": 92.9,
+                    },
+                }
+            ).encode("utf-8")
+            (root / "training_metrics.json").write_text(json.dumps({"best_checkpoint": {"test_accuracy": 99.0}}))
+            (root / "alnum_training_metrics.json").write_text(json.dumps({"best_checkpoint": {"test_accuracy": 96.0}}))
+            (root / "mixedcase_training_metrics.json").write_text(
+                json.dumps({"best_checkpoint": {"test_accuracy": 80.0, "case_or_ambiguity_aware_test_accuracy": 97.0}})
+            )
+            (root / "character_labels.json").write_text(json.dumps(["A", "B"]))
+            (root / "character_training_metrics.json").write_text(
+                json.dumps({"best_checkpoint": {"validation_accuracy": 91.0, "letter_validation_accuracy": 90.0}})
+            )
+            (root / "character_pair_rules.json").write_bytes(pair_rules_bytes)
+            torch.save(
+                {
+                    "labels": ["A", "B"],
+                    "includes_pair_rules": True,
+                    "pair_rules_sha256": hashlib.sha256(pair_rules_bytes).hexdigest(),
+                    "best_checkpoint": {
+                        "validation_accuracy": 94.2,
+                        "letter_validation_accuracy": 93.4,
+                    },
+                },
+                root / "character_logit_bias.pt",
+            )
+
+            report = summarize_saved_metrics(root, target=95.0)
+
+        by_name = {str(item["name"]): item for item in report}
+        self.assertEqual(by_name["character_exact"]["value"], 94.2)
+        self.assertEqual(by_name["character_letter_exact"]["value"], 93.4)
+
     def test_ignores_stale_character_pair_rule_metrics(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)

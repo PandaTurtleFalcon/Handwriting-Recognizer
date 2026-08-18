@@ -72,6 +72,19 @@ def _checkpoint_sha256() -> str | None:
         return None
 
 
+def _file_sha256(path: Path) -> str | None:
+    """Return a stable file digest for dependent calibration artifacts."""
+
+    try:
+        digest = hashlib.sha256()
+        with path.open("rb") as handle:
+            for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+                digest.update(chunk)
+        return digest.hexdigest()
+    except OSError:
+        return None
+
+
 def _breakdown(
     predictions: torch.Tensor,
     targets: torch.Tensor,
@@ -374,13 +387,17 @@ def calibrate_character_greedy_bias(
     min_digit: float = 0.0,
     min_letter: float = 0.0,
     min_punctuation: float = 95.0,
+    include_pair_rules: bool = False,
     write: bool = True,
 ) -> dict[str, object]:
     """Greedily tune tiny per-label bias changes from the current artifact."""
 
     logits, targets, _train_targets, labels = _validation_logits(batch_size)
     starting_bias = _load_existing_bias(output_path, labels)
-    base_breakdown = _breakdown((logits + starting_bias).argmax(dim=1), targets, labels)
+    pair_rules = _load_existing_pair_rules(PAIR_RULES_PATH, labels) if include_pair_rules else []
+    base_scores = logits + starting_bias
+    base_predictions = _apply_pair_rules_to_predictions(base_scores, base_scores.argmax(dim=1), labels, pair_rules)
+    base_breakdown = _breakdown(base_predictions, targets, labels)
     if objective not in base_breakdown:
         raise ValueError(f"Unknown character calibration objective: {objective}")
     best_bias = starting_bias.clone()
@@ -393,7 +410,14 @@ def calibrate_character_greedy_bias(
             for delta in deltas:
                 candidate_bias = best_bias.clone()
                 candidate_bias[label_index] += float(delta)
-                candidate_breakdown = _breakdown((logits + candidate_bias).argmax(dim=1), targets, labels)
+                candidate_scores = logits + candidate_bias
+                candidate_predictions = _apply_pair_rules_to_predictions(
+                    candidate_scores,
+                    candidate_scores.argmax(dim=1),
+                    labels,
+                    pair_rules,
+                )
+                candidate_breakdown = _breakdown(candidate_predictions, targets, labels)
                 if (
                     candidate_breakdown["validation_accuracy"] < min_validation
                     or candidate_breakdown["punctuation_validation_accuracy"] < min_punctuation
@@ -435,6 +459,8 @@ def calibrate_character_greedy_bias(
                 "objective": objective,
                 "best_checkpoint": best_breakdown,
                 "source": "greedy_per_label_validation_probe",
+                "includes_pair_rules": include_pair_rules,
+                "pair_rules_sha256": _file_sha256(PAIR_RULES_PATH) if include_pair_rules else None,
                 "tuned_labels": [labels[index] for index in tuned_indices],
                 "steps": steps,
             },
@@ -450,6 +476,7 @@ def calibrate_character_greedy_bias(
         "improvement": improvement,
         "best_checkpoint": best_breakdown,
         "steps": steps,
+        "includes_pair_rules": include_pair_rules,
         "wrote": bool(write and improved),
         "output_path": str(output_path),
     }
@@ -493,6 +520,11 @@ def main() -> None:
     parser.add_argument("--greedy-labels", default="", help="Greedily tune per-label bias for this label string.")
     parser.add_argument("--greedy-rounds", type=int, default=6)
     parser.add_argument("--greedy-deltas", default="-0.12,-0.08,-0.04,0.04,0.08,0.12")
+    parser.add_argument(
+        "--include-pair-rules",
+        action="store_true",
+        help="Evaluate greedy bias candidates after applying current character pair rules.",
+    )
     parser.add_argument("--pair-rules", action="store_true", help="Tune ordered visual-twin pair rules instead of bias.")
     parser.add_argument(
         "--pair-families",
@@ -570,6 +602,7 @@ def main() -> None:
             min_digit=args.min_digit,
             min_letter=args.min_letter,
             min_punctuation=args.min_punctuation,
+            include_pair_rules=args.include_pair_rules,
             write=not args.dry_run,
         )
     else:
