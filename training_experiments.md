@@ -47,6 +47,14 @@ restored, so future improvement loops do not repeat known-bad blends.
 
 ## Restored Experiments
 
+- Rejected digit-preserving mixed-case calibration probe:
+  - Command shape: `python3 scripts/calibrate_mixedcase_logits.py --greedy-labels '0123456789OIlSsoZzqgB' --objective digit_test_accuracy --min-test 87.45834091970583 --min-case-or-visual 97.77712688900675 --min-digit 94.92034512205895 --min-upper 84.07133286543737 --min-lower 72.65235226726782 --dry-run`
+  - Result: no safe logit-bias step was found (`digit_test_accuracy` stayed `94.9203%` and `test_accuracy` stayed `87.4583%`), so no artifact was written.
+
+- Rejected character-letter calibration probe:
+  - Command shape: `python3 scripts/calibrate_character_logits.py --greedy-labels 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789' --objective letter_validation_accuracy --min-validation 93.59069511917402 --min-digit 95.05 --min-letter 92.73 --dry-run`
+  - Result: no safe step was found (`letter_validation_accuracy` stayed `92.7326%` and `validation_accuracy` stayed `93.5899%`), so no artifact was written.
+
 - Character model with HASY + all UJI character data:
   - Command shape: `python3 character_model.py --model widecnn --warm-start --augment --extra-root data/extra_hasyv2/character_ascii --extra-root data/uji_pen_v2/character_ascii ...`
   - Result: peaked below the deployed `90.89%` checkpoint, so `character_cnn.pt`, `character_training_metrics.json`, and `character_exemplars.pt` were restored.
