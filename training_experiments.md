@@ -1245,3 +1245,9 @@ restored, so future improvement loops do not repeat known-bad blends.
   - Result: not promotable and no deployed artifact changed. The candidate never met save floors; epoch 2 reached only `54.85%` raw exact, `69.60%` digit, `56.40%` upper, and `64.98%` lower, leaving only a metrics JSON and no candidate weights.
   - Verification: `tmp/candidates/mixedcase_wide_transfer_sp900_cvl_metrics.json` records `best_checkpoint.test_accuracy: 0.0`; `scripts/summarize_benchmarks.py --json` stayed at the deployed baseline.
   - Takeaway: changing to a larger fresh representation without a longer/pretrained schedule is a dead end for the fast loop. The next high-yield attempt should either fine-tune the deployed architecture with candidate-only output plus calibration, or collect/export the missing real correction labels before another broad representation run.
+
+- Character candidate artifact isolation:
+  - Code path: added `character_model.py --output-weights-path`, `--output-labels-path`, `--output-exemplars-path`, and `--output-metrics-path` so character fine-tunes can write candidate artifacts under `tmp/` before any deployment. Deployed benchmark gates now reject non-default output paths, and protected training restores artifacts if the training command raises before post-training gate comparison.
+  - Rejected smoke: a one-epoch `widecnn` warm-start candidate with weak visual-twin labels and letter-focused objective failed safely before writing candidate files; best observed floors were `93.09%` validation, `94.04%` digit, and `92.42%` letter, below the configured preservation floors.
+  - Verification: character, correction, and benchmark tests passed; compile and diff checks passed.
+  - Takeaway: character work now has the same candidate-first workflow as mixed-case. Future character attempts can be larger without risking live artifacts, but this smoke confirmed the recent warm-start recipe still regresses the exact gates.

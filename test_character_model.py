@@ -250,6 +250,82 @@ class CharacterPostprocessingTests(unittest.TestCase):
         self.assertTrue(train.called)
         self.assertFalse(restore.called)
 
+    def test_character_cli_passes_candidate_output_paths(self) -> None:
+        """Candidate character runs should write to caller-provided artifact paths."""
+
+        with (
+            tempfile.TemporaryDirectory() as directory,
+            patch(
+                "sys.argv",
+                [
+                    "character_model.py",
+                    "--output-weights-path",
+                    str(Path(directory) / "candidate.pt"),
+                    "--output-labels-path",
+                    str(Path(directory) / "candidate_labels.json"),
+                    "--output-exemplars-path",
+                    str(Path(directory) / "candidate_exemplars.pt"),
+                    "--output-metrics-path",
+                    str(Path(directory) / "candidate_metrics.json"),
+                ],
+            ),
+            patch("character_model.train_character_model") as train,
+        ):
+            character_model.main()
+
+        _, kwargs = train.call_args
+        self.assertEqual(kwargs["output_weights_path"], Path(directory) / "candidate.pt")
+        self.assertEqual(kwargs["output_labels_path"], Path(directory) / "candidate_labels.json")
+        self.assertEqual(kwargs["output_exemplars_path"], Path(directory) / "candidate_exemplars.pt")
+        self.assertEqual(kwargs["output_metrics_path"], Path(directory) / "candidate_metrics.json")
+
+    def test_character_cli_rejects_candidate_outputs_with_deployed_gates(self) -> None:
+        """Deployed benchmark gates should not approve candidate character files."""
+
+        with (
+            tempfile.TemporaryDirectory() as directory,
+            patch(
+                "sys.argv",
+                [
+                    "character_model.py",
+                    "--require-benchmark-gates",
+                    "--output-weights-path",
+                    str(Path(directory) / "candidate.pt"),
+                ],
+            ),
+            patch("character_model.train_character_model") as train,
+        ):
+            with self.assertRaisesRegex(ValueError, "deployed character artifacts"):
+                character_model.main()
+
+        self.assertFalse(train.called)
+
+    def test_character_cli_restores_artifacts_when_training_raises(self) -> None:
+        """Protected character training should restore artifacts after hard failures."""
+
+        with (
+            tempfile.TemporaryDirectory() as directory,
+            patch(
+                "sys.argv",
+                [
+                    "character_model.py",
+                    "--require-benchmark-gates",
+                    "--benchmark-gate-names",
+                    "character_exact",
+                    "--benchmark-backup-dir",
+                    str(Path(directory) / "backup"),
+                ],
+            ),
+            patch("character_model.saved_benchmark_values", return_value={"character_exact": 94.1}),
+            patch("character_model.backup_character_artifacts"),
+            patch("character_model.restore_character_artifacts") as restore,
+            patch("character_model.train_character_model", side_effect=RuntimeError("training failed")),
+        ):
+            with self.assertRaisesRegex(RuntimeError, "training failed"):
+                character_model.main()
+
+        self.assertTrue(restore.called)
+
     def test_train_only_extra_root_skips_validation_loader(self) -> None:
         """Generated practice samples should train the model without entering validation."""
 

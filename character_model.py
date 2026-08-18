@@ -996,6 +996,10 @@ def train_character_model(
     min_checkpoint_digit: float = 0.0,
     min_checkpoint_letter: float = 0.0,
     min_checkpoint_punctuation: float = 0.0,
+    output_weights_path: Path = WEIGHTS_PATH,
+    output_labels_path: Path = LABELS_PATH,
+    output_exemplars_path: Path = EXEMPLARS_PATH,
+    output_metrics_path: Path = METRICS_PATH,
 ) -> list[CharacterEpochMetrics]:
     """Train the curated character model and save weights/labels/exemplars."""
 
@@ -1137,6 +1141,10 @@ def train_character_model(
     if best_accuracy < min_accuracy:
         raise RuntimeError(f"Best validation accuracy {best_accuracy:.2f}% is below {min_accuracy:.2f}%")
 
+    output_weights_path.parent.mkdir(parents=True, exist_ok=True)
+    output_labels_path.parent.mkdir(parents=True, exist_ok=True)
+    output_exemplars_path.parent.mkdir(parents=True, exist_ok=True)
+    output_metrics_path.parent.mkdir(parents=True, exist_ok=True)
     torch.save(
         {
             "model_state_dict": best_state,
@@ -1156,11 +1164,11 @@ def train_character_model(
             "normalization": {"mean": CHAR_MEAN, "std": CHAR_STD},
             "checkpoint_objective": checkpoint_objective,
         },
-        WEIGHTS_PATH,
+        output_weights_path,
     )
-    LABELS_PATH.write_text(json.dumps(labels, ensure_ascii=False, indent=2), encoding="utf-8")
-    build_character_exemplars(dataset_root, selected_extra_roots)
-    METRICS_PATH.write_text(
+    output_labels_path.write_text(json.dumps(labels, ensure_ascii=False, indent=2), encoding="utf-8")
+    build_character_exemplars(dataset_root, selected_extra_roots, output_path=output_exemplars_path)
+    output_metrics_path.write_text(
         json.dumps(
             {
                 "labels": labels,
@@ -1183,6 +1191,10 @@ def train_character_model(
                 "min_checkpoint_digit": min_checkpoint_digit,
                 "min_checkpoint_letter": min_checkpoint_letter,
                 "min_checkpoint_punctuation": min_checkpoint_punctuation,
+                "output_weights_path": str(output_weights_path),
+                "output_labels_path": str(output_labels_path),
+                "output_exemplars_path": str(output_exemplars_path),
+                "output_metrics_path": str(output_metrics_path),
                 "ambiguity_groups": ["".join(sorted(group)) for group in AMBIGUITY_GROUPS],
                 "best_checkpoint": best_breakdown or {"validation_accuracy": best_accuracy},
                 "history": [asdict(item) for item in history],
@@ -2661,6 +2673,30 @@ def main() -> None:
     parser.add_argument("--min-checkpoint-letter", type=float, default=0.0)
     parser.add_argument("--min-checkpoint-punctuation", type=float, default=0.0)
     parser.add_argument(
+        "--output-weights-path",
+        type=Path,
+        default=WEIGHTS_PATH,
+        help="Where character training writes the selected checkpoint weights.",
+    )
+    parser.add_argument(
+        "--output-labels-path",
+        type=Path,
+        default=LABELS_PATH,
+        help="Where character training writes its label list.",
+    )
+    parser.add_argument(
+        "--output-exemplars-path",
+        type=Path,
+        default=EXEMPLARS_PATH,
+        help="Where character training writes nearest-neighbor exemplars.",
+    )
+    parser.add_argument(
+        "--output-metrics-path",
+        type=Path,
+        default=METRICS_PATH,
+        help="Where character training writes metrics JSON.",
+    )
+    parser.add_argument(
         "--require-benchmark-gates",
         action="store_true",
         help="Restore character artifacts unless selected saved benchmark gates do not regress.",
@@ -2689,6 +2725,18 @@ def main() -> None:
         help="Backup directory used by --require-benchmark-gates.",
     )
     args = parser.parse_args()
+    uses_candidate_outputs = (
+        args.output_weights_path != WEIGHTS_PATH
+        or args.output_labels_path != LABELS_PATH
+        or args.output_exemplars_path != EXEMPLARS_PATH
+        or args.output_metrics_path != METRICS_PATH
+    )
+    if args.require_benchmark_gates and uses_candidate_outputs:
+        raise ValueError(
+            "--require-benchmark-gates evaluates deployed character artifacts. "
+            "Use the default output paths for protected promotion, or train candidate "
+            "artifacts without deployed benchmark gates."
+        )
     gate_names = parse_benchmark_gate_names(args.benchmark_gate_names)
     backup_dir = args.benchmark_backup_dir
     baseline_gates = None
@@ -2700,30 +2748,39 @@ def main() -> None:
                 time.gmtime(),
             )
         backup_character_artifacts(backup_dir)
-    train_character_model(
-        epochs=args.epochs,
-        batch_size=args.batch_size,
-        min_accuracy=args.min_accuracy,
-        model_type=args.model,
-        device_name=args.device,
-        learning_rate=args.learning_rate,
-        label_smoothing=args.label_smoothing,
-        punctuation_loss_weight=args.punctuation_loss_weight,
-        weak_labels=args.weak_labels,
-        weak_loss_weight=args.weak_loss_weight,
-        focal_gamma=args.focal_gamma,
-        seed=args.seed,
-        warm_start=args.warm_start,
-        augment=args.augment,
-        extra_roots=args.extra_root,
-        train_only_extra_roots=args.train_only_extra_root,
-        checkpoint_objective=args.checkpoint_objective,
-        min_checkpoint_validation=args.min_checkpoint_validation,
-        min_checkpoint_ambiguity=args.min_checkpoint_ambiguity,
-        min_checkpoint_digit=args.min_checkpoint_digit,
-        min_checkpoint_letter=args.min_checkpoint_letter,
-        min_checkpoint_punctuation=args.min_checkpoint_punctuation,
-    )
+    try:
+        train_character_model(
+            epochs=args.epochs,
+            batch_size=args.batch_size,
+            min_accuracy=args.min_accuracy,
+            model_type=args.model,
+            device_name=args.device,
+            learning_rate=args.learning_rate,
+            label_smoothing=args.label_smoothing,
+            punctuation_loss_weight=args.punctuation_loss_weight,
+            weak_labels=args.weak_labels,
+            weak_loss_weight=args.weak_loss_weight,
+            focal_gamma=args.focal_gamma,
+            seed=args.seed,
+            warm_start=args.warm_start,
+            augment=args.augment,
+            extra_roots=args.extra_root,
+            train_only_extra_roots=args.train_only_extra_root,
+            checkpoint_objective=args.checkpoint_objective,
+            min_checkpoint_validation=args.min_checkpoint_validation,
+            min_checkpoint_ambiguity=args.min_checkpoint_ambiguity,
+            min_checkpoint_digit=args.min_checkpoint_digit,
+            min_checkpoint_letter=args.min_checkpoint_letter,
+            min_checkpoint_punctuation=args.min_checkpoint_punctuation,
+            output_weights_path=args.output_weights_path,
+            output_labels_path=args.output_labels_path,
+            output_exemplars_path=args.output_exemplars_path,
+            output_metrics_path=args.output_metrics_path,
+        )
+    except Exception:
+        if baseline_gates is not None:
+            restore_character_artifacts(backup_dir)
+        raise
     if baseline_gates is not None:
         candidate_gates = saved_benchmark_values(gate_names)
         failures = benchmark_gate_failures(
