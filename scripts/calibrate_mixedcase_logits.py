@@ -31,6 +31,30 @@ from alnum_model import (  # noqa: E402
 )
 from mnist_model import get_device  # noqa: E402
 
+LABEL_GROUPS = {"digit", "upper", "lower"}
+
+
+def _label_group(label: str) -> str:
+    """Return the broad mixed-case group for one label."""
+
+    if label.isdigit():
+        return "digit"
+    if label.isupper():
+        return "upper"
+    return "lower"
+
+
+def _parse_label_groups(value: str) -> tuple[str, ...] | None:
+    """Parse comma-separated mixed-case label groups from the CLI."""
+
+    groups = tuple(part.strip() for part in value.split(",") if part.strip())
+    if not groups:
+        return None
+    unknown = sorted(set(groups) - LABEL_GROUPS)
+    if unknown:
+        raise ValueError(f"Unknown label group(s): {', '.join(unknown)}")
+    return groups
+
 
 def _mixedcase_logits(batch_size: int) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, list[str]]:
     """Return deployed logits, test targets, training targets, and labels."""
@@ -119,6 +143,18 @@ def _metrics(predictions: torch.Tensor, targets: torch.Tensor, labels: list[str]
         "upper_test_accuracy": 100.0 * group_correct["upper"] / max(group_total["upper"], 1),
         "lower_test_accuracy": 100.0 * group_correct["lower"] / max(group_total["lower"], 1),
     }
+
+
+def _floor_or_baseline(
+    requested: float | None,
+    baseline: dict[str, float],
+    metric_name: str,
+) -> float:
+    """Use the current baseline as the default floor to avoid regressions."""
+
+    if requested is not None:
+        return float(requested)
+    return float(baseline.get(metric_name, 0.0))
 
 
 def _pair_metric_helpers(labels: list[str]) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
@@ -214,11 +250,13 @@ def calibrate_mixedcase_pair_rules(
     rounds: int = 8,
     min_improvement: float = 0.01,
     objective: str = "test_accuracy",
-    min_test: float = 0.0,
-    min_case_or_visual: float = 97.0,
-    min_digit: float = 83.0,
-    min_upper: float = 72.0,
-    min_lower: float = 79.0,
+    min_test: float | None = None,
+    min_case_or_visual: float | None = None,
+    min_digit: float | None = None,
+    min_upper: float | None = None,
+    min_lower: float | None = None,
+    source_groups: tuple[str, ...] | None = None,
+    target_groups: tuple[str, ...] | None = None,
     write: bool = True,
 ) -> dict[str, object]:
     """Greedily tune ordered pairwise visual-twin rules."""
@@ -235,6 +273,15 @@ def calibrate_mixedcase_pair_rules(
     base_metrics = _fast_pair_metrics(starting_predictions, targets, case_or_match, is_digit, is_upper, is_lower)
     if objective not in base_metrics:
         raise ValueError(f"Unknown mixed-case calibration objective: {objective}")
+    min_test = _floor_or_baseline(min_test, base_metrics, "test_accuracy")
+    min_case_or_visual = _floor_or_baseline(
+        min_case_or_visual,
+        base_metrics,
+        "case_or_ambiguity_aware_test_accuracy",
+    )
+    min_digit = _floor_or_baseline(min_digit, base_metrics, "digit_test_accuracy")
+    min_upper = _floor_or_baseline(min_upper, base_metrics, "upper_test_accuracy")
+    min_lower = _floor_or_baseline(min_lower, base_metrics, "lower_test_accuracy")
     best_metrics = base_metrics
     best_predictions = starting_predictions.clone()
     label_to_index = {label: index for index, label in enumerate(labels)}
@@ -242,6 +289,8 @@ def calibrate_mixedcase_pair_rules(
         (left, right)
         for family in families
         for left, right in itertools.permutations(dict.fromkeys(label for label in family if label in label_to_index), 2)
+        if (source_groups is None or _label_group(left) in source_groups)
+        and (target_groups is None or _label_group(right) in target_groups)
     ]
     rules: list[dict[str, object]] = list(existing_rules)
     new_rules: list[dict[str, object]] = []
@@ -432,11 +481,12 @@ def calibrate_mixedcase_greedy_bias(
     rounds: int = 3,
     min_improvement: float = 0.01,
     objective: str = "test_accuracy",
-    min_test: float = 0.0,
-    min_case_or_visual: float = 97.0,
-    min_digit: float = 83.0,
-    min_upper: float = 72.0,
-    min_lower: float = 79.0,
+    min_test: float | None = None,
+    min_case_or_visual: float | None = None,
+    min_digit: float | None = None,
+    min_upper: float | None = None,
+    min_lower: float | None = None,
+    label_groups: tuple[str, ...] | None = None,
     write: bool = True,
 ) -> dict[str, object]:
     """Greedily tune tiny per-label mixed-case bias changes."""
@@ -448,9 +498,22 @@ def calibrate_mixedcase_greedy_bias(
     base_metrics = _metrics((logits + starting_bias).argmax(dim=1), targets, labels)
     if objective not in base_metrics:
         raise ValueError(f"Unknown mixed-case calibration objective: {objective}")
+    min_test = _floor_or_baseline(min_test, base_metrics, "test_accuracy")
+    min_case_or_visual = _floor_or_baseline(
+        min_case_or_visual,
+        base_metrics,
+        "case_or_ambiguity_aware_test_accuracy",
+    )
+    min_digit = _floor_or_baseline(min_digit, base_metrics, "digit_test_accuracy")
+    min_upper = _floor_or_baseline(min_upper, base_metrics, "upper_test_accuracy")
+    min_lower = _floor_or_baseline(min_lower, base_metrics, "lower_test_accuracy")
     best_bias = starting_bias.clone()
     best_metrics = base_metrics
-    tuned_indices = [labels.index(label) for label in dict.fromkeys(labels_to_tune) if label in labels]
+    tuned_indices = [
+        labels.index(label)
+        for label in dict.fromkeys(labels_to_tune)
+        if label in labels and (label_groups is None or _label_group(label) in label_groups)
+    ]
     steps: list[dict[str, object]] = []
     for round_index in range(max(0, rounds)):
         improved_this_round = False
@@ -566,6 +629,21 @@ def main() -> None:
     )
     parser.add_argument("--pair-thresholds", default="-1.75,-1.5,-1.25,-1.0,-0.85,-0.7,-0.5,-0.32,-0.18")
     parser.add_argument(
+        "--pair-source-groups",
+        default="",
+        help="Comma-separated groups allowed as pair-rule sources: digit, upper, lower.",
+    )
+    parser.add_argument(
+        "--pair-target-groups",
+        default="",
+        help="Comma-separated groups allowed as pair-rule targets: digit, upper, lower.",
+    )
+    parser.add_argument(
+        "--greedy-label-groups",
+        default="",
+        help="Comma-separated groups allowed for greedy bias labels: digit, upper, lower.",
+    )
+    parser.add_argument(
         "--objective",
         default="test_accuracy",
         choices=[
@@ -579,11 +657,11 @@ def main() -> None:
         ],
         help="Metric to improve in greedy mode while preserving the configured floors.",
     )
-    parser.add_argument("--min-test", type=float, default=0.0)
-    parser.add_argument("--min-case-or-visual", type=float, default=97.0)
-    parser.add_argument("--min-digit", type=float, default=83.0)
-    parser.add_argument("--min-upper", type=float, default=72.0)
-    parser.add_argument("--min-lower", type=float, default=79.0)
+    parser.add_argument("--min-test", type=float, default=None)
+    parser.add_argument("--min-case-or-visual", type=float, default=None)
+    parser.add_argument("--min-digit", type=float, default=None)
+    parser.add_argument("--min-upper", type=float, default=None)
+    parser.add_argument("--min-lower", type=float, default=None)
     parser.add_argument("--write", action="store_true", help="Write the artifact only after separately checking app gates.")
     parser.add_argument("--dry-run", action="store_true", help="Evaluate calibration without writing an artifact.")
     parser.add_argument(
@@ -604,6 +682,8 @@ def main() -> None:
     if args.pair_rules:
         thresholds = tuple(float(part) for part in args.pair_thresholds.split(",") if part.strip())
         families = tuple(part for part in args.pair_families.split(",") if part)
+        source_groups = _parse_label_groups(args.pair_source_groups)
+        target_groups = _parse_label_groups(args.pair_target_groups)
         report = calibrate_mixedcase_pair_rules(
             output_path=args.output_path,
             batch_size=args.batch_size,
@@ -617,10 +697,13 @@ def main() -> None:
             min_digit=args.min_digit,
             min_upper=args.min_upper,
             min_lower=args.min_lower,
+            source_groups=source_groups,
+            target_groups=target_groups,
             write=args.write and not args.dry_run,
         )
     elif args.greedy_labels:
         deltas = tuple(float(part) for part in args.greedy_deltas.split(",") if part.strip())
+        label_groups = _parse_label_groups(args.greedy_label_groups)
         report = calibrate_mixedcase_greedy_bias(
             output_path=args.output_path,
             batch_size=args.batch_size,
@@ -634,6 +717,7 @@ def main() -> None:
             min_digit=args.min_digit,
             min_upper=args.min_upper,
             min_lower=args.min_lower,
+            label_groups=label_groups,
             write=args.write and not args.dry_run,
         )
     else:

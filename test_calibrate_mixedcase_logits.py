@@ -10,6 +10,7 @@ import torch
 from scripts.calibrate_mixedcase_logits import calibrate_mixedcase_greedy_bias
 from scripts.calibrate_mixedcase_logits import calibrate_mixedcase_pair_rules
 from scripts.calibrate_mixedcase_logits import main
+from scripts.calibrate_mixedcase_logits import _parse_label_groups
 
 
 class MixedcaseCalibrationCliTests(unittest.TestCase):
@@ -227,6 +228,84 @@ class MixedcaseCalibrationCliTests(unittest.TestCase):
             artifact = torch.load(output_path, map_location="cpu", weights_only=True)
             self.assertEqual(artifact["objective"], "lower_test_accuracy")
 
+    def test_greedy_bias_group_filter_tunes_only_matching_labels(self) -> None:
+        """A group filter should skip requested mixed-case labels outside the bucket."""
+
+        logits = torch.tensor(
+            [
+                [0.50, 0.00, 0.00],
+                [0.00, 0.50, 0.00],
+                [0.00, 0.20, 0.10],
+                [0.00, 0.30, 0.20],
+            ],
+            dtype=torch.float32,
+        )
+        targets = torch.tensor([0, 1, 2, 2], dtype=torch.long)
+        train_targets = torch.tensor([0, 1, 2], dtype=torch.long)
+        labels = ["0", "A", "a"]
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            output_path = Path(temp_dir) / "mixedcase_logit_bias.pt"
+            with (
+                patch("scripts.calibrate_mixedcase_logits._mixedcase_logits", return_value=(logits, targets, train_targets, labels)),
+                patch("scripts.calibrate_mixedcase_logits.MIXEDCASE_LABELS", labels),
+            ):
+                report = calibrate_mixedcase_greedy_bias(
+                    output_path=output_path,
+                    batch_size=4,
+                    labels_to_tune="0Aa",
+                    label_groups=("lower",),
+                    deltas=(0.2,),
+                    rounds=1,
+                    min_improvement=0.01,
+                    objective="lower_test_accuracy",
+                    min_test=0.0,
+                    min_case_or_visual=0.0,
+                    min_digit=100.0,
+                    min_upper=100.0,
+                    min_lower=0.0,
+                    write=True,
+                )
+
+            self.assertTrue(report["wrote"])
+            artifact = torch.load(output_path, map_location="cpu", weights_only=True)
+            self.assertEqual(artifact["tuned_labels"], ["a"])
+
+    def test_greedy_bias_defaults_to_non_regression_floors(self) -> None:
+        """A lower split gain should not silently regress the digit split."""
+
+        logits = torch.tensor(
+            [
+                [0.20, 0.10, 0.00],
+                [0.30, 0.20, 0.10],
+            ],
+            dtype=torch.float32,
+        )
+        targets = torch.tensor([0, 2], dtype=torch.long)
+        train_targets = torch.tensor([0, 1, 2], dtype=torch.long)
+        labels = ["0", "A", "a"]
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            output_path = Path(temp_dir) / "mixedcase_logit_bias.pt"
+            with (
+                patch("scripts.calibrate_mixedcase_logits._mixedcase_logits", return_value=(logits, targets, train_targets, labels)),
+                patch("scripts.calibrate_mixedcase_logits.MIXEDCASE_LABELS", labels),
+            ):
+                report = calibrate_mixedcase_greedy_bias(
+                    output_path=output_path,
+                    batch_size=2,
+                    labels_to_tune="a",
+                    deltas=(0.3,),
+                    rounds=1,
+                    min_improvement=0.01,
+                    objective="lower_test_accuracy",
+                    write=True,
+                )
+
+            self.assertFalse(report["wrote"])
+            self.assertEqual(report["calibrated_objective"], report["base_objective"])
+            self.assertFalse(output_path.exists())
+
     def test_greedy_bias_rejects_unknown_objective(self) -> None:
         """Invalid objective names should fail before writing an artifact."""
 
@@ -336,6 +415,84 @@ class MixedcaseCalibrationCliTests(unittest.TestCase):
             artifact = json.loads(output_path.read_text(encoding="utf-8"))
             self.assertEqual(artifact["objective"], "lower_test_accuracy")
 
+    def test_pair_rules_group_filter_blocks_cross_group_flips(self) -> None:
+        """Lowercase-only pair searches should skip digit-to-upper corrections."""
+
+        logits = torch.tensor(
+            [
+                [0.40, 0.30, 0.00],
+                [0.40, 0.20, 0.00],
+                [0.10, 0.50, 0.00],
+            ],
+            dtype=torch.float32,
+        )
+        targets = torch.tensor([1, 0, 1], dtype=torch.long)
+        train_targets = torch.tensor([0, 1, 2], dtype=torch.long)
+        labels = ["0", "O", "o"]
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            output_path = Path(temp_dir) / "mixedcase_pair_rules.json"
+            with (
+                patch("scripts.calibrate_mixedcase_logits._mixedcase_logits", return_value=(logits, targets, train_targets, labels)),
+                patch("scripts.calibrate_mixedcase_logits.MIXEDCASE_LABELS", labels),
+                patch("scripts.calibrate_mixedcase_logits.MIXEDCASE_LOGIT_BIAS_PATH", Path(temp_dir) / "missing.pt"),
+            ):
+                report = calibrate_mixedcase_pair_rules(
+                    output_path=output_path,
+                    batch_size=3,
+                    families=("0O",),
+                    thresholds=(-0.15,),
+                    rounds=2,
+                    source_groups=("lower",),
+                    target_groups=("lower",),
+                    min_improvement=0.01,
+                    min_case_or_visual=0.0,
+                    min_digit=0.0,
+                    min_upper=0.0,
+                    min_lower=0.0,
+                    write=True,
+                )
+
+            self.assertFalse(report["wrote"])
+            self.assertEqual(report["new_rules"], [])
+            self.assertFalse(output_path.exists())
+
+    def test_pair_rules_defaults_to_non_regression_floors(self) -> None:
+        """Pair-rule searches should preserve every split unless floors are explicit."""
+
+        logits = torch.tensor(
+            [
+                [0.40, 0.30, 0.00],
+                [0.40, 0.50, 0.00],
+            ],
+            dtype=torch.float32,
+        )
+        targets = torch.tensor([0, 1], dtype=torch.long)
+        train_targets = torch.tensor([0, 1, 2], dtype=torch.long)
+        labels = ["0", "O", "o"]
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            output_path = Path(temp_dir) / "mixedcase_pair_rules.json"
+            with (
+                patch("scripts.calibrate_mixedcase_logits._mixedcase_logits", return_value=(logits, targets, train_targets, labels)),
+                patch("scripts.calibrate_mixedcase_logits.MIXEDCASE_LABELS", labels),
+                patch("scripts.calibrate_mixedcase_logits.MIXEDCASE_LOGIT_BIAS_PATH", Path(temp_dir) / "missing.pt"),
+            ):
+                report = calibrate_mixedcase_pair_rules(
+                    output_path=output_path,
+                    batch_size=2,
+                    families=("0O",),
+                    thresholds=(-0.15,),
+                    rounds=1,
+                    min_improvement=0.01,
+                    objective="upper_test_accuracy",
+                    write=True,
+                )
+
+            self.assertFalse(report["wrote"])
+            self.assertEqual(report["calibrated_objective"], report["base_objective"])
+            self.assertFalse(output_path.exists())
+
     def test_pair_rules_reject_test_gain_when_objective_regresses(self) -> None:
         """Optimizing lowercase should not accept rules that only help total accuracy."""
 
@@ -377,6 +534,90 @@ class MixedcaseCalibrationCliTests(unittest.TestCase):
             self.assertFalse(report["wrote"])
             self.assertEqual(report["calibrated_objective"], report["base_objective"])
             self.assertFalse(output_path.exists())
+
+    def test_cli_passes_pair_rule_group_filters(self) -> None:
+        """Pair-rule CLI group filters should reach the calibrator."""
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            output_path = Path(temp_dir) / "mixedcase_pair_rules.json"
+            output = StringIO()
+            with (
+                patch(
+                    "sys.argv",
+                    [
+                        "calibrate_mixedcase_logits.py",
+                        "--pair-rules",
+                        "--output-path",
+                        str(output_path),
+                        "--pair-source-groups",
+                        "upper",
+                        "--pair-target-groups",
+                        "upper,lower",
+                        "--dry-run",
+                    ],
+                ),
+                patch(
+                    "scripts.calibrate_mixedcase_logits.calibrate_mixedcase_pair_rules",
+                    return_value={
+                        "base_accuracy": 87.0,
+                        "calibrated_accuracy": 87.0,
+                        "best_scale": "greedy-pair-rules",
+                        "improvement": 0.0,
+                        "best_checkpoint": {"test_accuracy": 87.0},
+                        "wrote": False,
+                        "output_path": str(output_path),
+                    },
+                ) as calibrate,
+                patch("sys.stdout", output),
+            ):
+                main()
+
+            self.assertEqual(calibrate.call_args.kwargs["source_groups"], ("upper",))
+            self.assertEqual(calibrate.call_args.kwargs["target_groups"], ("upper", "lower"))
+
+    def test_cli_passes_greedy_label_group_filter(self) -> None:
+        """Greedy-bias CLI group filters should reach the calibrator."""
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            output_path = Path(temp_dir) / "mixedcase_logit_bias.pt"
+            output = StringIO()
+            with (
+                patch(
+                    "sys.argv",
+                    [
+                        "calibrate_mixedcase_logits.py",
+                        "--greedy-labels",
+                        "0Aa",
+                        "--greedy-label-groups",
+                        "lower",
+                        "--output-path",
+                        str(output_path),
+                        "--dry-run",
+                    ],
+                ),
+                patch(
+                    "scripts.calibrate_mixedcase_logits.calibrate_mixedcase_greedy_bias",
+                    return_value={
+                        "base_accuracy": 87.0,
+                        "calibrated_accuracy": 87.0,
+                        "best_scale": "greedy-per-label",
+                        "improvement": 0.0,
+                        "best_checkpoint": {"test_accuracy": 87.0},
+                        "wrote": False,
+                        "output_path": str(output_path),
+                    },
+                ) as calibrate,
+                patch("sys.stdout", output),
+            ):
+                main()
+
+            self.assertEqual(calibrate.call_args.kwargs["label_groups"], ("lower",))
+
+    def test_parse_label_groups_rejects_unknown_group(self) -> None:
+        """Group filters should reject typos before a long calibration run."""
+
+        with self.assertRaisesRegex(ValueError, "Unknown label group"):
+            _parse_label_groups("lower,letter")
 
 
 if __name__ == "__main__":
