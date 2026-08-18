@@ -479,19 +479,30 @@
       "objective_gain": 0.013408420488076445,
       "validation_accuracy": 94.10986101919259,
       "objective_value": 93.42987396084742
+    },
+    {
+      "round": 1,
+      "from": "&",
+      "to": "f",
+      "threshold": -3.5,
+      "flips": 1,
+      "objective": "letter_validation_accuracy",
+      "objective_gain": 0.013408420488076445,
+      "validation_accuracy": 94.13822444927673,
+      "objective_value": 93.47009922231162
     }
   ],
   "checkpoint_sha256": "9239c6de233b909ddc48f55f5ac0f61b2fd9950b11d0492334ae089ca6c9684c",
-  "base_accuracy": 94.10986101919259,
-  "calibrated_accuracy": 94.10986101919259,
-  "base_objective": 93.41646554035934,
-  "calibrated_objective": 93.42987396084742,
+  "base_accuracy": 94.12876997258202,
+  "calibrated_accuracy": 94.13822444927673,
+  "base_objective": 93.45669080182354,
+  "calibrated_objective": 93.47009922231162,
   "objective": "letter_validation_accuracy",
   "best_checkpoint": {
-    "validation_accuracy": 94.10986101919259,
-    "ambiguity_aware_validation_accuracy": 99.09237023730736,
+    "validation_accuracy": 94.13822444927673,
+    "ambiguity_aware_validation_accuracy": 99.10182471400208,
     "digit_validation_accuracy": 95.22687094873307,
-    "letter_validation_accuracy": 93.42987396084742,
+    "letter_validation_accuracy": 93.47009922231162,
     "punctuation_validation_accuracy": 96.34317862165963,
     "punctuation_ambiguity_aware_validation_accuracy": 99.15611814345992
   },
