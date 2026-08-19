@@ -141,6 +141,7 @@ def hybrid_stack_metrics(
     batch_size: int,
     apply_calibration: bool = True,
     hybrid_artifact_path: Path = MIXEDCASE_HYBRID_PATH,
+    calibration_checkpoint_path: Path = MIXEDCASE_WEIGHTS_PATH,
 ) -> dict[str, float]:
     """Evaluate mixed logits after the deployed folded-hybrid decision layer."""
 
@@ -149,8 +150,13 @@ def hybrid_stack_metrics(
     if folded_model is None or list(folded_labels or []) != folded_expected:
         raise RuntimeError("Folded alnum model is required for hybrid ensemble probing.")
     artifact = _load_hybrid_artifact(hybrid_artifact_path)
-    bias = load_current_logit_bias(device) if apply_calibration else None
-    pair_rules = _load_existing_pair_rules(MIXEDCASE_PAIR_RULES_PATH, list(MIXEDCASE_LABELS)) if apply_calibration else []
+    use_deployed_calibration = apply_calibration and calibration_artifacts_match_checkpoint(calibration_checkpoint_path)
+    bias = load_current_logit_bias(device) if use_deployed_calibration else None
+    pair_rules = (
+        _load_existing_pair_rules(MIXEDCASE_PAIR_RULES_PATH, list(MIXEDCASE_LABELS))
+        if use_deployed_calibration
+        else []
+    )
     loader = DataLoader(TensorDataset(images, targets), batch_size=batch_size, shuffle=False)
     predictions: list[torch.Tensor] = []
     target_parts: list[torch.Tensor] = []
@@ -223,6 +229,37 @@ def load_current_logit_bias(device: torch.device) -> torch.Tensor | None:
     return bias.reshape(1, -1).to(device)
 
 
+def artifact_checkpoint_hash(path: Path) -> str | None:
+    """Return the checkpoint hash stored in a calibration artifact."""
+
+    if not path.exists():
+        return None
+    try:
+        if path.suffix == ".pt":
+            artifact = torch.load(path, map_location="cpu", weights_only=True)
+        else:
+            artifact = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, RuntimeError, ValueError, json.JSONDecodeError):
+        return None
+    if not isinstance(artifact, dict):
+        return None
+    stored = artifact.get("checkpoint_sha256")
+    return str(stored) if isinstance(stored, str) and stored else None
+
+
+def calibration_artifacts_match_checkpoint(checkpoint_path: Path) -> bool:
+    """Return whether deployed bias and pair rules belong to the checkpoint."""
+
+    checkpoint_hash = file_sha256(checkpoint_path)
+    if checkpoint_hash is None:
+        return False
+    calibration_paths = [MIXEDCASE_LOGIT_BIAS_PATH, MIXEDCASE_PAIR_RULES_PATH]
+    existing_paths = [path for path in calibration_paths if path.exists()]
+    if not existing_paths:
+        return False
+    return all(artifact_checkpoint_hash(path) == checkpoint_hash for path in existing_paths)
+
+
 def metric_delta(candidate: dict[str, float], baseline: dict[str, float]) -> dict[str, float]:
     """Return candidate-minus-baseline deltas for shared metrics."""
 
@@ -243,7 +280,14 @@ def run_probe(candidate_limit: int, batch_size: int, min_delta: float) -> dict[s
     current_raw = load_raw_checkpoint(MIXEDCASE_WEIGHTS_PATH, device)
     if current_raw is None:
         raise RuntimeError("Could not load current raw mixed-case checkpoint.")
-    baseline = hybrid_stack_metrics(current_raw, images, targets, device, batch_size)
+    baseline = hybrid_stack_metrics(
+        current_raw,
+        images,
+        targets,
+        device,
+        batch_size,
+        calibration_checkpoint_path=MIXEDCASE_WEIGHTS_PATH,
+    )
     floors = {
         "case_or_ambiguity_aware_test_accuracy": baseline["case_or_ambiguity_aware_test_accuracy"],
         "digit_test_accuracy": baseline["digit_test_accuracy"],
@@ -258,15 +302,32 @@ def run_probe(candidate_limit: int, batch_size: int, min_delta: float) -> dict[s
         candidate_model = load_raw_checkpoint(path, device)
         if candidate_model is None:
             continue
-        single_metrics = hybrid_stack_metrics(candidate_model, images, targets, device, batch_size)
+        candidate_calibration_matched = calibration_artifacts_match_checkpoint(path)
+        single_metrics = hybrid_stack_metrics(
+            candidate_model,
+            images,
+            targets,
+            device,
+            batch_size,
+            calibration_checkpoint_path=path,
+        )
         ensemble_model = AverageLogitModel([current_raw, candidate_model]).to(device).eval()
-        ensemble_metrics = hybrid_stack_metrics(ensemble_model, images, targets, device, batch_size)
+        ensemble_metrics = hybrid_stack_metrics(
+            ensemble_model,
+            images,
+            targets,
+            device,
+            batch_size,
+            apply_calibration=False,
+        )
         report = {
             "path": str(path),
             "single_metrics": single_metrics,
             "single_delta": metric_delta(single_metrics, baseline),
             "ensemble_metrics": ensemble_metrics,
             "ensemble_delta": metric_delta(ensemble_metrics, baseline),
+            "single_calibration_matched": candidate_calibration_matched,
+            "ensemble_calibration_applied": False,
             "accepted": (
                 ensemble_metrics["test_accuracy"] >= baseline["test_accuracy"] + min_delta
                 and meets_floors(ensemble_metrics, floors)

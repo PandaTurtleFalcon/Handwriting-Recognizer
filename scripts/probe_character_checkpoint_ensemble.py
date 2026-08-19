@@ -179,11 +179,13 @@ def calibrated_predictions(
     device: torch.device,
     batch_size: int,
     apply_calibration: bool = True,
+    calibration_checkpoint_path: Path = WEIGHTS_PATH,
 ) -> torch.Tensor:
     """Run logits through current character bias and pair-rule calibration."""
 
-    bias = _load_existing_bias(LOGIT_BIAS_PATH, labels) if apply_calibration else torch.zeros(len(labels))
-    pair_rules = _load_existing_pair_rules(PAIR_RULES_PATH, labels) if apply_calibration else []
+    use_deployed_calibration = apply_calibration and calibration_artifacts_match_checkpoint(calibration_checkpoint_path)
+    bias = _load_existing_bias(LOGIT_BIAS_PATH, labels) if use_deployed_calibration else torch.zeros(len(labels))
+    pair_rules = _load_existing_pair_rules(PAIR_RULES_PATH, labels) if use_deployed_calibration else []
     loader = DataLoader(TensorDataset(images), batch_size=batch_size, shuffle=False)
     predictions = []
     with torch.no_grad():
@@ -192,6 +194,37 @@ def calibrated_predictions(
             starting = scores.argmax(dim=1)
             predictions.append(_apply_pair_rules_to_predictions(scores, starting, labels, pair_rules))
     return torch.cat(predictions)
+
+
+def artifact_checkpoint_hash(path: Path) -> str | None:
+    """Return the checkpoint hash stored in a calibration artifact."""
+
+    if not path.exists():
+        return None
+    try:
+        if path.suffix == ".pt":
+            artifact = torch.load(path, map_location="cpu", weights_only=True)
+        else:
+            artifact = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, RuntimeError, ValueError, json.JSONDecodeError):
+        return None
+    if not isinstance(artifact, dict):
+        return None
+    stored = artifact.get("checkpoint_sha256")
+    return str(stored) if isinstance(stored, str) and stored else None
+
+
+def calibration_artifacts_match_checkpoint(checkpoint_path: Path) -> bool:
+    """Return whether deployed bias and pair rules belong to the checkpoint."""
+
+    checkpoint_hash = file_sha256(checkpoint_path)
+    if checkpoint_hash is None:
+        return False
+    calibration_paths = [LOGIT_BIAS_PATH, PAIR_RULES_PATH]
+    existing_paths = [path for path in calibration_paths if path.exists()]
+    if not existing_paths:
+        return False
+    return all(artifact_checkpoint_hash(path) == checkpoint_hash for path in existing_paths)
 
 
 def metric_delta(candidate: dict[str, float], baseline: dict[str, float]) -> dict[str, float]:
@@ -224,7 +257,14 @@ def run_probe(candidate_limit: int, batch_size: int, min_delta: float) -> dict[s
     if loaded_current is None:
         raise RuntimeError("Could not load current character checkpoint.")
     current_raw, labels = loaded_current
-    baseline_predictions = calibrated_predictions(current_raw, images, labels, device, batch_size)
+    baseline_predictions = calibrated_predictions(
+        current_raw,
+        images,
+        labels,
+        device,
+        batch_size,
+        calibration_checkpoint_path=WEIGHTS_PATH,
+    )
     baseline = _metrics(baseline_predictions, targets, labels)
     unique_paths, duplicate_hashes = discover_checkpoint_paths()
     reports: list[dict[str, object]] = []
@@ -234,10 +274,25 @@ def run_probe(candidate_limit: int, batch_size: int, min_delta: float) -> dict[s
         if loaded_candidate is None:
             continue
         candidate_raw, _candidate_labels = loaded_candidate
-        single_predictions = calibrated_predictions(candidate_raw, images, labels, device, batch_size)
+        candidate_calibration_matched = calibration_artifacts_match_checkpoint(path)
+        single_predictions = calibrated_predictions(
+            candidate_raw,
+            images,
+            labels,
+            device,
+            batch_size,
+            calibration_checkpoint_path=path,
+        )
         single_metrics = _metrics(single_predictions, targets, labels)
         ensemble_model = AverageLogitModel([current_raw, candidate_raw]).to(device).eval()
-        ensemble_predictions = calibrated_predictions(ensemble_model, images, labels, device, batch_size)
+        ensemble_predictions = calibrated_predictions(
+            ensemble_model,
+            images,
+            labels,
+            device,
+            batch_size,
+            apply_calibration=False,
+        )
         ensemble_metrics = _metrics(ensemble_predictions, targets, labels)
         reason = rejection_reason(baseline, ensemble_metrics, min_delta)
         report = {
@@ -246,6 +301,8 @@ def run_probe(candidate_limit: int, batch_size: int, min_delta: float) -> dict[s
             "single_delta": metric_delta(single_metrics, baseline),
             "ensemble_metrics": ensemble_metrics,
             "ensemble_delta": metric_delta(ensemble_metrics, baseline),
+            "single_calibration_matched": candidate_calibration_matched,
+            "ensemble_calibration_applied": False,
             "accepted": reason is None,
             "rejection_reason": reason,
         }

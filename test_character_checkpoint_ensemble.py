@@ -1,11 +1,14 @@
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 import torch
 
 from scripts.probe_character_checkpoint_ensemble import (
     AverageLogitModel,
+    artifact_checkpoint_hash,
+    calibration_artifacts_match_checkpoint,
     discover_checkpoint_paths_for,
     file_sha256,
     metric_delta,
@@ -49,6 +52,41 @@ class CharacterCheckpointEnsembleProbeTests(unittest.TestCase):
 
     def test_metric_delta_subtracts_baseline(self) -> None:
         self.assertEqual(metric_delta({"a": 3.0, "b": 4.0}, {"a": 1.0, "b": 5.0}), {"a": 2.0, "b": -1.0})
+
+    def test_artifact_checkpoint_hash_reads_torch_and_json_artifacts(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            torch_artifact = root / "bias.pt"
+            json_artifact = root / "rules.json"
+            torch.save({"checkpoint_sha256": "abc123"}, torch_artifact)
+            json_artifact.write_text('{"checkpoint_sha256": "def456"}', encoding="utf-8")
+
+            self.assertEqual(artifact_checkpoint_hash(torch_artifact), "abc123")
+            self.assertEqual(artifact_checkpoint_hash(json_artifact), "def456")
+
+    def test_calibration_artifacts_must_match_candidate_checkpoint(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            checkpoint = root / "character_cnn.pt"
+            bias = root / "character_logit_bias.pt"
+            rules = root / "character_pair_rules.json"
+            checkpoint.write_bytes(b"candidate")
+            digest = file_sha256(checkpoint)
+            torch.save({"checkpoint_sha256": digest}, bias)
+            rules.write_text(f'{{"checkpoint_sha256": "{digest}"}}', encoding="utf-8")
+
+            with (
+                patch("scripts.probe_character_checkpoint_ensemble.LOGIT_BIAS_PATH", bias),
+                patch("scripts.probe_character_checkpoint_ensemble.PAIR_RULES_PATH", rules),
+            ):
+                self.assertTrue(calibration_artifacts_match_checkpoint(checkpoint))
+
+            rules.write_text('{"checkpoint_sha256": "stale"}', encoding="utf-8")
+            with (
+                patch("scripts.probe_character_checkpoint_ensemble.LOGIT_BIAS_PATH", bias),
+                patch("scripts.probe_character_checkpoint_ensemble.PAIR_RULES_PATH", rules),
+            ):
+                self.assertFalse(calibration_artifacts_match_checkpoint(checkpoint))
 
     def test_rejection_reason_requires_gain_and_protected_splits(self) -> None:
         baseline = {
