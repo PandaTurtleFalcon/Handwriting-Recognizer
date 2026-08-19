@@ -1,4 +1,6 @@
 import unittest
+from pathlib import Path
+from unittest.mock import patch
 
 import torch
 
@@ -10,6 +12,7 @@ from scripts.probe_mixedcase_case_resolver import (
     case_resolver_features,
     oracle_case_predictions,
     parse_threshold_values,
+    prepare_case_resolver_data,
     select_confirm_case_resolver_thresholds,
     sweep_case_resolver_thresholds,
     train_case_resolver,
@@ -200,6 +203,51 @@ class MixedcaseCaseResolverTests(unittest.TestCase):
         folded_predictions = torch.tensor([10, 10, 12, 11, 5], dtype=torch.long)
 
         self.assertEqual(_case_target_counts(targets, folded_predictions), {"upper": 1, "lower": 2})
+
+    def test_prepare_data_can_use_external_test_tensor_pack(self) -> None:
+        """Resolver probes should allow an external held-out tensor pack."""
+
+        train_images = torch.zeros((20, 1, 28, 28), dtype=torch.float32)
+        train_targets = torch.tensor([10, 36] * 10, dtype=torch.long)
+        test_images = torch.ones((3, 1, 28, 28), dtype=torch.float32)
+        test_targets = torch.tensor([10, 36, 0], dtype=torch.long)
+        mixed_outputs = torch.zeros((20, 62), dtype=torch.float32)
+        folded_outputs = torch.zeros((20, 36), dtype=torch.float32)
+        mixed_outputs[:, 10] = 1.0
+        folded_outputs[:, 10] = 1.0
+        test_mixed_outputs = torch.zeros((3, 62), dtype=torch.float32)
+        test_folded_outputs = torch.zeros((3, 36), dtype=torch.float32)
+        test_mixed_outputs[:, 10] = 1.0
+        test_folded_outputs[:, 10] = 1.0
+
+        def fake_split(train: bool, sample_limit: int | None):
+            return (train_images, train_targets) if train else self.fail("default test split should not load")
+
+        def fake_outputs(images: torch.Tensor, batch_size: int):
+            if int(images.shape[0]) == 3:
+                return test_mixed_outputs, test_folded_outputs
+            return mixed_outputs[: int(images.shape[0])], folded_outputs[: int(images.shape[0])]
+
+        with (
+            patch("scripts.probe_mixedcase_case_resolver._split_tensors", side_effect=fake_split),
+            patch("scripts.probe_mixedcase_case_resolver.load_tensor_pack", return_value=(test_images, test_targets)),
+            patch("scripts.probe_mixedcase_case_resolver._model_outputs", side_effect=fake_outputs),
+            patch("scripts.probe_mixedcase_case_resolver._load_hybrid_artifact", return_value={}),
+            patch(
+                "scripts.probe_mixedcase_case_resolver.hybrid_predictions",
+                side_effect=lambda mixed, folded, artifact: mixed.argmax(dim=1),
+            ),
+        ):
+            data = prepare_case_resolver_data(
+                batch_size=4,
+                train_sample_limit=None,
+                seed=1,
+                test_tensor_path=Path("rough-validation.pt"),
+            )
+
+        self.assertEqual(data.test_samples, 3)
+        self.assertEqual(data.test_tensor_path, Path("rough-validation.pt"))
+        self.assertEqual(data.test_targets.tolist(), [10, 36, 0])
 
     def test_select_confirm_case_resolver_rejects_confirmation_regression(self) -> None:
         """Selection wins should not be used on test when confirmation disagrees."""

@@ -18,6 +18,7 @@ if str(PROJECT_DIR) not in sys.path:
 from alnum_model import LABELS, MIXEDCASE_LABELS, load_mixedcase_extra_cache, limit_mixedcase_extra_cache  # noqa: E402
 from character_model import stratified_split_indices  # noqa: E402
 from scripts.calibrate_mixedcase_hybrid import hybrid_predictions  # noqa: E402
+from scripts.evaluate_mixedcase_candidate import load_tensor_pack  # noqa: E402
 from scripts.probe_mixedcase_feature_reranker import (  # noqa: E402
     _load_hybrid_artifact,
     _metrics,
@@ -56,6 +57,7 @@ class CaseResolverData:
     test_samples: int
     extra_roots: tuple[Path, ...]
     extra_samples_per_class: int | None
+    test_tensor_path: Path | None
 
 
 def _letter_identity_index(targets: torch.Tensor) -> torch.Tensor:
@@ -372,6 +374,7 @@ def prepare_case_resolver_data(
     seed: int,
     extra_roots: list[Path] | None = None,
     extra_samples_per_class: int | None = None,
+    test_tensor_path: Path | None = None,
     calibration_ratio: float = 0.2,
     confirmation_ratio: float = 0.5,
     include_embedding_features: bool = False,
@@ -398,7 +401,11 @@ def prepare_case_resolver_data(
     selection_targets = train_targets[selection_indices]
     confirmation_images = train_images[confirmation_indices]
     confirmation_targets = train_targets[confirmation_indices]
-    test_images, test_targets = _split_tensors(train=False, sample_limit=None)
+    test_images, test_targets = (
+        _split_tensors(train=False, sample_limit=None)
+        if test_tensor_path is None
+        else load_tensor_pack(test_tensor_path)
+    )
     if include_embedding_features:
         train_mixed, train_folded, train_embedding = _model_outputs_with_embeddings(
             fit_images,
@@ -485,6 +492,7 @@ def prepare_case_resolver_data(
         test_samples=int(test_targets.numel()),
         extra_roots=tuple(extra_roots or []),
         extra_samples_per_class=extra_samples_per_class,
+        test_tensor_path=test_tensor_path,
     )
 
 
@@ -670,6 +678,7 @@ def run_probe_from_data(
         "sweep_rows": sweep_rows,
         "extra_roots": [str(path) for path in data.extra_roots],
         "extra_samples_per_class": data.extra_samples_per_class,
+        "test_tensor_path": str(data.test_tensor_path) if data.test_tensor_path is not None else None,
         "calibration_ratio": calibration_ratio,
         "confirmation_ratio": confirmation_ratio,
         "include_embedding_features": include_embedding_features,
@@ -690,6 +699,7 @@ def run_probe(
     margin_thresholds: list[float] | None = None,
     extra_roots: list[Path] | None = None,
     extra_samples_per_class: int | None = None,
+    test_tensor_path: Path | None = None,
     calibration_ratio: float = 0.2,
     confirmation_ratio: float = 0.5,
     include_embedding_features: bool = False,
@@ -704,6 +714,7 @@ def run_probe(
         seed=seed,
         extra_roots=extra_roots,
         extra_samples_per_class=extra_samples_per_class,
+        test_tensor_path=test_tensor_path,
         calibration_ratio=calibration_ratio,
         confirmation_ratio=confirmation_ratio,
         include_embedding_features=include_embedding_features,
@@ -742,6 +753,7 @@ def main() -> None:
     parser.add_argument("--seed", type=int, default=20260818)
     parser.add_argument("--extra-root", action="append", type=Path, default=[])
     parser.add_argument("--extra-samples-per-class", type=int, default=None)
+    parser.add_argument("--test-tensor-path", type=Path, default=None)
     parser.add_argument("--calibration-ratio", type=float, default=0.2)
     parser.add_argument("--confirmation-ratio", type=float, default=0.5)
     parser.add_argument("--include-embedding-features", action="store_true")
@@ -771,6 +783,7 @@ def main() -> None:
                 ),
                 extra_roots=args.extra_root,
                 extra_samples_per_class=args.extra_samples_per_class,
+                test_tensor_path=args.test_tensor_path,
                 calibration_ratio=args.calibration_ratio,
                 confirmation_ratio=args.confirmation_ratio,
                 include_embedding_features=args.include_embedding_features,
