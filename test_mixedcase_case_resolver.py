@@ -7,6 +7,8 @@ from scripts.probe_mixedcase_case_resolver import (
     apply_case_resolver,
     case_resolver_features,
     oracle_case_predictions,
+    parse_threshold_values,
+    sweep_case_resolver_thresholds,
     train_case_resolver,
 )
 
@@ -74,6 +76,48 @@ class MixedcaseCaseResolverTests(unittest.TestCase):
         )
 
         self.assertEqual(predictions.tolist(), [36, 0, 37])
+
+    def test_parse_threshold_values_rejects_empty_lists(self) -> None:
+        """CLI sweeps should require at least one numeric threshold."""
+
+        self.assertEqual(parse_threshold_values("0, 0.5,1"), [0.0, 0.5, 1.0])
+        with self.assertRaisesRegex(ValueError, "At least one"):
+            parse_threshold_values(" , ")
+
+    def test_sweep_case_resolver_thresholds_selects_safe_improvement(self) -> None:
+        """Threshold sweeps should return the best non-regressing candidate."""
+
+        model = torch.nn.Linear(3, 2)
+        with torch.no_grad():
+            model.weight[:] = torch.tensor([[0.0, 0.0, 0.0], [5.0, 0.0, 0.0]])
+            model.bias.zero_()
+        base_predictions = torch.tensor([10, 10, 36, 0], dtype=torch.long)
+        targets = torch.tensor([10, 36, 36, 0], dtype=torch.long)
+        folded_predictions = torch.tensor([10, 10, 10, 10], dtype=torch.long)
+        features = torch.tensor(
+            [
+                [-1.0, 0.0, 0.0],
+                [1.0, 0.0, 0.0],
+                [1.0, 0.0, 0.0],
+                [1.0, 0.0, 0.0],
+            ],
+            dtype=torch.float32,
+        )
+
+        predictions, metrics, rows = sweep_case_resolver_thresholds(
+            base_predictions,
+            targets,
+            features,
+            folded_predictions,
+            model,
+            confidence_thresholds=[0.0, 0.999],
+            margin_thresholds=[0.0],
+        )
+
+        self.assertEqual(predictions.tolist(), [10, 36, 36, 0])
+        self.assertGreater(metrics["test_accuracy"], rows[1]["metrics"]["test_accuracy"])
+        self.assertTrue(rows[0]["safe"])
+        self.assertFalse(rows[1]["safe"])
 
     def test_train_case_resolver_returns_none_without_matching_identity_samples(self) -> None:
         """Training should abstain when folded identity never matches true letters."""

@@ -145,6 +145,81 @@ def apply_case_resolver(
     return next_predictions
 
 
+def parse_threshold_values(raw: str) -> list[float]:
+    """Parse comma-separated threshold values for resolver sweeps."""
+
+    values = []
+    for item in raw.split(","):
+        stripped = item.strip()
+        if not stripped:
+            continue
+        values.append(float(stripped))
+    if not values:
+        raise ValueError("At least one threshold value is required.")
+    return values
+
+
+def _resolver_candidate_is_safe(
+    base_metrics: dict[str, float],
+    candidate_metrics: dict[str, float],
+) -> bool:
+    """Return whether a resolver candidate improves exact without regressions."""
+
+    return candidate_metrics["test_accuracy"] > base_metrics["test_accuracy"] and all(
+        candidate_metrics[name] >= base_metrics[name]
+        for name in (
+            "case_or_ambiguity_aware_test_accuracy",
+            "digit_test_accuracy",
+            "upper_test_accuracy",
+            "lower_test_accuracy",
+        )
+    )
+
+
+def sweep_case_resolver_thresholds(
+    base_predictions: torch.Tensor,
+    targets: torch.Tensor,
+    features: torch.Tensor,
+    folded_predictions: torch.Tensor,
+    model: nn.Module | None,
+    confidence_thresholds: list[float],
+    margin_thresholds: list[float],
+) -> tuple[torch.Tensor, dict[str, float], list[dict[str, object]]]:
+    """Evaluate resolver thresholds and return the best safe predictions."""
+
+    base_metrics = _metrics(base_predictions, targets)
+    best_predictions = base_predictions
+    best_metrics = base_metrics
+    rows: list[dict[str, object]] = []
+    if model is None:
+        return best_predictions, best_metrics, rows
+    for confidence_threshold in confidence_thresholds:
+        for margin_threshold in margin_thresholds:
+            candidate_predictions = apply_case_resolver(
+                base_predictions,
+                features,
+                folded_predictions,
+                model,
+                confidence_threshold,
+                margin_threshold,
+            )
+            candidate_metrics = _metrics(candidate_predictions, targets)
+            safe = _resolver_candidate_is_safe(base_metrics, candidate_metrics)
+            rows.append(
+                {
+                    "confidence_threshold": confidence_threshold,
+                    "margin_threshold": margin_threshold,
+                    "safe": safe,
+                    "metrics": candidate_metrics,
+                    "test_delta": candidate_metrics["test_accuracy"] - base_metrics["test_accuracy"],
+                }
+            )
+            if safe and candidate_metrics["test_accuracy"] > best_metrics["test_accuracy"]:
+                best_predictions = candidate_predictions
+                best_metrics = candidate_metrics
+    return best_predictions, best_metrics, rows
+
+
 def oracle_case_predictions(
     base_predictions: torch.Tensor,
     folded_outputs: torch.Tensor,
@@ -194,6 +269,8 @@ def run_probe(
     confidence_threshold: float,
     margin_threshold: float,
     seed: int,
+    confidence_thresholds: list[float] | None = None,
+    margin_thresholds: list[float] | None = None,
     extra_roots: list[Path] | None = None,
     extra_samples_per_class: int | None = None,
 ) -> dict[str, object]:
@@ -230,18 +307,21 @@ def run_probe(
     folded_identity_accuracy = 100.0 * float((folded_identity[letter_mask] == target_identity[letter_mask]).float().mean())
     if resolver is None:
         resolved_predictions = base_predictions
+        sweep_rows = []
+        resolved_metrics = _metrics(resolved_predictions, test_targets)
     else:
-        resolved_predictions = apply_case_resolver(
+        resolved_predictions, resolved_metrics, sweep_rows = sweep_case_resolver_thresholds(
             base_predictions,
+            test_targets,
             test_features,
             test_folded_predictions,
             resolver,
-            confidence_threshold,
-            margin_threshold,
+            confidence_thresholds or [confidence_threshold],
+            margin_thresholds or [margin_threshold],
         )
     base_metrics = _metrics(base_predictions, test_targets)
-    resolved_metrics = _metrics(resolved_predictions, test_targets)
     oracle_metrics = _metrics(oracle_predictions, test_targets)
+    best_sweep_row = max(sweep_rows, key=lambda row: float(row["test_delta"]), default=None)
     return {
         "base": base_metrics,
         "resolved": resolved_metrics,
@@ -265,6 +345,9 @@ def run_probe(
         "hidden_units": hidden_units,
         "confidence_threshold": confidence_threshold,
         "margin_threshold": margin_threshold,
+        "safe_sweep_count": sum(1 for row in sweep_rows if bool(row.get("safe"))),
+        "best_sweep_row": best_sweep_row,
+        "sweep_rows": sweep_rows,
         "extra_roots": [str(path) for path in (extra_roots or [])],
         "extra_samples_per_class": extra_samples_per_class,
     }
@@ -281,6 +364,8 @@ def main() -> None:
     parser.add_argument("--hidden-units", type=int, default=32)
     parser.add_argument("--confidence-threshold", type=float, default=0.0)
     parser.add_argument("--margin-threshold", type=float, default=0.0)
+    parser.add_argument("--confidence-thresholds", default=None)
+    parser.add_argument("--margin-thresholds", default=None)
     parser.add_argument("--seed", type=int, default=20260818)
     parser.add_argument("--extra-root", action="append", type=Path, default=[])
     parser.add_argument("--extra-samples-per-class", type=int, default=None)
@@ -296,6 +381,16 @@ def main() -> None:
                 confidence_threshold=args.confidence_threshold,
                 margin_threshold=args.margin_threshold,
                 seed=args.seed,
+                confidence_thresholds=(
+                    parse_threshold_values(args.confidence_thresholds)
+                    if args.confidence_thresholds is not None
+                    else None
+                ),
+                margin_thresholds=(
+                    parse_threshold_values(args.margin_thresholds)
+                    if args.margin_thresholds is not None
+                    else None
+                ),
                 extra_roots=args.extra_root,
                 extra_samples_per_class=args.extra_samples_per_class,
             ),
