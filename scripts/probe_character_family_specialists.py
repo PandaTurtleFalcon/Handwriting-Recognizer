@@ -377,6 +377,7 @@ def choose_thresholds(
         "candidate": base_metrics,
         "replacement_report": {"changed": 0, "fixed": 0, "broken": 0},
         "best_rejected": None,
+        "evaluated_thresholds": [],
     }
     best_gain = 0.0
     best_rejected_gain = float("-inf")
@@ -396,6 +397,19 @@ def choose_thresholds(
             candidate_metrics = metrics(candidate_predictions, targets, labels)
             gain = candidate_metrics["validation_accuracy"] - base_metrics["validation_accuracy"]
             failures = protected_failures(candidate_metrics, base_metrics)
+            replacement_report = threshold_report(base_predictions, candidate_predictions, targets)
+            threshold_row = {
+                "confidence": confidence,
+                "margin": margin,
+                "gain": gain,
+                "candidate": candidate_metrics,
+                "replacement_report": replacement_report,
+                "protected_failures": failures,
+                "accepted": False,
+            }
+            evaluated_thresholds = list(best["evaluated_thresholds"])
+            evaluated_thresholds.append(threshold_row)
+            best["evaluated_thresholds"] = evaluated_thresholds
             if gain > best_rejected_gain:
                 best_rejected_gain = gain
                 best["best_rejected"] = {
@@ -403,18 +417,20 @@ def choose_thresholds(
                     "margin": margin,
                     "gain": gain,
                     "candidate": candidate_metrics,
-                    "replacement_report": threshold_report(base_predictions, candidate_predictions, targets),
+                    "replacement_report": replacement_report,
                     "protected_failures": failures,
                 }
             if gain > best_gain and protected_ok(candidate_metrics, base_metrics):
                 best_gain = gain
+                threshold_row["accepted"] = True
                 best = {
                     "confidence": confidence,
                     "margin": margin,
                     "base": base_metrics,
                     "candidate": candidate_metrics,
-                    "replacement_report": threshold_report(base_predictions, candidate_predictions, targets),
+                    "replacement_report": replacement_report,
                     "best_rejected": best["best_rejected"],
+                    "evaluated_thresholds": evaluated_thresholds,
                 }
     return best
 

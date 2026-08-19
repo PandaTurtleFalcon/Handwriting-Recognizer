@@ -115,6 +115,12 @@ class CharacterFamilySpecialistTests(unittest.TestCase):
         self.assertIsNone(selected["confidence"])
         self.assertEqual(selected["replacement_report"], {"changed": 0, "fixed": 0, "broken": 0})
         self.assertEqual(dict(selected["best_rejected"])["gain"], -100.0)
+        self.assertEqual(len(selected["evaluated_thresholds"]), 1)
+        self.assertFalse(dict(selected["evaluated_thresholds"][0])["accepted"])
+        self.assertEqual(
+            dict(selected["evaluated_thresholds"][0])["replacement_report"],
+            {"changed": 1, "fixed": 0, "broken": 1},
+        )
 
     def test_choose_thresholds_reports_best_rejected_gain(self) -> None:
         class RiskySpecialist(torch.nn.Module):
@@ -143,6 +149,11 @@ class CharacterFamilySpecialistTests(unittest.TestCase):
         self.assertIsNone(selected["confidence"])
         self.assertEqual(dict(selected["best_rejected"])["gain"], 0.0)
         self.assertEqual(dict(selected["best_rejected"])["replacement_report"], {"changed": 2, "fixed": 1, "broken": 1})
+        self.assertEqual(dict(selected["evaluated_thresholds"][0])["gain"], 0.0)
+        self.assertEqual(
+            dict(selected["evaluated_thresholds"][0])["protected_failures"],
+            ["digit_validation_accuracy 0.0000% < baseline 100.0000%"],
+        )
 
     def test_deployed_predictions_handles_empty_batches(self) -> None:
         with patch(
