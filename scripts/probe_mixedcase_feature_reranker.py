@@ -109,6 +109,47 @@ class FamilyProbe:
     model: nn.Module
 
 
+@dataclass(frozen=True)
+class FeatureProbeData:
+    """Precomputed tensors shared by one or more feature-reranker probes."""
+
+    fit_images: torch.Tensor
+    fit_targets: torch.Tensor
+    fit_mixed: torch.Tensor
+    fit_folded: torch.Tensor
+    fit_embedding: torch.Tensor | None
+    fit_digit: torch.Tensor | None
+    selection_images: torch.Tensor
+    selection_targets: torch.Tensor
+    selection_mixed: torch.Tensor
+    selection_folded: torch.Tensor
+    selection_embedding: torch.Tensor | None
+    selection_digit: torch.Tensor | None
+    selection_predictions: torch.Tensor
+    confirmation_images: torch.Tensor
+    confirmation_targets: torch.Tensor
+    confirmation_mixed: torch.Tensor
+    confirmation_folded: torch.Tensor
+    confirmation_embedding: torch.Tensor | None
+    confirmation_digit: torch.Tensor | None
+    confirmation_predictions: torch.Tensor
+    test_images: torch.Tensor
+    test_targets: torch.Tensor
+    test_mixed: torch.Tensor
+    test_folded: torch.Tensor
+    test_embedding: torch.Tensor | None
+    test_digit: torch.Tensor | None
+    base_predictions: torch.Tensor
+    train_samples: int
+    fit_samples: int
+    calibration_samples: int
+    selection_samples: int
+    confirmation_samples: int
+    test_samples: int
+    extra_roots: tuple[Path, ...]
+    extra_samples_per_class: int | None
+
+
 def _family_name(indices: tuple[int, ...]) -> str:
     """Return a readable family name from label indices."""
 
@@ -615,6 +656,366 @@ def _final_gate_rejection(
         if candidate_metrics[name] < floor:
             return f"final_{name}_regressed"
     return None
+
+
+def prepare_feature_probe_data(
+    batch_size: int,
+    train_sample_limit: int | None,
+    calibration_ratio: float,
+    seed: int,
+    extra_roots: list[Path] | None = None,
+    extra_samples_per_class: int | None = None,
+    confirmation_ratio: float = 0.5,
+    include_digit_features: bool = False,
+    include_embedding_features: bool = False,
+) -> FeatureProbeData:
+    """Precompute shared tensors and base predictions for feature-probe sweeps."""
+
+    torch.manual_seed(seed)
+    train_images, train_targets = _split_tensors(train=True, sample_limit=train_sample_limit)
+    test_images, test_targets = _split_tensors(train=False, sample_limit=None)
+    generator = torch.Generator().manual_seed(seed)
+    order = torch.randperm(int(train_targets.numel()), generator=generator)
+    calibration_count = max(1, min(int(train_targets.numel()) - 1, int(round(train_targets.numel() * calibration_ratio))))
+    calibration_indices = order[:calibration_count]
+    fit_indices = order[calibration_count:]
+    confirmation_count = int(round(calibration_count * confirmation_ratio))
+    confirmation_count = max(0, min(calibration_count - 1, confirmation_count))
+    selection_count = calibration_count - confirmation_count
+    selection_indices = calibration_indices[:selection_count]
+    confirmation_indices = calibration_indices[selection_count:]
+    fit_images = train_images[fit_indices]
+    fit_targets = train_targets[fit_indices]
+    fit_images, fit_targets = _fit_tensors(
+        fit_images,
+        fit_targets,
+        extra_roots or [],
+        extra_samples_per_class,
+        seed,
+    )
+    selection_images = train_images[selection_indices]
+    selection_targets = train_targets[selection_indices]
+    confirmation_images = train_images[confirmation_indices]
+    confirmation_targets = train_targets[confirmation_indices]
+    fit_mixed, fit_folded, fit_embedding = _model_outputs_with_embeddings(
+        fit_images,
+        batch_size,
+        include_embedding_features,
+    )
+    selection_mixed, selection_folded, selection_embedding = _model_outputs_with_embeddings(
+        selection_images,
+        batch_size,
+        include_embedding_features,
+    )
+    confirmation_mixed, confirmation_folded, confirmation_embedding = (
+        _model_outputs_with_embeddings(confirmation_images, batch_size, include_embedding_features)
+        if int(confirmation_targets.numel()) > 0
+        else (torch.empty((0, len(MIXEDCASE_LABELS))), torch.empty((0, len(LABELS))), None)
+    )
+    test_mixed, test_folded, test_embedding = _model_outputs_with_embeddings(
+        test_images,
+        batch_size,
+        include_embedding_features,
+    )
+    fit_digit = _digit_outputs(fit_images, batch_size) if include_digit_features else None
+    selection_digit = _digit_outputs(selection_images, batch_size) if include_digit_features else None
+    confirmation_digit = (
+        _digit_outputs(confirmation_images, batch_size)
+        if include_digit_features and int(confirmation_targets.numel()) > 0
+        else None
+    )
+    test_digit = _digit_outputs(test_images, batch_size) if include_digit_features else None
+    artifact = _load_hybrid_artifact()
+    selection_predictions = hybrid_predictions(selection_mixed, selection_folded, artifact)
+    confirmation_predictions = (
+        hybrid_predictions(confirmation_mixed, confirmation_folded, artifact)
+        if int(confirmation_targets.numel()) > 0
+        else torch.empty((0,), dtype=torch.long)
+    )
+    base_predictions = hybrid_predictions(test_mixed, test_folded, artifact)
+    return FeatureProbeData(
+        fit_images=fit_images,
+        fit_targets=fit_targets,
+        fit_mixed=fit_mixed,
+        fit_folded=fit_folded,
+        fit_embedding=fit_embedding,
+        fit_digit=fit_digit,
+        selection_images=selection_images,
+        selection_targets=selection_targets,
+        selection_mixed=selection_mixed,
+        selection_folded=selection_folded,
+        selection_embedding=selection_embedding,
+        selection_digit=selection_digit,
+        selection_predictions=selection_predictions,
+        confirmation_images=confirmation_images,
+        confirmation_targets=confirmation_targets,
+        confirmation_mixed=confirmation_mixed,
+        confirmation_folded=confirmation_folded,
+        confirmation_embedding=confirmation_embedding,
+        confirmation_digit=confirmation_digit,
+        confirmation_predictions=confirmation_predictions,
+        test_images=test_images,
+        test_targets=test_targets,
+        test_mixed=test_mixed,
+        test_folded=test_folded,
+        test_embedding=test_embedding,
+        test_digit=test_digit,
+        base_predictions=base_predictions,
+        train_samples=int(train_targets.numel()),
+        fit_samples=int(fit_targets.numel()),
+        calibration_samples=int(calibration_count),
+        selection_samples=int(selection_targets.numel()),
+        confirmation_samples=int(confirmation_targets.numel()),
+        test_samples=int(test_targets.numel()),
+        extra_roots=tuple(extra_roots or []),
+        extra_samples_per_class=extra_samples_per_class,
+    )
+
+
+def run_probe_from_data(
+    data: FeatureProbeData,
+    epochs: int,
+    learning_rate: float,
+    family_limit: int | None,
+    min_family_delta: float,
+    seed: int,
+    hidden_units: int = 0,
+    confirmation_ratio: float = 0.5,
+    family_names: tuple[str, ...] | None = None,
+    source_groups: tuple[str, ...] = ("digit", "upper", "lower"),
+    include_pixel_features: bool = False,
+    min_digit: float | None = None,
+    min_upper: float | None = None,
+    min_lower: float | None = None,
+    min_case_or_visual: float | None = None,
+    probe_confidence: float = 0.0,
+    probe_margin: float = 0.0,
+    max_probe_train_samples: int | None = None,
+    mini_batch_size: int | None = None,
+    output_path: Path = MIXEDCASE_FAMILY_RERANKER_PATH,
+    write: bool = False,
+) -> dict[str, object]:
+    """Train family probes against already-prepared model outputs."""
+
+    probe_predictions = data.base_predictions.clone()
+    family_reports = []
+    accepted_probe_artifacts: list[dict[str, object]] = []
+    for family_indices in selected_families(family_limit, family_names):
+        train_features = family_features(
+            data.fit_images,
+            data.fit_mixed,
+            data.fit_folded,
+            family_indices,
+            data.fit_digit,
+            include_pixel_features,
+            data.fit_embedding,
+        )
+        probe = train_family_probe(
+            train_features,
+            data.fit_targets,
+            family_indices,
+            epochs,
+            learning_rate,
+            hidden_units,
+            max_train_samples=max_probe_train_samples,
+            mini_batch_size=mini_batch_size,
+            seed=seed,
+        )
+        if probe is None:
+            continue
+        selection_candidate = apply_family_probe(
+            data.selection_predictions,
+            data.selection_images,
+            data.selection_mixed,
+            data.selection_folded,
+            probe,
+            source_groups,
+            data.selection_digit,
+            probe_confidence,
+            probe_margin,
+            include_pixel_features,
+            data.selection_embedding,
+        )
+        selection_before = _metrics(data.selection_predictions, data.selection_targets)
+        selection_after = _metrics(selection_candidate, data.selection_targets)
+        selection_delta = selection_after["test_accuracy"] - selection_before["test_accuracy"]
+        confirmation_delta = None
+        if int(data.confirmation_targets.numel()) > 0:
+            confirmation_candidate = apply_family_probe(
+                data.confirmation_predictions,
+                data.confirmation_images,
+                data.confirmation_mixed,
+                data.confirmation_folded,
+                probe,
+                source_groups,
+                data.confirmation_digit,
+                probe_confidence,
+                probe_margin,
+                include_pixel_features,
+                data.confirmation_embedding,
+            )
+            confirmation_before = _metrics(data.confirmation_predictions, data.confirmation_targets)
+            confirmation_after = _metrics(confirmation_candidate, data.confirmation_targets)
+            confirmation_delta = confirmation_after["test_accuracy"] - confirmation_before["test_accuracy"]
+        if selection_delta < min_family_delta:
+            family_reports.append(
+                {
+                    "family": probe.name,
+                    "accepted": False,
+                    "selection_delta": selection_delta,
+                    "confirmation_delta": confirmation_delta,
+                    "rejection_reason": "selection_delta_below_floor",
+                }
+            )
+            continue
+        if confirmation_delta is not None and confirmation_delta < min_family_delta:
+            family_reports.append(
+                {
+                    "family": probe.name,
+                    "accepted": False,
+                    "selection_delta": selection_delta,
+                    "confirmation_delta": confirmation_delta,
+                    "rejection_reason": "confirmation_delta_below_floor",
+                }
+            )
+            continue
+        before = _metrics(probe_predictions, data.test_targets)
+        candidate_predictions = apply_family_probe(
+            probe_predictions,
+            data.test_images,
+            data.test_mixed,
+            data.test_folded,
+            probe,
+            source_groups,
+            data.test_digit,
+            probe_confidence,
+            probe_margin,
+            include_pixel_features,
+            data.test_embedding,
+        )
+        after = _metrics(candidate_predictions, data.test_targets)
+        final_rejection = _final_gate_rejection(
+            before,
+            after,
+            min_family_delta,
+            min_digit=min_digit,
+            min_upper=min_upper,
+            min_lower=min_lower,
+            min_case_or_visual=min_case_or_visual,
+        )
+        if final_rejection is not None:
+            family_reports.append(
+                {
+                    "family": probe.name,
+                    "accepted": False,
+                    "selection_delta": selection_delta,
+                    "confirmation_delta": confirmation_delta,
+                    "before_test_accuracy": before["test_accuracy"],
+                    "after_test_accuracy": after["test_accuracy"],
+                    "before_metrics": before,
+                    "after_metrics": after,
+                    "delta": after["test_accuracy"] - before["test_accuracy"],
+                    "rejection_reason": final_rejection,
+                }
+            )
+            continue
+        family_reports.append(
+            {
+                "family": probe.name,
+                "accepted": True,
+                "selection_delta": selection_delta,
+                "confirmation_delta": confirmation_delta,
+                "before_test_accuracy": before["test_accuracy"],
+                "after_test_accuracy": after["test_accuracy"],
+                "before_metrics": before,
+                "after_metrics": after,
+                "delta": after["test_accuracy"] - before["test_accuracy"],
+            }
+        )
+        accepted_probe_artifacts.append(
+            {
+                "family": probe.name,
+                "family_indices": family_indices,
+                "state_dict": {key: value.detach().cpu() for key, value in probe.model.state_dict().items()},
+                "input_dim": int(train_features.shape[1]),
+                "hidden_units": hidden_units,
+                "source_groups": source_groups,
+                "probe_confidence": probe_confidence,
+                "probe_margin": probe_margin,
+                "include_digit_features": data.fit_digit is not None,
+                "include_pixel_features": include_pixel_features,
+                "include_embedding_features": data.fit_embedding is not None,
+                "max_probe_train_samples": max_probe_train_samples,
+                "mini_batch_size": mini_batch_size,
+            }
+        )
+        probe_predictions = candidate_predictions
+    base_metrics = _metrics(data.base_predictions, data.test_targets)
+    reranked_metrics = _metrics(probe_predictions, data.test_targets)
+    promotable = _is_promotable(
+        base_metrics,
+        reranked_metrics,
+        min_digit=min_digit,
+        min_upper=min_upper,
+        min_lower=min_lower,
+        min_case_or_visual=min_case_or_visual,
+    )
+    wrote = False
+    if write and promotable and accepted_probe_artifacts:
+        merged_probe_artifacts = merge_family_probe_artifacts(
+            _compatible_existing_family_probes(output_path),
+            accepted_probe_artifacts,
+        )
+        artifact_hashes = _current_artifact_hashes()
+        torch.save(
+            {
+                "enabled": True,
+                "source": "mixedcase_feature_family_reranker_probe",
+                "labels": list(MIXEDCASE_LABELS),
+                "probes": merged_probe_artifacts,
+                "best_checkpoint": reranked_metrics,
+                "base_checkpoint": base_metrics,
+                **artifact_hashes,
+            },
+            output_path,
+        )
+        wrote = True
+    return {
+        "base": base_metrics,
+        "reranked": reranked_metrics,
+        "promotable": promotable,
+        "test_delta": reranked_metrics["test_accuracy"] - base_metrics["test_accuracy"],
+        "families": family_reports,
+        "train_samples": data.train_samples,
+        "fit_samples": data.fit_samples,
+        "calibration_samples": data.calibration_samples,
+        "selection_samples": data.selection_samples,
+        "confirmation_samples": data.confirmation_samples,
+        "test_samples": data.test_samples,
+        "extra_roots": [str(path) for path in data.extra_roots],
+        "extra_samples_per_class": data.extra_samples_per_class,
+        "hidden_units": hidden_units,
+        "confirmation_ratio": confirmation_ratio,
+        "family_names": list(family_names or []),
+        "source_groups": list(source_groups),
+        "include_digit_features": data.fit_digit is not None,
+        "include_pixel_features": include_pixel_features,
+        "include_embedding_features": data.fit_embedding is not None,
+        "max_probe_train_samples": max_probe_train_samples,
+        "mini_batch_size": mini_batch_size,
+        "minimum_gates": {
+            "case_or_ambiguity_aware_test_accuracy": min_case_or_visual,
+            "digit_test_accuracy": min_digit,
+            "upper_test_accuracy": min_upper,
+            "lower_test_accuracy": min_lower,
+        },
+        "probe_thresholds": {
+            "confidence": probe_confidence,
+            "margin": probe_margin,
+        },
+        "wrote": wrote,
+        "output_path": str(output_path),
+    }
 
 
 def run_probe(

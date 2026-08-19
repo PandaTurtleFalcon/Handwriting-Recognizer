@@ -12,7 +12,12 @@ PROJECT_DIR = Path(__file__).resolve().parents[1]
 if str(PROJECT_DIR) not in sys.path:
     sys.path.insert(0, str(PROJECT_DIR))
 
-from scripts.probe_mixedcase_feature_reranker import parse_family_names, parse_source_groups, run_probe  # noqa: E402
+from scripts.probe_mixedcase_feature_reranker import (  # noqa: E402
+    parse_family_names,
+    parse_source_groups,
+    prepare_feature_probe_data,
+    run_probe_from_data,
+)
 
 
 def parse_int_values(raw: str) -> list[int]:
@@ -96,6 +101,17 @@ def run_sweep(
     rows: list[dict[str, object]] = []
     all_runs = list(product(epochs, learning_rates, hidden_units, source_group_sets, probe_confidences, probe_margins))
     selected_runs = all_runs[:max_runs] if max_runs is not None else all_runs
+    data = prepare_feature_probe_data(
+        batch_size=batch_size,
+        train_sample_limit=train_sample_limit,
+        calibration_ratio=calibration_ratio,
+        seed=seed,
+        extra_roots=extra_roots,
+        extra_samples_per_class=extra_samples_per_class,
+        confirmation_ratio=confirmation_ratio,
+        include_digit_features=include_digit_features,
+        include_embedding_features=include_embedding_features,
+    )
     for epoch_count, learning_rate, hidden_count, source_groups, probe_confidence, probe_margin in selected_runs:
         parameters = {
             "epochs": epoch_count,
@@ -105,24 +121,18 @@ def run_sweep(
             "probe_confidence": probe_confidence,
             "probe_margin": probe_margin,
         }
-        report = run_probe(
-            batch_size=batch_size,
+        report = run_probe_from_data(
+            data=data,
             epochs=epoch_count,
             learning_rate=learning_rate,
-            train_sample_limit=train_sample_limit,
             family_limit=family_limit,
-            calibration_ratio=calibration_ratio,
             min_family_delta=min_family_delta,
             seed=seed,
-            extra_roots=extra_roots,
-            extra_samples_per_class=extra_samples_per_class,
             hidden_units=hidden_count,
             confirmation_ratio=confirmation_ratio,
             family_names=families,
             source_groups=source_groups,
-            include_digit_features=include_digit_features,
             include_pixel_features=include_pixel_features,
-            include_embedding_features=include_embedding_features,
             min_digit=min_digit,
             min_upper=min_upper,
             min_lower=min_lower,
@@ -161,6 +171,7 @@ def run_sweep(
         "planned_runs": len(all_runs),
         "completed_runs": len(rows),
         "truncated": max_runs is not None and len(all_runs) > max_runs,
+        "prepared_once": True,
     }
 
 

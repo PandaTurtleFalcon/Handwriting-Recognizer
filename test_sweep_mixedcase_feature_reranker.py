@@ -37,13 +37,21 @@ class SweepMixedcaseFeatureRerankerTests(unittest.TestCase):
 
     def test_run_sweep_can_limit_planned_grid(self) -> None:
         calls = []
+        prepare_calls = []
+        fake_data = object()
 
-        def fake_run_probe(**kwargs):
+        def fake_prepare_feature_probe_data(**kwargs):
+            prepare_calls.append(kwargs)
+            return fake_data
+
+        def fake_run_probe_from_data(**kwargs):
             calls.append(kwargs)
             return {"promotable": False, "test_delta": 0.0, "base": {}, "reranked": {}, "families": []}
 
-        original = run_sweep.__globals__["run_probe"]
-        run_sweep.__globals__["run_probe"] = fake_run_probe
+        original_prepare = run_sweep.__globals__["prepare_feature_probe_data"]
+        original_probe = run_sweep.__globals__["run_probe_from_data"]
+        run_sweep.__globals__["prepare_feature_probe_data"] = fake_prepare_feature_probe_data
+        run_sweep.__globals__["run_probe_from_data"] = fake_run_probe_from_data
         try:
             report = run_sweep(
                 batch_size=4,
@@ -74,18 +82,22 @@ class SweepMixedcaseFeatureRerankerTests(unittest.TestCase):
                 max_runs=3,
             )
         finally:
-            run_sweep.__globals__["run_probe"] = original
+            run_sweep.__globals__["prepare_feature_probe_data"] = original_prepare
+            run_sweep.__globals__["run_probe_from_data"] = original_probe
 
+        self.assertEqual(len(prepare_calls), 1)
         self.assertEqual(len(calls), 3)
         self.assertEqual(report["planned_runs"], 16)
         self.assertEqual(report["completed_runs"], 3)
         self.assertTrue(report["truncated"])
+        self.assertTrue(report["prepared_once"])
+        self.assertIs(calls[0]["data"], fake_data)
         self.assertEqual(calls[0]["family_names"], ("0Oo",))
-        self.assertEqual(calls[0]["extra_roots"], [Path("cvl.pt")])
+        self.assertEqual(prepare_calls[0]["extra_roots"], [Path("cvl.pt")])
         self.assertEqual(calls[0]["min_digit"], 95.0)
-        self.assertTrue(calls[0]["include_digit_features"])
+        self.assertTrue(prepare_calls[0]["include_digit_features"])
         self.assertTrue(calls[0]["include_pixel_features"])
-        self.assertTrue(calls[0]["include_embedding_features"])
+        self.assertTrue(prepare_calls[0]["include_embedding_features"])
         self.assertEqual(calls[0]["max_probe_train_samples"], 128)
         self.assertEqual(calls[0]["mini_batch_size"], 32)
         self.assertEqual(report["extra_roots"], ["cvl.pt"])
