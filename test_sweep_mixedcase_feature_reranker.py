@@ -2,7 +2,9 @@ import unittest
 from pathlib import Path
 
 from scripts.sweep_mixedcase_feature_reranker import (
+    aggregate_family_rejection_reason_counts,
     best_sweep_row,
+    family_rejection_reason_counts,
     parse_float_values,
     parse_int_values,
     parse_optional_float_values,
@@ -42,6 +44,38 @@ class SweepMixedcaseFeatureRerankerTests(unittest.TestCase):
 
         self.assertIs(best_sweep_row(rows), rows[3])
 
+    def test_family_rejection_reason_counts_skips_accepted_families(self) -> None:
+        report = {
+            "families": [
+                {"accepted": False, "rejection_reason": "selection_delta_below_floor"},
+                {"accepted": True, "rejection_reason": "should_not_count"},
+                {"accepted": False, "rejection_reason": "selection_delta_below_floor"},
+                {"accepted": False},
+            ]
+        }
+
+        self.assertEqual(
+            family_rejection_reason_counts(report),
+            {"selection_delta_below_floor": 2, "unknown": 1},
+        )
+
+    def test_aggregate_family_rejection_reason_counts_combines_rows(self) -> None:
+        rows = [
+            {"family_rejection_reasons": {"selection_delta_below_floor": 2}},
+            {
+                "family_rejection_reasons": {
+                    "selection_delta_below_floor": 1,
+                    "final_delta_below_floor": 3,
+                }
+            },
+            {"family_rejection_reasons": []},
+        ]
+
+        self.assertEqual(
+            aggregate_family_rejection_reason_counts(rows),
+            {"selection_delta_below_floor": 3, "final_delta_below_floor": 3},
+        )
+
     def test_run_sweep_can_limit_planned_grid(self) -> None:
         calls = []
         prepare_calls = []
@@ -60,7 +94,7 @@ class SweepMixedcaseFeatureRerankerTests(unittest.TestCase):
                 "balanced_score": 73.0,
                 "base": {},
                 "reranked": {},
-                "families": [],
+                "families": [{"accepted": False, "rejection_reason": "selection_delta_below_floor"}],
             }
 
         original_prepare = run_sweep.__globals__["prepare_feature_probe_data"]
@@ -128,6 +162,8 @@ class SweepMixedcaseFeatureRerankerTests(unittest.TestCase):
         self.assertEqual(report["digit_protect_confidences"], [None, 0.95])
         self.assertEqual(report["max_probe_train_samples"], 128)
         self.assertEqual(report["mini_batch_size"], 32)
+        self.assertEqual(report["rows"][0]["family_rejection_reasons"], {"selection_delta_below_floor": 1})
+        self.assertEqual(report["family_rejection_reasons"], {"selection_delta_below_floor": 3})
 
 
 if __name__ == "__main__":

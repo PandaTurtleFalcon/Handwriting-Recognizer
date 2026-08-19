@@ -61,6 +61,34 @@ def parse_source_group_sets(raw: str) -> list[tuple[str, ...]]:
     return groups
 
 
+def family_rejection_reason_counts(report: dict[str, object]) -> dict[str, int]:
+    """Count why non-promoted visual-family probes were rejected."""
+
+    counts: dict[str, int] = {}
+    families = report.get("families", [])
+    if not isinstance(families, list):
+        return counts
+    for family in families:
+        if not isinstance(family, dict) or bool(family.get("accepted")):
+            continue
+        reason = str(family.get("rejection_reason") or "unknown")
+        counts[reason] = counts.get(reason, 0) + 1
+    return counts
+
+
+def aggregate_family_rejection_reason_counts(rows: list[dict[str, object]]) -> dict[str, int]:
+    """Combine per-row family rejection counts into a sweep-level summary."""
+
+    totals: dict[str, int] = {}
+    for row in rows:
+        counts = row.get("family_rejection_reasons", {})
+        if not isinstance(counts, dict):
+            continue
+        for reason, count in counts.items():
+            totals[str(reason)] = totals.get(str(reason), 0) + int(count)
+    return totals
+
+
 def compact_probe_report(report: dict[str, object], parameters: dict[str, object]) -> dict[str, object]:
     """Return the stable fields needed to compare one probe run."""
 
@@ -73,6 +101,7 @@ def compact_probe_report(report: dict[str, object], parameters: dict[str, object
         "base": report.get("base"),
         "reranked": report.get("reranked"),
         "families": report.get("families"),
+        "family_rejection_reasons": family_rejection_reason_counts(report),
     }
 
 
@@ -208,6 +237,7 @@ def run_sweep(
         "rows": rows,
         "best": best,
         "promotable_count": sum(1 for row in rows if bool(row["promotable"])),
+        "family_rejection_reasons": aggregate_family_rejection_reason_counts(rows),
         "families": list(families) if families is not None else None,
         "family_limit": family_limit,
         "calibration_ratio": calibration_ratio,

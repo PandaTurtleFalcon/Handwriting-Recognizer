@@ -165,6 +165,37 @@ class WebAppRenderingTests(unittest.TestCase):
         self.assertEqual(results[0]["sequence"], "8")
         self.assertIn("preview", results[0])
 
+    def test_classify_files_applies_phrase_context_cleanup(self) -> None:
+        """The live classification path should clean the reported look-behind case."""
+
+        fake_predictions = [
+            {"label": "x", "confidence": 0.92, "x": 0, "y": 0, "width": 18, "height": 20, "row": 1},
+            {"label": "O", "confidence": 0.91, "x": 20, "y": 0, "width": 18, "height": 20, "row": 1},
+            {"label": "O", "confidence": 0.91, "x": 40, "y": 0, "width": 18, "height": 20, "row": 1},
+            {"label": "h", "confidence": 0.91, "x": 60, "y": 0, "width": 18, "height": 20, "row": 1},
+            {"label": ":", "confidence": 0.91, "x": 80, "y": 0, "width": 18, "height": 20, "row": 1},
+            {"label": "1", "confidence": 0.91, "x": 100, "y": 0, "width": 18, "height": 20, "row": 1},
+            {"label": "i", "confidence": 0.91, "x": 120, "y": 0, "width": 18, "height": 20, "row": 1},
+            {"label": "7", "confidence": 0.91, "x": 0, "y": 60, "width": 18, "height": 20, "row": 2},
+            {"label": "o", "confidence": 0.91, "x": 20, "y": 60, "width": 18, "height": 20, "row": 2},
+            {"label": "4", "confidence": 0.91, "x": 40, "y": 60, "width": 18, "height": 20, "row": 2},
+        ]
+
+        with (
+            patch.object(main.MnistWebHandler, "recognizer_kind", "characters"),
+            patch.object(main.MnistWebHandler, "labels", ["x"]),
+            patch.object(main, "predict_characters", return_value=fake_predictions),
+            patch.object(main, "resolve_visual_twin_predictions", side_effect=lambda predictions: predictions),
+            patch.object(main, "load_model", return_value=object()),
+            patch.object(main, "predict_digits", return_value=[]),
+        ):
+            results = main.classify_files([("phrase.png", png_bytes())], model=object(), device=object(), save_sources=False)
+
+        self.assertEqual(results[0]["raw_row_sequences"], ["xOOh:1i", "7o4"])
+        self.assertEqual(results[0]["row_sequences"], ["look behind", "you"])
+        self.assertEqual(results[0]["sequence"], "look behind\nyou")
+        self.assertTrue(results[0]["context_notes"])
+
     def test_render_page_keeps_corrections_on_page_with_fetch(self) -> None:
         """The page should save corrections in-place instead of replacing results."""
 
