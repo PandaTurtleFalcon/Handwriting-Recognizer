@@ -607,7 +607,7 @@ class ExtraAlnumDatasetTests(unittest.TestCase):
             metrics_path = Path(directory) / "nested" / "candidate_metrics.json"
 
             wrote_weights = alnum_model.save_mixedcase_checkpoint(
-                history=[{"epoch": 1, "test_accuracy": 12.5}],
+                history=[{"epoch": 1, "test_accuracy": 12.5, "checkpoint_floor_failures": []}],
                 best_state={"classifier.weight": torch.zeros(1, 1)},
                 best_accuracy=12.5,
                 best_metrics={"test_accuracy": 12.5, "source": "unit_test"},
@@ -629,6 +629,8 @@ class ExtraAlnumDatasetTests(unittest.TestCase):
         self.assertEqual(metrics["output_weights_path"], str(weights_path))
         self.assertEqual(metrics["output_metrics_path"], str(metrics_path))
         self.assertTrue(metrics["wrote_weights"])
+        self.assertTrue(metrics["latest_checkpoint_floor_passed"])
+        self.assertEqual(metrics["latest_checkpoint_floor_failures"], [])
         self.assertEqual(metrics["best_observed_checkpoint"]["test_accuracy"], 13.0)
         self.assertEqual(metrics["trainable_tail_modules"], 1)
 
@@ -640,7 +642,13 @@ class ExtraAlnumDatasetTests(unittest.TestCase):
             metrics_path = Path(directory) / "candidate_metrics.json"
 
             wrote_weights = alnum_model.save_mixedcase_checkpoint(
-                history=[{"epoch": 1, "test_accuracy": 12.5}],
+                history=[
+                    {
+                        "epoch": 1,
+                        "test_accuracy": 12.5,
+                        "checkpoint_floor_failures": ["upper 12.50% < floor 84.70%"],
+                    }
+                ],
                 best_state=None,
                 best_accuracy=12.5,
                 best_metrics=None,
@@ -658,6 +666,8 @@ class ExtraAlnumDatasetTests(unittest.TestCase):
         self.assertFalse(wrote_weights)
         self.assertFalse(weights_path.exists())
         self.assertFalse(metrics["wrote_weights"])
+        self.assertFalse(metrics["latest_checkpoint_floor_passed"])
+        self.assertEqual(metrics["latest_checkpoint_floor_failures"], ["upper 12.50% < floor 84.70%"])
         self.assertEqual(metrics["best_observed_checkpoint"]["source"], "epoch_1")
 
     def test_train_mixedcase_rejects_when_no_checkpoint_is_written(self) -> None:

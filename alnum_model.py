@@ -2274,6 +2274,10 @@ def save_mixedcase_checkpoint(
     output_weights_path.parent.mkdir(parents=True, exist_ok=True)
     output_metrics_path.parent.mkdir(parents=True, exist_ok=True)
     wrote_weights = best_state is not None
+    latest_history = history[-1] if history else {}
+    latest_floor_failures = latest_history.get("checkpoint_floor_failures", [])
+    if not isinstance(latest_floor_failures, list):
+        latest_floor_failures = []
     if best_state is not None:
         torch.save(
             {
@@ -2357,6 +2361,8 @@ def save_mixedcase_checkpoint(
                 "mixedcase_extra_roots": [str(path) for path in (mixedcase_extra_roots or [])],
                 "mixedcase_extra_samples_per_class": mixedcase_extra_samples_per_class,
                 "wrote_weights": wrote_weights,
+                "latest_checkpoint_floor_passed": not latest_floor_failures,
+                "latest_checkpoint_floor_failures": latest_floor_failures,
                 "per_class_accuracy": per_class_accuracy or {},
                 "best_checkpoint": best_metrics or {"test_accuracy": best_accuracy},
                 "best_observed_checkpoint": best_observed_metrics or {},
@@ -2676,11 +2682,6 @@ def train_mixedcase(
                 "balanced_group_accuracy": mixedcase_checkpoint_score(best_epoch_metrics, "balanced_group_accuracy"),
             }
         )
-        if best_epoch_metrics["test_accuracy"] > best_observed_accuracy:
-            best_observed_accuracy = best_epoch_metrics["test_accuracy"]
-            best_observed_metrics = {**best_epoch_metrics, "epoch": epoch, "source": f"epoch_{epoch}"}
-        history.append(metrics)
-        candidate_score = mixedcase_checkpoint_score(best_epoch_metrics, checkpoint_objective)
         floor_failures = mixedcase_checkpoint_floor_failures(
             best_epoch_metrics,
             min_case_or_visual=min_checkpoint_case_or_visual,
@@ -2688,6 +2689,18 @@ def train_mixedcase(
             min_upper=min_checkpoint_upper,
             min_lower=min_checkpoint_lower,
         )
+        metrics["checkpoint_floor_passed"] = not floor_failures
+        metrics["checkpoint_floor_failures"] = floor_failures
+        if best_epoch_metrics["test_accuracy"] > best_observed_accuracy:
+            best_observed_accuracy = best_epoch_metrics["test_accuracy"]
+            best_observed_metrics = {
+                **best_epoch_metrics,
+                "epoch": epoch,
+                "source": f"epoch_{epoch}",
+                "checkpoint_floor_failures": floor_failures,
+            }
+        history.append(metrics)
+        candidate_score = mixedcase_checkpoint_score(best_epoch_metrics, checkpoint_objective)
         if candidate_score > best_score and not floor_failures:
             best_score = candidate_score
             best_accuracy = test_accuracy
