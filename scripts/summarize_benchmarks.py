@@ -410,6 +410,20 @@ def summarize_app_hardcases(
             report.get("raw_ambiguity_aware_correct", 0),
             report.get("total", 0),
         ),
+        _counted_gate(
+            f"{prefix}_raw_label_exact",
+            _float_or_none(report.get("raw_label_exact_accuracy")),
+            target,
+            report.get("raw_label_exact_correct", 0),
+            report.get("total", 0),
+        ),
+        _counted_gate(
+            f"{prefix}_non_replayed_exact",
+            _float_or_none(report.get("non_replayed_exact_accuracy")),
+            target,
+            report.get("non_replayed_exact_correct", 0),
+            report.get("non_replayed_total", 0),
+        ),
     ]
 
 
@@ -447,6 +461,20 @@ def summarize_uploaded_hardcases(target: float = 95.0) -> list[dict[str, object]
             target,
             report.get("raw_ambiguity_aware_correct", 0),
             report.get("total", 0),
+        ),
+        _counted_gate(
+            "uploaded_hardcase_raw_label_exact",
+            _float_or_none(report.get("raw_label_exact_accuracy")),
+            target,
+            report.get("raw_label_exact_correct", 0),
+            report.get("total", 0),
+        ),
+        _counted_gate(
+            "uploaded_hardcase_non_replayed_exact",
+            _float_or_none(report.get("non_replayed_exact_accuracy")),
+            target,
+            report.get("non_replayed_exact_correct", 0),
+            report.get("non_replayed_total", 0),
         ),
     ]
 

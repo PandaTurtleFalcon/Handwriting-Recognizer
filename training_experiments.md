@@ -1546,3 +1546,12 @@ restored, so future improvement loops do not repeat known-bad blends.
   - Fix: added a tiny argparse CLI wrapper around `run()` so `--host` and `--port` are honored by the website command.
   - Verification: focused web CLI tests passed (`2` tests), `main.py` compiled, and `127.0.0.1:8000` was confirmed live under the existing local process. No model artifact changed.
   - Takeaway: this does not improve recognition metrics, but it removes a stale-server failure mode while iterating on app behavior.
+
+- Strict app-recognition measurement and rejected bounded family probes:
+  - Metric fix: app hardcase evaluation now reports replay-assisted uploads separately from non-replayed recognition, and adds `raw_label_*` buckets for the recognizer's compact label stream before row/spacing rescue. This prevents exact-upload correction memory from being mistaken for fresh model accuracy.
+  - Rejected character pair rules: a dry-run `1/I/l/i/|/!/` letter/punctuation pair-rule sweep found many tiny tuning-slice flips but no final improvement. It kept character exact at `94.1666%`, letter exact at `93.5908%`, digit exact at `95.1090%`, and wrote no artifact.
+  - Rejected character reranker: an embedding+pixel `1/I/l/i/|/!/` reranker with letter/punctuation sources failed selection with `selection_delta=-0.1810` and `confirmation_delta=-0.0857`, so no artifact was written.
+  - Rejected mixed-case case resolver: an embedding balanced resolver had `24` safe-looking selection rows but `0` safe final-test rows. It found `4.5811` points of oracle headroom but no promotable threshold.
+  - Rejected mixed-case `1Iil` upper-only reranker: the narrow embeddings-only probe was safer than broad prior runs, but final test delta was `0.0`; it changed no deployed metrics and wrote no artifact.
+  - Verification: focused evaluator and summary tests passed (`19` tests), `scripts/evaluate_hardcases.py` and `scripts/summarize_benchmarks.py` compiled, and a strict summary exposed `app_hardcase_raw_label_exact=66.6667%`, `uploaded_hardcase_raw_label_exact=0.0%`, and `uploaded_hardcase_non_replayed_exact=0.0%`.
+  - Takeaway: the current model stack is still not at the requested exact gates. Cleanup/replay can make the product display usable on known phrases, but future training work should target raw label recognition directly, especially mixed-case upper/lower identity and character letter exact.

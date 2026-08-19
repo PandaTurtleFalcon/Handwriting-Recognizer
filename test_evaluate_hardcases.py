@@ -93,7 +93,30 @@ class HardCaseEvaluationTests(unittest.TestCase):
         self.assertTrue(result.exact)
         self.assertFalse(result.raw_exact)
         self.assertEqual(result.raw_prediction, "xOO11ehind\n7o4")
+        self.assertEqual(result.raw_label_prediction, "xOO11ehind7o4")
         self.assertEqual(result.prediction_count, 2)
+        self.assertFalse(result.raw_label_exact)
+        self.assertFalse(result.replay_used)
+
+    def test_hardcase_result_marks_sequence_correction_replay(self) -> None:
+        """Correction-memory replay should be visible to evaluators."""
+
+        result = hardcase_result_from_classified(
+            "lo",
+            {
+                "sequence": "lo",
+                "raw_sequence": "7O",
+                "raw_row_sequences": ["7O"],
+                "used_sequence_correction": True,
+                "predictions": [{"label": "l"}, {"label": "o"}],
+            },
+            "mock-font",
+        )
+
+        self.assertTrue(result.exact)
+        self.assertFalse(result.raw_exact)
+        self.assertEqual(result.raw_label_prediction, "7O")
+        self.assertTrue(result.replay_used)
 
     def test_evaluate_uploaded_fixtures_reports_real_upload_results(self) -> None:
         """Saved upload fixtures should use the same classifier path as the site."""
@@ -116,10 +139,39 @@ class HardCaseEvaluationTests(unittest.TestCase):
         self.assertEqual(report["total"], 1)
         self.assertEqual(report["exact_accuracy"], 100.0)
         self.assertEqual(report["raw_exact_accuracy"], 0.0)
+        self.assertEqual(report["raw_label_exact_accuracy"], 0.0)
+        self.assertEqual(report["replay_used_count"], 0)
+        self.assertEqual(report["non_replayed_exact_accuracy"], 100.0)
         self.assertEqual(report["results"][0]["font"], "uploaded")
         self.assertEqual(report["results"][0]["raw_prediction"], "xOO11eh'nd\n7o4")
+        self.assertEqual(report["results"][0]["raw_label_prediction"], "xOO11eh'nd7o4")
         self.assertEqual(report["results"][0]["raw_rows"], ["xOO11eh'nd", "7o4"])
         self.assertEqual(report["results"][0]["prediction_count"], 2)
+
+    def test_evaluate_uploaded_fixtures_separates_replayed_successes(self) -> None:
+        """Replay-assisted display wins should not inflate non-replayed metrics."""
+
+        with patch("scripts.evaluate_hardcases.load_web_models", return_value=(object(), object())):
+            with patch("scripts.evaluate_hardcases.main.classify_files") as classifier:
+                classifier.return_value = [
+                    {
+                        "sequence": "look behind\nyou",
+                        "raw_sequence": "xOO11eh'nd7o4",
+                        "raw_row_sequences": ["xOO11eh'nd", "7o4"],
+                        "used_sequence_correction": True,
+                        "predictions": [{"label": "l"}],
+                    }
+                ]
+
+                report = evaluate_uploaded_fixtures(
+                    [{"path": __file__, "target": "look behind you"}]
+                )
+
+        self.assertEqual(report["exact_accuracy"], 100.0)
+        self.assertEqual(report["replay_used_count"], 1)
+        self.assertEqual(report["non_replayed_total"], 0)
+        self.assertEqual(report["non_replayed_exact_accuracy"], 0.0)
+        self.assertTrue(report["results"][0]["replay_used"])
 
     def test_evaluate_uploaded_fixtures_scores_raw_rows_when_available(self) -> None:
         """Real-upload raw metrics should use row-aware raw text."""
@@ -140,7 +192,9 @@ class HardCaseEvaluationTests(unittest.TestCase):
                 )
 
         self.assertEqual(report["raw_exact_accuracy"], 100.0)
+        self.assertEqual(report["raw_label_exact_accuracy"], 0.0)
         self.assertEqual(report["results"][0]["raw_prediction"], "look behind\nyou")
+        self.assertEqual(report["results"][0]["raw_label_prediction"], "lookbehindyou")
         self.assertEqual(report["results"][0]["raw_rows"], ["look behind", "you"])
         self.assertEqual(report["results"][0]["prediction_count"], 1)
 

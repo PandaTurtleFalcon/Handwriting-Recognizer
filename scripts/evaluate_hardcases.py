@@ -97,6 +97,10 @@ class HardCaseResult:
     prediction_count: int | None = None
     raw_exact: bool | None = None
     raw_ambiguity_aware: bool | None = None
+    raw_label_prediction: str | None = None
+    raw_label_exact: bool | None = None
+    raw_label_ambiguity_aware: bool | None = None
+    replay_used: bool = False
 
 
 def load_web_models() -> tuple[object, object]:
@@ -193,8 +197,10 @@ def hardcase_result_from_classified(target: str, classified: dict[str, object], 
         if isinstance(raw_rows, list) and raw_rows
         else str(classified.get("raw_sequence", prediction))
     )
+    raw_label_prediction = str(classified.get("raw_sequence", raw_prediction))
     prediction_items = classified.get("predictions", [])
     prediction_count = len(prediction_items) if isinstance(prediction_items, list) else None
+    replay_used = bool(classified.get("used_sequence_correction", False))
     return HardCaseResult(
         target=target,
         prediction=prediction,
@@ -206,6 +212,10 @@ def hardcase_result_from_classified(target: str, classified: dict[str, object], 
         prediction_count=prediction_count,
         raw_exact=display_matches(target, raw_prediction),
         raw_ambiguity_aware=sequence_matches_with_ambiguity(target, raw_prediction),
+        raw_label_prediction=raw_label_prediction,
+        raw_label_exact=display_matches(target, raw_label_prediction),
+        raw_label_ambiguity_aware=sequence_matches_with_ambiguity(target, raw_label_prediction),
+        replay_used=replay_used,
     )
 
 
@@ -556,6 +566,44 @@ def render_script_case(text: str, seed: int = 42) -> bytes:
     return buffer.getvalue()
 
 
+def summarize_hardcase_results(results: list[HardCaseResult]) -> dict[str, object]:
+    """Summarize hardcase results with replay and raw-label buckets separated."""
+
+    exact = sum(result.exact for result in results)
+    ambiguity = sum(result.ambiguity_aware for result in results)
+    raw_exact = sum(bool(result.raw_exact) for result in results)
+    raw_ambiguity = sum(bool(result.raw_ambiguity_aware) for result in results)
+    raw_label_exact = sum(bool(result.raw_label_exact) for result in results)
+    raw_label_ambiguity = sum(bool(result.raw_label_ambiguity_aware) for result in results)
+    replay_used = sum(result.replay_used for result in results)
+    non_replayed_results = [result for result in results if not result.replay_used]
+    non_replayed_exact = sum(result.exact for result in non_replayed_results)
+    non_replayed_ambiguity = sum(result.ambiguity_aware for result in non_replayed_results)
+    return {
+        "total": len(results),
+        "exact_correct": exact,
+        "exact_accuracy": 100.0 * exact / max(len(results), 1),
+        "ambiguity_aware_correct": ambiguity,
+        "ambiguity_aware_accuracy": 100.0 * ambiguity / max(len(results), 1),
+        "raw_exact_correct": raw_exact,
+        "raw_exact_accuracy": 100.0 * raw_exact / max(len(results), 1),
+        "raw_ambiguity_aware_correct": raw_ambiguity,
+        "raw_ambiguity_aware_accuracy": 100.0 * raw_ambiguity / max(len(results), 1),
+        "raw_label_exact_correct": raw_label_exact,
+        "raw_label_exact_accuracy": 100.0 * raw_label_exact / max(len(results), 1),
+        "raw_label_ambiguity_aware_correct": raw_label_ambiguity,
+        "raw_label_ambiguity_aware_accuracy": 100.0 * raw_label_ambiguity / max(len(results), 1),
+        "replay_used_count": replay_used,
+        "non_replayed_total": len(non_replayed_results),
+        "non_replayed_exact_correct": non_replayed_exact,
+        "non_replayed_exact_accuracy": 100.0 * non_replayed_exact / max(len(non_replayed_results), 1),
+        "non_replayed_ambiguity_aware_correct": non_replayed_ambiguity,
+        "non_replayed_ambiguity_aware_accuracy": 100.0
+        * non_replayed_ambiguity
+        / max(len(non_replayed_results), 1),
+    }
+
+
 def evaluate_cases(cases: list[str] | None = None, all_fonts: bool = False, script_cases: bool = False) -> dict[str, object]:
     """Run generated hard cases through the app classifier."""
 
@@ -574,38 +622,12 @@ def evaluate_cases(cases: list[str] | None = None, all_fonts: bool = False, scri
             payload = render_script_case(target, seed=1000 + index)
             classified = main.classify_files([(f"{target}-script.png", payload)], model, device, save_sources=False)[0]
             results.append(hardcase_result_from_classified(target, classified, "script"))
-    exact = sum(result.exact for result in results)
-    ambiguity = sum(result.ambiguity_aware for result in results)
-    raw_exact = sum(bool(result.raw_exact) for result in results)
-    raw_ambiguity = sum(bool(result.raw_ambiguity_aware) for result in results)
     per_font: dict[str, dict[str, object]] = {}
     for font_name, _ in fonts:
         font_results = [result for result in results if result.font == font_name]
-        font_exact = sum(result.exact for result in font_results)
-        font_ambiguity = sum(result.ambiguity_aware for result in font_results)
-        font_raw_exact = sum(bool(result.raw_exact) for result in font_results)
-        font_raw_ambiguity = sum(bool(result.raw_ambiguity_aware) for result in font_results)
-        per_font[font_name] = {
-            "total": len(font_results),
-            "exact_correct": font_exact,
-            "exact_accuracy": 100.0 * font_exact / max(len(font_results), 1),
-            "ambiguity_aware_correct": font_ambiguity,
-            "ambiguity_aware_accuracy": 100.0 * font_ambiguity / max(len(font_results), 1),
-            "raw_exact_correct": font_raw_exact,
-            "raw_exact_accuracy": 100.0 * font_raw_exact / max(len(font_results), 1),
-            "raw_ambiguity_aware_correct": font_raw_ambiguity,
-            "raw_ambiguity_aware_accuracy": 100.0 * font_raw_ambiguity / max(len(font_results), 1),
-        }
+        per_font[font_name] = summarize_hardcase_results(font_results)
     return {
-        "total": len(results),
-        "exact_correct": exact,
-        "exact_accuracy": 100.0 * exact / max(len(results), 1),
-        "ambiguity_aware_correct": ambiguity,
-        "ambiguity_aware_accuracy": 100.0 * ambiguity / max(len(results), 1),
-        "raw_exact_correct": raw_exact,
-        "raw_exact_accuracy": 100.0 * raw_exact / max(len(results), 1),
-        "raw_ambiguity_aware_correct": raw_ambiguity,
-        "raw_ambiguity_aware_accuracy": 100.0 * raw_ambiguity / max(len(results), 1),
+        **summarize_hardcase_results(results),
         "per_font": per_font,
         "results": [result.__dict__ for result in results],
     }
@@ -624,20 +646,8 @@ def evaluate_uploaded_fixtures(fixtures: list[dict[str, object]] | None = None) 
             continue
         classified = main.classify_files([(path.name, path.read_bytes())], model, device, save_sources=False)[0]
         results.append(hardcase_result_from_classified(target, classified, "uploaded"))
-    exact = sum(result.exact for result in results)
-    ambiguity = sum(result.ambiguity_aware for result in results)
-    raw_exact = sum(bool(result.raw_exact) for result in results)
-    raw_ambiguity = sum(bool(result.raw_ambiguity_aware) for result in results)
     return {
-        "total": len(results),
-        "exact_correct": exact,
-        "exact_accuracy": 100.0 * exact / max(len(results), 1),
-        "ambiguity_aware_correct": ambiguity,
-        "ambiguity_aware_accuracy": 100.0 * ambiguity / max(len(results), 1),
-        "raw_exact_correct": raw_exact,
-        "raw_exact_accuracy": 100.0 * raw_exact / max(len(results), 1),
-        "raw_ambiguity_aware_correct": raw_ambiguity,
-        "raw_ambiguity_aware_accuracy": 100.0 * raw_ambiguity / max(len(results), 1),
+        **summarize_hardcase_results(results),
         "results": [result.__dict__ for result in results],
     }
 

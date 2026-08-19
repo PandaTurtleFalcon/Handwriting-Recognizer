@@ -971,6 +971,11 @@ class BenchmarkSummaryTests(unittest.TestCase):
                 "raw_exact_correct": 88,
                 "raw_ambiguity_aware_accuracy": 75.0,
                 "raw_ambiguity_aware_correct": 132,
+                "raw_label_exact_accuracy": 25.0,
+                "raw_label_exact_correct": 44,
+                "non_replayed_exact_accuracy": 90.0,
+                "non_replayed_exact_correct": 90,
+                "non_replayed_total": 100,
                 "total": 176,
             },
         ) as evaluate:
@@ -984,7 +989,11 @@ class BenchmarkSummaryTests(unittest.TestCase):
         self.assertEqual(by_name["app_hardcase_exact"]["total"], 176)
         self.assertFalse(by_name["app_hardcase_raw_exact"]["passed"])
         self.assertFalse(by_name["app_hardcase_raw_ambiguity"]["passed"])
+        self.assertFalse(by_name["app_hardcase_raw_label_exact"]["passed"])
+        self.assertFalse(by_name["app_hardcase_non_replayed_exact"]["passed"])
         self.assertEqual(by_name["app_hardcase_raw_exact"]["correct"], 88)
+        self.assertEqual(by_name["app_hardcase_raw_label_exact"]["correct"], 44)
+        self.assertEqual(by_name["app_hardcase_non_replayed_exact"]["total"], 100)
 
     def test_summarizes_script_hardcase_gates_on_demand(self) -> None:
         with patch(
@@ -998,6 +1007,11 @@ class BenchmarkSummaryTests(unittest.TestCase):
                 "raw_exact_correct": 1,
                 "raw_ambiguity_aware_accuracy": 50.0,
                 "raw_ambiguity_aware_correct": 1,
+                "raw_label_exact_accuracy": 0.0,
+                "raw_label_exact_correct": 0,
+                "non_replayed_exact_accuracy": 50.0,
+                "non_replayed_exact_correct": 1,
+                "non_replayed_total": 2,
                 "total": 2,
             },
         ) as evaluate:
@@ -1009,6 +1023,8 @@ class BenchmarkSummaryTests(unittest.TestCase):
         self.assertTrue(by_name["app_script_hardcase_ambiguity"]["passed"])
         self.assertFalse(by_name["app_script_hardcase_raw_exact"]["passed"])
         self.assertFalse(by_name["app_script_hardcase_raw_ambiguity"]["passed"])
+        self.assertFalse(by_name["app_script_hardcase_raw_label_exact"]["passed"])
+        self.assertFalse(by_name["app_script_hardcase_non_replayed_exact"]["passed"])
         self.assertEqual(by_name["app_script_hardcase_exact"]["correct"], 1)
 
     def test_summarizes_uploaded_hardcase_gates_on_demand(self) -> None:
@@ -1023,6 +1039,11 @@ class BenchmarkSummaryTests(unittest.TestCase):
                 "raw_exact_correct": 0,
                 "raw_ambiguity_aware_accuracy": 0.0,
                 "raw_ambiguity_aware_correct": 0,
+                "raw_label_exact_accuracy": 0.0,
+                "raw_label_exact_correct": 0,
+                "non_replayed_exact_accuracy": 0.0,
+                "non_replayed_exact_correct": 0,
+                "non_replayed_total": 0,
                 "total": 1,
             },
         ) as evaluate:
@@ -1036,7 +1057,10 @@ class BenchmarkSummaryTests(unittest.TestCase):
         self.assertEqual(by_name["uploaded_hardcase_exact"]["total"], 1)
         self.assertFalse(by_name["uploaded_hardcase_raw_exact"]["passed"])
         self.assertFalse(by_name["uploaded_hardcase_raw_ambiguity"]["passed"])
+        self.assertFalse(by_name["uploaded_hardcase_raw_label_exact"]["passed"])
+        self.assertFalse(by_name["uploaded_hardcase_non_replayed_exact"]["passed"])
         self.assertEqual(by_name["uploaded_hardcase_raw_exact"]["correct"], 0)
+        self.assertEqual(by_name["uploaded_hardcase_non_replayed_exact"]["total"], 0)
 
     def test_summarizes_correction_memory_priority_coverage(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
