@@ -1709,3 +1709,8 @@ restored, so future improvement loops do not repeat known-bad blends.
   - Result: no weights were saved. Epoch 2 lifted raw lowercase from the warm-start `84.1014%` to `91.2414%`, but exact collapsed to `71.9513%`, digit to `73.8125%`, upper to `51.2665%`, and case/visual to `96.8858%`, so the checkpoint floors correctly rejected it.
   - Verification: deployed artifacts were untouched; only the candidate metrics JSON exists under `tmp/`.
   - Takeaway: the model has capacity to push lowercase much higher, but a single-head lower-weight objective catastrophically trades away digit and uppercase decisions. The next checkpoint experiment should use a balanced/multi-objective acceptance score or a separate case head, not a pure lower-tail fine-tune.
+
+- Rejected balanced-tail mixed-case checkpoint fine-tune:
+  - Candidate: repeated the tail-only warm-start experiment with gentler `upper/lower` loss weights (`1.2` each), `--mixedcase-type-loss-weight 0.1`, lower learning rate `0.00005`, and `--mixedcase-checkpoint-objective balanced_group_accuracy` (`tmp/mixedcase_balanced_tail_candidate_20260819T184731.json`).
+  - Result: no weights were saved. Epoch 1 improved raw lower to `86.1044%`, but digit dropped to `76.9825%` and upper to `70.7905%`; epoch 2 further hurt upper to `67.4919%`. The warm-start checkpoint remained the best balanced-group candidate.
+  - Takeaway: classifier-tail-only fine-tuning is too blunt: even a gentle balanced setup moves lower by stealing probability mass from digit/upper groups. Future work should add an explicit auxiliary case/type head or distillation/regularization against the deployed logits before any more checkpoint fine-tuning.
