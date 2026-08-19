@@ -12,6 +12,7 @@ from scripts.prepare_mixedcase_family_pack import (
     family_label_indices,
     load_named_source,
     parse_families,
+    save_family_pack,
 )
 
 
@@ -88,6 +89,21 @@ class PrepareMixedcaseFamilyPackTests(unittest.TestCase):
         load.assert_called_once_with(rough_root)
         self.assertIs(loaded_images, images)
         self.assertIs(loaded_targets, targets)
+
+    def test_save_family_pack_writes_metadata_and_report(self) -> None:
+        output = Path("tmp/test-family-pack.pt")
+        images = torch.zeros((2, 1, 2, 2), dtype=torch.float32)
+        targets = torch.tensor([0, 1], dtype=torch.long)
+        metadata = {"seed": 123, "counts": {"0": 1, "1": 1}}
+
+        report = save_family_pack(output, images, targets, metadata)
+        loaded = torch.load(output, weights_only=False)
+
+        self.assertEqual(report["samples"], 2)
+        self.assertEqual(report["seed"], 123)
+        self.assertTrue(torch.equal(loaded["images"], images))
+        self.assertTrue(torch.equal(loaded["targets"], targets))
+        self.assertEqual(loaded["metadata"], metadata)
 
 
 if __name__ == "__main__":

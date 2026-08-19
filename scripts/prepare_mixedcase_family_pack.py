@@ -28,6 +28,7 @@ DEFAULT_FAMILIES = ("1Iil", "0Oo", "5Ss", "Cc", "MNmn", "9qg", "Uuv", "2Zz", "4Y
 ROUGH_SCRIPT_SOURCE = "rough-script"
 DEFAULT_ROUGH_LABELS = "".join(dict.fromkeys("".join(DEFAULT_FAMILIES)))
 DEFAULT_ROUGH_ROOT = PROJECT_DIR / "tmp" / "generated_rough_mixedcase_family_ascii"
+DEFAULT_VALIDATION_ROUGH_ROOT = PROJECT_DIR / "tmp" / "generated_rough_mixedcase_family_ascii_validation"
 DEFAULT_SOURCES = (
     "emnist-train",
     "chars74k",
@@ -163,6 +164,14 @@ def build_family_pack(
     return images, targets, metadata
 
 
+def save_family_pack(output: Path, images: torch.Tensor, targets: torch.Tensor, metadata: dict[str, object]) -> dict[str, object]:
+    """Write one pack and return its JSON-friendly report."""
+
+    output.parent.mkdir(parents=True, exist_ok=True)
+    torch.save({"images": images, "targets": targets, "metadata": metadata}, output)
+    return {"output": str(output), "samples": int(targets.numel()), **metadata}
+
+
 def main() -> None:
     """Run the pack builder CLI."""
 
@@ -179,6 +188,19 @@ def main() -> None:
     )
     parser.add_argument("--rough-samples-per-label", type=int, default=80)
     parser.add_argument("--output", type=Path, default=PROJECT_DIR / "tmp" / "mixedcase_top_family_pack.pt")
+    parser.add_argument(
+        "--validation-output",
+        type=Path,
+        default=None,
+        help="Optional second pack built with a different seed for held-out rough-source checks.",
+    )
+    parser.add_argument("--validation-seed", type=int, default=20260919)
+    parser.add_argument(
+        "--validation-rough-root",
+        type=Path,
+        default=DEFAULT_VALIDATION_ROUGH_ROOT,
+        help=f"ASCII-folder output used for the optional validation pack when {ROUGH_SCRIPT_SOURCE!r} is included.",
+    )
     parser.add_argument("--json", action="store_true")
     args = parser.parse_args()
 
@@ -192,9 +214,22 @@ def main() -> None:
         rough_root=args.rough_root,
         rough_samples_per_label=args.rough_samples_per_label,
     )
-    args.output.parent.mkdir(parents=True, exist_ok=True)
-    torch.save({"images": images, "targets": targets, "metadata": metadata}, args.output)
-    report = {"output": str(args.output), "samples": int(targets.numel()), **metadata}
+    report = save_family_pack(args.output, images, targets, metadata)
+    if args.validation_output is not None:
+        validation_images, validation_targets, validation_metadata = build_family_pack(
+            sources,
+            families,
+            max_per_label_per_source=args.max_per_label_per_source,
+            seed=args.validation_seed,
+            rough_root=args.validation_rough_root,
+            rough_samples_per_label=args.rough_samples_per_label,
+        )
+        report["validation"] = save_family_pack(
+            args.validation_output,
+            validation_images,
+            validation_targets,
+            validation_metadata,
+        )
     if args.json:
         print(json.dumps(report, indent=2))
     else:

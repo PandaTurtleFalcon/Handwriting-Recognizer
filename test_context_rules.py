@@ -147,6 +147,15 @@ class ContextRulesTests(unittest.TestCase):
         self.assertEqual(cleanup.display, "Hi'5")
         self.assertEqual(cleanup.notes, [])
 
+    def test_split_reported_look_behind_you_raw_rows_are_cleaned(self) -> None:
+        """The reported xOOh:1i plus 7o4 rows should display as look behind you."""
+
+        cleanup = cleanup_context("xOOh:1i7o4", ["xOOh:1i", "7o4"])
+
+        self.assertEqual(cleanup.display, "look behind\nyou")
+        self.assertEqual(cleanup.rows, ["look behind", "you"])
+        self.assertTrue(cleanup.notes)
+
     def test_common_contraction_cleanup_handles_cant_shape(self) -> None:
         """The hard-case CAnDt row can be the common contraction can't."""
 
