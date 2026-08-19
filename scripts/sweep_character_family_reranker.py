@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+from collections import Counter
 from itertools import product
 from pathlib import Path
 
@@ -73,6 +74,63 @@ def best_sweep_row(rows: list[dict[str, object]]) -> dict[str, object] | None:
     if not rows:
         return None
     return max(rows, key=lambda row: (bool(row["promotable"]), float(row["validation_delta"])))
+
+
+def _family_rows(rows: list[dict[str, object]]) -> list[dict[str, object]]:
+    """Return all family decision rows from a sweep report."""
+
+    families: list[dict[str, object]] = []
+    for row in rows:
+        for family in row.get("families") or []:
+            if isinstance(family, dict):
+                families.append(family)
+    return families
+
+
+def _family_delta(row: dict[str, object]) -> float:
+    """Return a comparable validation delta for one family row."""
+
+    value = row.get("delta")
+    return float(value) if isinstance(value, (int, float)) else 0.0
+
+
+def top_family_rows(rows: list[dict[str, object]], limit: int = 5) -> list[dict[str, object]]:
+    """Return family rows with the largest validation deltas across a sweep."""
+
+    compact_rows = [
+        {
+            "family": row.get("family"),
+            "accepted": bool(row.get("accepted")),
+            "selection_delta": row.get("selection_delta"),
+            "confirmation_delta": row.get("confirmation_delta"),
+            "delta": row.get("delta"),
+            "rejection_reason": row.get("rejection_reason"),
+        }
+        for row in _family_rows(rows)
+    ]
+    return sorted(compact_rows, key=_family_delta, reverse=True)[:limit]
+
+
+def rejection_reason_counts(rows: list[dict[str, object]]) -> dict[str, int]:
+    """Count why rejected family rows failed across the whole sweep."""
+
+    reasons = Counter(
+        str(row.get("rejection_reason"))
+        for row in _family_rows(rows)
+        if not bool(row.get("accepted")) and row.get("rejection_reason")
+    )
+    return dict(sorted(reasons.items(), key=lambda item: (-item[1], item[0])))
+
+
+def accepted_family_counts(rows: list[dict[str, object]]) -> dict[str, int]:
+    """Count accepted family decisions across the whole sweep."""
+
+    counts = Counter(
+        str(row.get("family"))
+        for row in _family_rows(rows)
+        if bool(row.get("accepted")) and row.get("family")
+    )
+    return dict(sorted(counts.items(), key=lambda item: (-item[1], item[0])))
 
 
 def run_sweep(
@@ -165,6 +223,9 @@ def run_sweep(
         "planned_runs": len(all_runs),
         "completed_runs": len(rows),
         "truncated": max_runs is not None and len(all_runs) > max_runs,
+        "top_family_rows": top_family_rows(rows),
+        "rejection_reason_counts": rejection_reason_counts(rows),
+        "accepted_family_counts": accepted_family_counts(rows),
     }
 
 

@@ -2,11 +2,14 @@ import unittest
 from pathlib import Path
 
 from scripts.sweep_character_family_reranker import (
+    accepted_family_counts,
     best_sweep_row,
     parse_float_values,
     parse_int_values,
     parse_source_group_sets,
+    rejection_reason_counts,
     run_sweep,
+    top_family_rows,
 )
 
 
@@ -34,6 +37,35 @@ class SweepCharacterFamilyRerankerTests(unittest.TestCase):
         ]
 
         self.assertIs(best_sweep_row(rows), rows[2])
+
+    def test_family_diagnostics_summarize_whole_sweep(self) -> None:
+        rows = [
+            {
+                "families": [
+                    {
+                        "family": "0Oo",
+                        "accepted": False,
+                        "delta": 0.2,
+                        "rejection_reason": "selection_validation_delta_below_floor",
+                    },
+                    {"family": "5Ss", "accepted": True, "delta": 0.1},
+                ]
+            },
+            {
+                "families": [
+                    {
+                        "family": "0Oo",
+                        "accepted": False,
+                        "delta": 0.0,
+                        "rejection_reason": "selection_validation_delta_below_floor",
+                    }
+                ]
+            },
+        ]
+
+        self.assertEqual(top_family_rows(rows, limit=1)[0]["family"], "0Oo")
+        self.assertEqual(rejection_reason_counts(rows), {"selection_validation_delta_below_floor": 2})
+        self.assertEqual(accepted_family_counts(rows), {"5Ss": 1})
 
     def test_run_sweep_can_limit_planned_grid(self) -> None:
         calls = []
@@ -89,6 +121,9 @@ class SweepCharacterFamilyRerankerTests(unittest.TestCase):
         self.assertTrue(report["include_embedding_features"])
         self.assertEqual(report["max_probe_train_samples"], 128)
         self.assertEqual(report["mini_batch_size"], 32)
+        self.assertEqual(report["rejection_reason_counts"], {})
+        self.assertEqual(report["accepted_family_counts"], {})
+        self.assertEqual(report["top_family_rows"], [])
 
 
 if __name__ == "__main__":
