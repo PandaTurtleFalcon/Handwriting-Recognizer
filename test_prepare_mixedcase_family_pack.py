@@ -1,13 +1,16 @@
 import unittest
-from unittest.mock import patch
+from pathlib import Path
+from unittest.mock import Mock, patch
 
 import torch
 
 from alnum_model import MIXEDCASE_LABELS
 from scripts.prepare_mixedcase_family_pack import (
+    ROUGH_SCRIPT_SOURCE,
     balanced_indices_for_labels,
     build_family_pack,
     family_label_indices,
+    load_named_source,
     parse_families,
 )
 
@@ -56,6 +59,35 @@ class PrepareMixedcaseFamilyPackTests(unittest.TestCase):
         self.assertEqual(targets.tolist().count(one_index), 2)
         self.assertEqual(targets.tolist().count(i_index), 2)
         self.assertEqual(metadata["counts"], {"1": 2, "I": 2})
+
+    def test_rough_script_source_generates_and_loads_ascii_folder(self) -> None:
+        rough_root = Path("/tmp/generated-rough-test")
+        images = torch.zeros((2, 1, 28, 28), dtype=torch.float32)
+        targets = torch.tensor([MIXEDCASE_LABELS.index("1"), MIXEDCASE_LABELS.index("I")])
+
+        with (
+            patch("scripts.prepare_mixedcase_family_pack.generate_rough_character_variants") as generate,
+            patch("scripts.prepare_mixedcase_family_pack._mixedcase_ascii_folder_cache_path") as cache_path,
+            patch("scripts.prepare_mixedcase_family_pack.load_mixedcase_extra_cache", return_value=(images, targets)) as load,
+        ):
+            stale_cache = Mock()
+            stale_cache.exists.return_value = True
+            cache_path.return_value = stale_cache
+
+            loaded_images, loaded_targets = load_named_source(
+                ROUGH_SCRIPT_SOURCE,
+                rough_root=rough_root,
+                rough_samples_per_label=3,
+                seed=99,
+            )
+
+        generate.assert_called_once()
+        self.assertEqual(generate.call_args.kwargs["samples_per_label"], 3)
+        self.assertEqual(generate.call_args.kwargs["seed"], 99)
+        stale_cache.unlink.assert_called_once_with()
+        load.assert_called_once_with(rough_root)
+        self.assertIs(loaded_images, images)
+        self.assertIs(loaded_targets, targets)
 
 
 if __name__ == "__main__":

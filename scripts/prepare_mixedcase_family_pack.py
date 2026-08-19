@@ -16,13 +16,18 @@ if str(PROJECT_DIR) not in sys.path:
 
 from alnum_model import (  # noqa: E402
     MIXEDCASE_LABELS,
+    _mixedcase_ascii_folder_cache_path,
     build_or_load_chars74k_mixedcase_cache,
     build_or_load_emnist_byclass_mixedcase_cache,
     load_mixedcase_extra_cache,
 )
+from scripts.generate_rough_character_variants import generate_rough_character_variants  # noqa: E402
 
 
 DEFAULT_FAMILIES = ("1Iil", "0Oo", "5Ss", "Cc", "MNmn", "9qg", "Uuv", "2Zz", "4Yy")
+ROUGH_SCRIPT_SOURCE = "rough-script"
+DEFAULT_ROUGH_LABELS = "".join(dict.fromkeys("".join(DEFAULT_FAMILIES)))
+DEFAULT_ROUGH_ROOT = PROJECT_DIR / "tmp" / "generated_rough_mixedcase_family_ascii"
 DEFAULT_SOURCES = (
     "emnist-train",
     "chars74k",
@@ -53,7 +58,12 @@ def family_label_indices(families: tuple[str, ...]) -> tuple[int, ...]:
     return tuple(selected)
 
 
-def load_named_source(source: str) -> tuple[torch.Tensor, torch.Tensor]:
+def load_named_source(
+    source: str,
+    rough_root: Path = DEFAULT_ROUGH_ROOT,
+    rough_samples_per_label: int = 80,
+    seed: int = 20260818,
+) -> tuple[torch.Tensor, torch.Tensor]:
     """Load one named source or `.pt` extra cache."""
 
     if source == "emnist-train":
@@ -62,6 +72,17 @@ def load_named_source(source: str) -> tuple[torch.Tensor, torch.Tensor]:
         return build_or_load_emnist_byclass_mixedcase_cache(train=False)
     if source == "chars74k":
         return build_or_load_chars74k_mixedcase_cache()
+    if source == ROUGH_SCRIPT_SOURCE:
+        generate_rough_character_variants(
+            rough_root,
+            labels=DEFAULT_ROUGH_LABELS,
+            samples_per_label=rough_samples_per_label,
+            seed=seed,
+        )
+        cache_path = _mixedcase_ascii_folder_cache_path(rough_root)
+        if cache_path.exists():
+            cache_path.unlink()
+        return load_mixedcase_extra_cache(rough_root)
     return load_mixedcase_extra_cache(Path(source))
 
 
@@ -91,6 +112,8 @@ def build_family_pack(
     families: tuple[str, ...],
     max_per_label_per_source: int,
     seed: int,
+    rough_root: Path = DEFAULT_ROUGH_ROOT,
+    rough_samples_per_label: int = 80,
 ) -> tuple[torch.Tensor, torch.Tensor, dict[str, object]]:
     """Build a balanced tensor pack from selected source datasets."""
 
@@ -99,7 +122,12 @@ def build_family_pack(
     target_parts = []
     source_reports = []
     for source_index, source in enumerate(sources):
-        images, targets = load_named_source(source)
+        images, targets = load_named_source(
+            source,
+            rough_root=rough_root,
+            rough_samples_per_label=rough_samples_per_label,
+            seed=seed + source_index,
+        )
         selected = balanced_indices_for_labels(
             targets,
             label_indices,
@@ -128,6 +156,8 @@ def build_family_pack(
         "sources": source_reports,
         "counts": {MIXEDCASE_LABELS[index]: totals.get(index, 0) for index in label_indices},
         "max_per_label_per_source": max_per_label_per_source,
+        "rough_root": str(rough_root),
+        "rough_samples_per_label": rough_samples_per_label,
         "seed": seed,
     }
     return images, targets, metadata
@@ -141,6 +171,13 @@ def main() -> None:
     parser.add_argument("--source", action="append", default=[])
     parser.add_argument("--max-per-label-per-source", type=int, default=400)
     parser.add_argument("--seed", type=int, default=20260818)
+    parser.add_argument(
+        "--rough-root",
+        type=Path,
+        default=DEFAULT_ROUGH_ROOT,
+        help=f"ASCII-folder output used when --source {ROUGH_SCRIPT_SOURCE!r} is included.",
+    )
+    parser.add_argument("--rough-samples-per-label", type=int, default=80)
     parser.add_argument("--output", type=Path, default=PROJECT_DIR / "tmp" / "mixedcase_top_family_pack.pt")
     parser.add_argument("--json", action="store_true")
     args = parser.parse_args()
@@ -152,6 +189,8 @@ def main() -> None:
         families,
         max_per_label_per_source=args.max_per_label_per_source,
         seed=args.seed,
+        rough_root=args.rough_root,
+        rough_samples_per_label=args.rough_samples_per_label,
     )
     args.output.parent.mkdir(parents=True, exist_ok=True)
     torch.save({"images": images, "targets": targets, "metadata": metadata}, args.output)
