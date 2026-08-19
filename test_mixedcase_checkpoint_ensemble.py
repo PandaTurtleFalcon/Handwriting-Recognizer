@@ -10,6 +10,7 @@ from scripts.probe_mixedcase_checkpoint_ensemble import (
     calibration_artifacts_match_checkpoint,
     discover_checkpoint_paths_for,
     file_sha256,
+    test_tensors as load_probe_test_tensors,
 )
 
 
@@ -37,6 +38,23 @@ class MixedcaseCheckpointEnsembleProbeTests(unittest.TestCase):
         self.assertEqual(paths, [deployed, unique])
         self.assertEqual(duplicates, 1)
 
+    def test_discover_checkpoint_paths_includes_timestamped_backups(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            deployed = root / "mixedcase_cnn.pt"
+            backup_root = root / "backups"
+            timestamped = backup_root / "mixedcase_cnn.20260709_152412.pt"
+            candidate = backup_root / "mixedcase_balanced_family_cap250_lr75e8.pt"
+            timestamped.parent.mkdir(parents=True)
+            deployed.write_bytes(b"current")
+            timestamped.write_bytes(b"older candidate")
+            candidate.write_bytes(b"named candidate")
+
+            paths, duplicates = discover_checkpoint_paths_for(deployed, (backup_root,))
+
+        self.assertEqual(paths, [deployed, timestamped, candidate])
+        self.assertEqual(duplicates, 0)
+
     def test_artifact_checkpoint_hash_reads_torch_and_json_artifacts(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
@@ -47,6 +65,24 @@ class MixedcaseCheckpointEnsembleProbeTests(unittest.TestCase):
 
             self.assertEqual(artifact_checkpoint_hash(torch_artifact), "abc123")
             self.assertEqual(artifact_checkpoint_hash(json_artifact), "def456")
+
+    def test_test_tensors_can_take_deterministic_sample_limit(self) -> None:
+        images = torch.arange(10, dtype=torch.float32).reshape(10, 1, 1, 1)
+        targets = torch.arange(10, dtype=torch.long)
+
+        with (
+            patch("scripts.probe_mixedcase_checkpoint_ensemble.build_or_load_mnist_cache", return_value=(images[:4], targets[:4])),
+            patch(
+                "scripts.probe_mixedcase_checkpoint_ensemble.build_or_load_emnist_byclass_mixedcase_cache",
+                return_value=(images[4:], targets[4:]),
+            ),
+        ):
+            first_images, first_targets = load_probe_test_tensors(sample_limit=5, seed=12)
+            second_images, second_targets = load_probe_test_tensors(sample_limit=5, seed=12)
+
+        self.assertEqual(int(first_targets.numel()), 5)
+        self.assertEqual(first_targets.tolist(), second_targets.tolist())
+        self.assertTrue(torch.equal(first_images, second_images))
 
     def test_calibration_artifacts_must_match_candidate_checkpoint(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

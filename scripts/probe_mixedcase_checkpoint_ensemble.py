@@ -39,8 +39,10 @@ DEFAULT_SEARCH_ROOTS = (
     PROJECT_DIR / ".automation_backups",
     PROJECT_DIR / ".training_backups",
     PROJECT_DIR / "backups",
+    PROJECT_DIR / "tmp" / "candidates",
     PROJECT_DIR / "tmp" / "daily_training_backups",
 )
+CHECKPOINT_GLOBS = ("mixedcase_cnn.pt", "mixedcase_cnn.*.pt", "mixedcase_*.pt")
 
 
 class AverageLogitModel(nn.Module):
@@ -83,7 +85,8 @@ def discover_checkpoint_paths_for(deployed_path: Path, search_roots: tuple[Path,
     for root in search_roots:
         if not root.exists():
             continue
-        paths.extend(sorted(path for path in root.rglob("mixedcase_cnn.pt") if path.is_file()))
+        for pattern in CHECKPOINT_GLOBS:
+            paths.extend(sorted(path for path in root.rglob(pattern) if path.is_file()))
     unique: list[Path] = []
     seen: set[Path] = set()
     seen_hashes: set[str] = set()
@@ -125,12 +128,18 @@ def load_raw_checkpoint(path: Path, device: torch.device) -> nn.Module | None:
     return model
 
 
-def test_tensors() -> tuple[torch.Tensor, torch.Tensor]:
+def test_tensors(sample_limit: int | None = None, seed: int = 0) -> tuple[torch.Tensor, torch.Tensor]:
     """Return the same mixed-case test tensors used by the saved benchmark."""
 
     mnist_images, mnist_targets = build_or_load_mnist_cache(train=False)
     byclass_images, byclass_targets = build_or_load_emnist_byclass_mixedcase_cache(train=False)
-    return torch.cat([mnist_images, byclass_images]), torch.cat([mnist_targets, byclass_targets])
+    images = torch.cat([mnist_images, byclass_images])
+    targets = torch.cat([mnist_targets, byclass_targets])
+    if sample_limit is None or sample_limit >= int(targets.numel()):
+        return images, targets
+    generator = torch.Generator().manual_seed(seed)
+    indices = torch.randperm(int(targets.numel()), generator=generator)[: max(1, sample_limit)]
+    return images[indices], targets[indices]
 
 
 def hybrid_stack_metrics(
@@ -272,11 +281,17 @@ def meets_floors(metrics: dict[str, float], floors: dict[str, float]) -> bool:
     return all(float(metrics.get(key, 0.0)) >= floor for key, floor in floors.items())
 
 
-def run_probe(candidate_limit: int, batch_size: int, min_delta: float) -> dict[str, object]:
+def run_probe(
+    candidate_limit: int,
+    batch_size: int,
+    min_delta: float,
+    test_sample_limit: int | None = None,
+    seed: int = 0,
+) -> dict[str, object]:
     """Evaluate single-checkpoint and two-checkpoint hybrid ensembles."""
 
     device = get_device()
-    images, targets = test_tensors()
+    images, targets = test_tensors(test_sample_limit, seed)
     current_raw = load_raw_checkpoint(MIXEDCASE_WEIGHTS_PATH, device)
     if current_raw is None:
         raise RuntimeError("Could not load current raw mixed-case checkpoint.")
@@ -298,9 +313,11 @@ def run_probe(candidate_limit: int, batch_size: int, min_delta: float) -> dict[s
     best: dict[str, object] = {"path": str(MIXEDCASE_WEIGHTS_PATH), "metrics": baseline, "delta": metric_delta(baseline, baseline)}
     unique_paths, duplicate_hashes = discover_checkpoint_paths()
     paths = unique_paths[1 : 1 + max(0, candidate_limit)]
+    skipped_unloadable = 0
     for path in paths:
         candidate_model = load_raw_checkpoint(path, device)
         if candidate_model is None:
+            skipped_unloadable += 1
             continue
         candidate_calibration_matched = calibration_artifacts_match_checkpoint(path)
         single_metrics = hybrid_stack_metrics(
@@ -345,8 +362,13 @@ def run_probe(candidate_limit: int, batch_size: int, min_delta: float) -> dict[s
         "floors": floors,
         "best": best,
         "candidate_count": len(reports),
+        "promotable_count": sum(1 for report in reports if bool(report["accepted"])),
         "unique_checkpoint_count": len(unique_paths),
         "duplicate_checkpoint_count": duplicate_hashes,
+        "skipped_unloadable_count": skipped_unloadable,
+        "test_sample_limit": test_sample_limit,
+        "test_samples": int(targets.numel()),
+        "seed": seed,
         "candidates": reports,
     }
 
@@ -358,8 +380,21 @@ def main() -> None:
     parser.add_argument("--candidate-limit", type=int, default=12)
     parser.add_argument("--batch-size", type=int, default=4096)
     parser.add_argument("--min-delta", type=float, default=0.05)
+    parser.add_argument("--test-sample-limit", type=int, default=None)
+    parser.add_argument("--seed", type=int, default=0)
     args = parser.parse_args()
-    print(json.dumps(run_probe(args.candidate_limit, args.batch_size, args.min_delta), indent=2))
+    print(
+        json.dumps(
+            run_probe(
+                args.candidate_limit,
+                args.batch_size,
+                args.min_delta,
+                args.test_sample_limit,
+                args.seed,
+            ),
+            indent=2,
+        )
+    )
 
 
 if __name__ == "__main__":
