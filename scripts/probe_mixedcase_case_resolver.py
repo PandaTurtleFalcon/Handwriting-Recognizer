@@ -224,6 +224,42 @@ def _resolver_candidate_is_safe(
     )
 
 
+def _resolver_metric_deltas(
+    base_metrics: dict[str, float],
+    candidate_metrics: dict[str, float],
+) -> dict[str, float]:
+    """Return candidate-minus-base deltas for resolver benchmark metrics."""
+
+    return {
+        name: candidate_metrics[name] - base_metrics[name]
+        for name in (
+            "test_accuracy",
+            "case_or_ambiguity_aware_test_accuracy",
+            "digit_test_accuracy",
+            "upper_test_accuracy",
+            "lower_test_accuracy",
+        )
+    }
+
+
+def _resolver_floor_failures(
+    base_metrics: dict[str, float],
+    candidate_metrics: dict[str, float],
+) -> list[str]:
+    """Return protected metric names that regressed versus the base metrics."""
+
+    return [
+        name
+        for name in (
+            "case_or_ambiguity_aware_test_accuracy",
+            "digit_test_accuracy",
+            "upper_test_accuracy",
+            "lower_test_accuracy",
+        )
+        if candidate_metrics[name] < base_metrics[name]
+    ]
+
+
 def _resolver_objective(metrics: dict[str, float], objective: str) -> float:
     """Score safe resolver rows for threshold selection."""
 
@@ -275,6 +311,8 @@ def sweep_case_resolver_thresholds(
                     "margin_threshold": margin_threshold,
                     "safe": safe,
                     "metrics": candidate_metrics,
+                    "metric_deltas": _resolver_metric_deltas(base_metrics, candidate_metrics),
+                    "floor_failures": _resolver_floor_failures(base_metrics, candidate_metrics),
                     "test_delta": candidate_metrics["test_accuracy"] - base_metrics["test_accuracy"],
                 }
             )
@@ -541,6 +579,8 @@ def select_confirm_case_resolver_thresholds(
         confirmation = {
             "safe": _resolver_candidate_is_safe(base_confirmation, confirmation_metrics),
             "metrics": confirmation_metrics,
+            "metric_deltas": _resolver_metric_deltas(base_confirmation, confirmation_metrics),
+            "floor_failures": _resolver_floor_failures(base_confirmation, confirmation_metrics),
             "test_delta": confirmation_metrics["test_accuracy"] - base_confirmation["test_accuracy"],
         }
         if bool(confirmation["safe"]):
@@ -627,6 +667,8 @@ def run_probe_from_data(
             "margin_threshold": selected_margin,
             "safe": _resolver_candidate_is_safe(base_metrics, candidate_metrics),
             "metrics": candidate_metrics,
+            "metric_deltas": _resolver_metric_deltas(base_metrics, candidate_metrics),
+            "floor_failures": _resolver_floor_failures(base_metrics, candidate_metrics),
             "test_delta": candidate_metrics["test_accuracy"] - base_metrics["test_accuracy"],
         }
         resolved_predictions, resolved_metrics, sweep_rows = sweep_case_resolver_thresholds(

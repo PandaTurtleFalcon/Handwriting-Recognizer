@@ -51,20 +51,34 @@ def compact_probe_report(report: dict[str, object], parameters: dict[str, object
     final_candidate = report.get("final_selected_candidate")
     final_delta = 0.0
     final_safe = False
+    final_floor_failures: list[str] = []
     if isinstance(final_candidate, dict):
         final_delta = float(final_candidate.get("test_delta", 0.0))
         final_safe = bool(final_candidate.get("safe"))
+        floor_failures = final_candidate.get("floor_failures", [])
+        if isinstance(floor_failures, list):
+            final_floor_failures = [str(item) for item in floor_failures]
+    selection_rows = report.get("selection_sweep_rows", [])
+    best_selection_row = None
+    if isinstance(selection_rows, list):
+        best_selection_row = max(
+            (row for row in selection_rows if isinstance(row, dict)),
+            key=lambda row: float(row.get("test_delta", 0.0)),
+            default=None,
+        )
     return {
         "parameters": parameters,
         "promotable": bool(report.get("promotable")),
         "test_delta": float(report.get("test_delta", 0.0)),
         "final_selected_delta": final_delta,
         "final_selected_safe": final_safe,
+        "final_floor_failures": final_floor_failures,
         "base": report.get("base"),
         "resolved": report.get("resolved"),
         "selected_thresholds": report.get("selected_thresholds"),
         "confirmation": report.get("confirmation"),
         "final_selected_candidate": final_candidate,
+        "best_selection_row": best_selection_row,
         "selection_safe_sweep_count": report.get("selection_safe_sweep_count"),
         "safe_sweep_count": report.get("safe_sweep_count"),
     }

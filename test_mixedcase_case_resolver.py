@@ -7,6 +7,8 @@ import torch
 from scripts.probe_mixedcase_case_resolver import (
     _case_target_counts,
     _letter_identity_index,
+    _resolver_floor_failures,
+    _resolver_metric_deltas,
     _resolver_objective,
     apply_case_resolver,
     case_resolver_features,
@@ -159,6 +161,33 @@ class MixedcaseCaseResolverTests(unittest.TestCase):
         self.assertEqual(_resolver_objective(metrics, "balanced"), 75.0)
         with self.assertRaisesRegex(ValueError, "Unsupported"):
             _resolver_objective(metrics, "mystery")
+
+    def test_resolver_diagnostics_report_metric_deltas_and_floor_failures(self) -> None:
+        """Resolver sweeps should explain which protected metric blocked promotion."""
+
+        base = {
+            "test_accuracy": 80.0,
+            "case_or_ambiguity_aware_test_accuracy": 98.0,
+            "digit_test_accuracy": 95.0,
+            "upper_test_accuracy": 84.0,
+            "lower_test_accuracy": 73.0,
+        }
+        candidate = {
+            "test_accuracy": 81.0,
+            "case_or_ambiguity_aware_test_accuracy": 98.1,
+            "digit_test_accuracy": 94.9,
+            "upper_test_accuracy": 84.0,
+            "lower_test_accuracy": 72.5,
+        }
+
+        deltas = _resolver_metric_deltas(base, candidate)
+
+        self.assertEqual(deltas["test_accuracy"], 1.0)
+        self.assertAlmostEqual(deltas["digit_test_accuracy"], -0.1)
+        self.assertEqual(
+            _resolver_floor_failures(base, candidate),
+            ["digit_test_accuracy", "lower_test_accuracy"],
+        )
 
     def test_train_case_resolver_returns_none_without_matching_identity_samples(self) -> None:
         """Training should abstain when folded identity never matches true letters."""
