@@ -93,6 +93,8 @@ class HardCaseResult:
     ambiguity_aware: bool
     font: str = ""
     raw_prediction: str | None = None
+    raw_rows: list[str] | None = None
+    prediction_count: int | None = None
     raw_exact: bool | None = None
     raw_ambiguity_aware: bool | None = None
 
@@ -570,6 +572,8 @@ def evaluate_uploaded_fixtures(fixtures: list[dict[str, object]] | None = None) 
             if isinstance(raw_rows, list) and raw_rows
             else str(classified.get("raw_sequence", prediction))
         )
+        prediction_items = classified.get("predictions", [])
+        prediction_count = len(prediction_items) if isinstance(prediction_items, list) else None
         results.append(
             HardCaseResult(
                 target=target,
@@ -578,6 +582,8 @@ def evaluate_uploaded_fixtures(fixtures: list[dict[str, object]] | None = None) 
                 ambiguity_aware=sequence_matches_with_ambiguity(target, prediction),
                 font="uploaded",
                 raw_prediction=raw_prediction,
+                raw_rows=[str(row) for row in raw_rows] if isinstance(raw_rows, list) else None,
+                prediction_count=prediction_count,
                 raw_exact=display_matches(target, raw_prediction),
                 raw_ambiguity_aware=sequence_matches_with_ambiguity(target, raw_prediction),
             )

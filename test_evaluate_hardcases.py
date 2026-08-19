@@ -61,7 +61,14 @@ class HardCaseEvaluationTests(unittest.TestCase):
 
         with patch("scripts.evaluate_hardcases.load_web_models", return_value=(object(), object())):
             with patch("scripts.evaluate_hardcases.main.classify_files") as classifier:
-                classifier.return_value = [{"sequence": "look behind\nyou", "raw_sequence": "xOO11eh'nd7o4"}]
+                classifier.return_value = [
+                    {
+                        "sequence": "look behind\nyou",
+                        "raw_sequence": "xOO11eh'nd7o4",
+                        "raw_row_sequences": ["xOO11eh'nd", "7o4"],
+                        "predictions": [{"label": "x"}, {"label": "O"}],
+                    }
+                ]
 
                 report = evaluate_uploaded_fixtures(
                     [{"path": __file__, "target": "look behind you"}]
@@ -71,7 +78,9 @@ class HardCaseEvaluationTests(unittest.TestCase):
         self.assertEqual(report["exact_accuracy"], 100.0)
         self.assertEqual(report["raw_exact_accuracy"], 0.0)
         self.assertEqual(report["results"][0]["font"], "uploaded")
-        self.assertEqual(report["results"][0]["raw_prediction"], "xOO11eh'nd7o4")
+        self.assertEqual(report["results"][0]["raw_prediction"], "xOO11eh'nd\n7o4")
+        self.assertEqual(report["results"][0]["raw_rows"], ["xOO11eh'nd", "7o4"])
+        self.assertEqual(report["results"][0]["prediction_count"], 2)
 
     def test_evaluate_uploaded_fixtures_scores_raw_rows_when_available(self) -> None:
         """Real-upload raw metrics should use row-aware raw text."""
@@ -83,6 +92,7 @@ class HardCaseEvaluationTests(unittest.TestCase):
                         "sequence": "look behind\nyou",
                         "raw_sequence": "lookbehindyou",
                         "raw_row_sequences": ["look behind", "you"],
+                        "predictions": [{"label": "l"}],
                     }
                 ]
 
@@ -92,6 +102,8 @@ class HardCaseEvaluationTests(unittest.TestCase):
 
         self.assertEqual(report["raw_exact_accuracy"], 100.0)
         self.assertEqual(report["results"][0]["raw_prediction"], "look behind\nyou")
+        self.assertEqual(report["results"][0]["raw_rows"], ["look behind", "you"])
+        self.assertEqual(report["results"][0]["prediction_count"], 1)
 
     def test_evaluate_uploaded_fixtures_skips_missing_files(self) -> None:
         """Missing local fixture files should not crash the evaluator."""
