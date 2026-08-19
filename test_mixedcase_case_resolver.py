@@ -41,6 +41,25 @@ class MixedcaseCaseResolverTests(unittest.TestCase):
         self.assertTrue(bool(torch.isfinite(features).all()))
         self.assertEqual(features[:, :26].sum(dim=1).tolist(), [1.0, 1.0])
 
+    def test_case_resolver_features_can_append_normalized_embeddings(self) -> None:
+        """Optional CNN activations should become normalized case-resolver evidence."""
+
+        images = torch.zeros((2, 1, 28, 28), dtype=torch.float32)
+        mixed_outputs = torch.zeros((2, 62), dtype=torch.float32)
+        folded_outputs = torch.zeros((2, 36), dtype=torch.float32)
+        folded_outputs[:, 10] = 3.0
+        embeddings = torch.tensor([[3.0, 4.0], [0.0, 2.0]], dtype=torch.float32)
+
+        features, _folded_predictions = case_resolver_features(
+            images,
+            mixed_outputs,
+            folded_outputs,
+            embeddings,
+        )
+
+        self.assertEqual(tuple(features.shape), (2, 58))
+        self.assertTrue(torch.allclose(features[:, -2:].norm(dim=1), torch.ones(2)))
+
     def test_oracle_case_predictions_keeps_folded_identity_with_true_case(self) -> None:
         """Oracle predictions should expose the best case-only resolver ceiling."""
 
@@ -178,6 +197,45 @@ class MixedcaseCaseResolverTests(unittest.TestCase):
         self.assertIsNotNone(confirmation)
         self.assertFalse(confirmation["safe"])
         self.assertEqual(len(rows), 1)
+
+    def test_select_confirm_case_resolver_returns_confirmed_threshold(self) -> None:
+        """Confirmed selection rows should preserve the selected threshold values."""
+
+        model = torch.nn.Linear(3, 2)
+        with torch.no_grad():
+            model.weight[:] = torch.tensor([[0.0, 0.0, 0.0], [5.0, 0.0, 0.0]])
+            model.bias.zero_()
+        base_predictions = torch.tensor([10, 10, 36, 0], dtype=torch.long)
+        targets = torch.tensor([10, 36, 36, 0], dtype=torch.long)
+        folded_predictions = torch.tensor([10, 10, 10, 10], dtype=torch.long)
+        features = torch.tensor(
+            [
+                [-1.0, 0.0, 0.0],
+                [1.0, 0.0, 0.0],
+                [1.0, 0.0, 0.0],
+                [1.0, 0.0, 0.0],
+            ],
+            dtype=torch.float32,
+        )
+
+        selected, confirmation, _rows = select_confirm_case_resolver_thresholds(
+            base_predictions,
+            targets,
+            features,
+            folded_predictions,
+            base_predictions,
+            targets,
+            features,
+            folded_predictions,
+            model,
+            confidence_thresholds=[0.0],
+            margin_thresholds=[0.0],
+        )
+
+        self.assertIsNotNone(selected)
+        self.assertIsNotNone(confirmation)
+        self.assertTrue(confirmation["safe"])
+        self.assertEqual(selected["confidence_threshold"], 0.0)
 
 
 if __name__ == "__main__":

@@ -21,6 +21,7 @@ from scripts.probe_mixedcase_feature_reranker import (  # noqa: E402
     _load_hybrid_artifact,
     _metrics,
     _model_outputs,
+    _model_outputs_with_embeddings,
     _split_tensors,
     geometry_features,
 )
@@ -51,6 +52,7 @@ def case_resolver_features(
     images: torch.Tensor,
     mixed_outputs: torch.Tensor,
     folded_outputs: torch.Tensor,
+    embedding_outputs: torch.Tensor | None = None,
 ) -> tuple[torch.Tensor, torch.Tensor]:
     """Build per-sample case features and the folded predicted identity."""
 
@@ -78,7 +80,11 @@ def case_resolver_features(
         ),
         dim=1,
     )
-    return torch.cat((identity_one_hot, numeric_features, geometry_features(images)), dim=1).float(), folded_predictions
+    parts = [identity_one_hot, numeric_features, geometry_features(images)]
+    if embedding_outputs is not None:
+        normalized_embeddings = torch.nn.functional.normalize(embedding_outputs.float(), dim=1)
+        parts.append(normalized_embeddings)
+    return torch.cat(parts, dim=1).float(), folded_predictions
 
 
 def train_case_resolver(
@@ -358,6 +364,7 @@ def run_probe(
     extra_samples_per_class: int | None = None,
     calibration_ratio: float = 0.2,
     confirmation_ratio: float = 0.5,
+    include_embedding_features: bool = False,
 ) -> dict[str, object]:
     """Train and evaluate a case-resolver probe without writing artifacts."""
 
@@ -383,22 +390,57 @@ def run_probe(
     confirmation_images = train_images[confirmation_indices]
     confirmation_targets = train_targets[confirmation_indices]
     test_images, test_targets = _split_tensors(train=False, sample_limit=None)
-    train_mixed, train_folded = _model_outputs(fit_images, batch_size)
-    selection_mixed, selection_folded = _model_outputs(selection_images, batch_size)
-    confirmation_mixed, confirmation_folded = _model_outputs(confirmation_images, batch_size)
-    test_mixed, test_folded = _model_outputs(test_images, batch_size)
-    train_features, train_folded_predictions = case_resolver_features(fit_images, train_mixed, train_folded)
+    if include_embedding_features:
+        train_mixed, train_folded, train_embedding = _model_outputs_with_embeddings(
+            fit_images,
+            batch_size,
+            include_embedding_features=True,
+        )
+        selection_mixed, selection_folded, selection_embedding = _model_outputs_with_embeddings(
+            selection_images,
+            batch_size,
+            include_embedding_features=True,
+        )
+        confirmation_mixed, confirmation_folded, confirmation_embedding = _model_outputs_with_embeddings(
+            confirmation_images,
+            batch_size,
+            include_embedding_features=True,
+        )
+        test_mixed, test_folded, test_embedding = _model_outputs_with_embeddings(
+            test_images,
+            batch_size,
+            include_embedding_features=True,
+        )
+    else:
+        train_mixed, train_folded = _model_outputs(fit_images, batch_size)
+        selection_mixed, selection_folded = _model_outputs(selection_images, batch_size)
+        confirmation_mixed, confirmation_folded = _model_outputs(confirmation_images, batch_size)
+        test_mixed, test_folded = _model_outputs(test_images, batch_size)
+        train_embedding = selection_embedding = confirmation_embedding = test_embedding = None
+    train_features, train_folded_predictions = case_resolver_features(
+        fit_images,
+        train_mixed,
+        train_folded,
+        train_embedding,
+    )
     selection_features, selection_folded_predictions = case_resolver_features(
         selection_images,
         selection_mixed,
         selection_folded,
+        selection_embedding,
     )
     confirmation_features, confirmation_folded_predictions = case_resolver_features(
         confirmation_images,
         confirmation_mixed,
         confirmation_folded,
+        confirmation_embedding,
     )
-    test_features, test_folded_predictions = case_resolver_features(test_images, test_mixed, test_folded)
+    test_features, test_folded_predictions = case_resolver_features(
+        test_images,
+        test_mixed,
+        test_folded,
+        test_embedding,
+    )
     resolver = train_case_resolver(
         train_features,
         fit_targets,
@@ -412,6 +454,7 @@ def run_probe(
     confirmation_predictions = hybrid_predictions(confirmation_mixed, confirmation_folded, artifact)
     base_predictions = hybrid_predictions(test_mixed, test_folded, artifact)
     oracle_predictions = oracle_case_predictions(base_predictions, test_folded, test_targets)
+    base_metrics = _metrics(base_predictions, test_targets)
     target_identity = _letter_identity_index(test_targets)
     folded_identity = test_folded_predictions - 10
     letter_mask = target_identity >= 0
@@ -431,21 +474,39 @@ def run_probe(
         confidence_values,
         margin_values,
     )
+    final_selected_candidate: dict[str, object] | None = None
     if resolver is None or selected_thresholds is None:
         resolved_predictions = base_predictions
         sweep_rows = []
         resolved_metrics = _metrics(resolved_predictions, test_targets)
     else:
+        selected_confidence = float(selected_thresholds["confidence_threshold"])
+        selected_margin = float(selected_thresholds["margin_threshold"])
+        candidate_predictions = apply_case_resolver(
+            base_predictions,
+            test_features,
+            test_folded_predictions,
+            resolver,
+            selected_confidence,
+            selected_margin,
+        )
+        candidate_metrics = _metrics(candidate_predictions, test_targets)
+        final_selected_candidate = {
+            "confidence_threshold": selected_confidence,
+            "margin_threshold": selected_margin,
+            "safe": _resolver_candidate_is_safe(base_metrics, candidate_metrics),
+            "metrics": candidate_metrics,
+            "test_delta": candidate_metrics["test_accuracy"] - base_metrics["test_accuracy"],
+        }
         resolved_predictions, resolved_metrics, sweep_rows = sweep_case_resolver_thresholds(
             base_predictions,
             test_targets,
             test_features,
             test_folded_predictions,
             resolver,
-            [float(selected_thresholds["confidence_threshold"])],
-            [float(selected_thresholds["margin_threshold"])],
+            [selected_confidence],
+            [selected_margin],
         )
-    base_metrics = _metrics(base_predictions, test_targets)
     oracle_metrics = _metrics(oracle_predictions, test_targets)
     best_sweep_row = max(sweep_rows, key=lambda row: float(row["test_delta"]), default=None)
     return {
@@ -475,6 +536,7 @@ def run_probe(
         "margin_threshold": margin_threshold,
         "selected_thresholds": selected_thresholds,
         "confirmation": confirmation,
+        "final_selected_candidate": final_selected_candidate,
         "selection_sweep_count": len(selection_rows),
         "selection_safe_sweep_count": sum(1 for row in selection_rows if bool(row.get("safe"))),
         "safe_sweep_count": sum(1 for row in sweep_rows if bool(row.get("safe"))),
@@ -485,6 +547,7 @@ def run_probe(
         "extra_samples_per_class": extra_samples_per_class,
         "calibration_ratio": calibration_ratio,
         "confirmation_ratio": confirmation_ratio,
+        "include_embedding_features": include_embedding_features,
     }
 
 
@@ -506,6 +569,7 @@ def main() -> None:
     parser.add_argument("--extra-samples-per-class", type=int, default=None)
     parser.add_argument("--calibration-ratio", type=float, default=0.2)
     parser.add_argument("--confirmation-ratio", type=float, default=0.5)
+    parser.add_argument("--include-embedding-features", action="store_true")
     args = parser.parse_args()
     print(
         json.dumps(
@@ -532,6 +596,7 @@ def main() -> None:
                 extra_samples_per_class=args.extra_samples_per_class,
                 calibration_ratio=args.calibration_ratio,
                 confirmation_ratio=args.confirmation_ratio,
+                include_embedding_features=args.include_embedding_features,
             ),
             indent=2,
         )
