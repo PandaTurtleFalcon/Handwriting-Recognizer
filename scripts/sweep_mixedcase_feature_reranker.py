@@ -38,6 +38,20 @@ def parse_float_values(raw: str) -> list[float]:
     return values
 
 
+def parse_optional_float_values(raw: str) -> list[float | None]:
+    """Parse comma-separated floats, allowing `none` as an unset gate."""
+
+    values: list[float | None] = []
+    for part in raw.split(","):
+        stripped = part.strip().lower()
+        if not stripped:
+            continue
+        values.append(None if stripped in {"none", "null"} else float(stripped))
+    if not values:
+        raise ValueError("At least one optional float value is required.")
+    return values
+
+
 def parse_source_group_sets(raw: str) -> list[tuple[str, ...]]:
     """Parse semicolon-separated source-group sets for a sweep."""
 
@@ -85,6 +99,10 @@ def run_sweep(
     source_group_sets: list[tuple[str, ...]],
     probe_confidences: list[float],
     probe_margins: list[float],
+    base_confidence_maxes: list[float | None],
+    base_margin_maxes: list[float | None],
+    digit_protect_confidences: list[float | None],
+    upper_protect_confidences: list[float | None],
     train_sample_limit: int | None,
     family_limit: int | None,
     families: tuple[str, ...] | None,
@@ -108,7 +126,20 @@ def run_sweep(
     """Run bounded mixed-case family-reranker probes and summarize results."""
 
     rows: list[dict[str, object]] = []
-    all_runs = list(product(epochs, learning_rates, hidden_units, source_group_sets, probe_confidences, probe_margins))
+    all_runs = list(
+        product(
+            epochs,
+            learning_rates,
+            hidden_units,
+            source_group_sets,
+            probe_confidences,
+            probe_margins,
+            base_confidence_maxes,
+            base_margin_maxes,
+            digit_protect_confidences,
+            upper_protect_confidences,
+        )
+    )
     selected_runs = all_runs[:max_runs] if max_runs is not None else all_runs
     data = prepare_feature_probe_data(
         batch_size=batch_size,
@@ -121,7 +152,18 @@ def run_sweep(
         include_digit_features=include_digit_features,
         include_embedding_features=include_embedding_features,
     )
-    for epoch_count, learning_rate, hidden_count, source_groups, probe_confidence, probe_margin in selected_runs:
+    for (
+        epoch_count,
+        learning_rate,
+        hidden_count,
+        source_groups,
+        probe_confidence,
+        probe_margin,
+        base_confidence_max,
+        base_margin_max,
+        digit_protect_confidence,
+        upper_protect_confidence,
+    ) in selected_runs:
         parameters = {
             "epochs": epoch_count,
             "learning_rate": learning_rate,
@@ -129,6 +171,10 @@ def run_sweep(
             "source_groups": list(source_groups),
             "probe_confidence": probe_confidence,
             "probe_margin": probe_margin,
+            "base_confidence_max": base_confidence_max,
+            "base_margin_max": base_margin_max,
+            "digit_protect_confidence": digit_protect_confidence,
+            "upper_protect_confidence": upper_protect_confidence,
         }
         report = run_probe_from_data(
             data=data,
@@ -148,6 +194,10 @@ def run_sweep(
             min_case_or_visual=min_case_or_visual,
             probe_confidence=probe_confidence,
             probe_margin=probe_margin,
+            base_confidence_max=base_confidence_max,
+            base_margin_max=base_margin_max,
+            digit_protect_confidence=digit_protect_confidence,
+            upper_protect_confidence=upper_protect_confidence,
             max_probe_train_samples=max_probe_train_samples,
             mini_batch_size=mini_batch_size,
             write=False,
@@ -169,6 +219,10 @@ def run_sweep(
         "include_digit_features": include_digit_features,
         "include_pixel_features": include_pixel_features,
         "include_embedding_features": include_embedding_features,
+        "base_confidence_maxes": base_confidence_maxes,
+        "base_margin_maxes": base_margin_maxes,
+        "digit_protect_confidences": digit_protect_confidences,
+        "upper_protect_confidences": upper_protect_confidences,
         "max_probe_train_samples": max_probe_train_samples,
         "mini_batch_size": mini_batch_size,
         "minimum_gates": {
@@ -195,6 +249,10 @@ def main() -> None:
     parser.add_argument("--source-groups", default="digit,upper;digit,upper,lower")
     parser.add_argument("--probe-confidences", default="0.0,0.5")
     parser.add_argument("--probe-margins", default="0.0,0.05")
+    parser.add_argument("--base-confidence-maxes", default="none")
+    parser.add_argument("--base-margin-maxes", default="none")
+    parser.add_argument("--digit-protect-confidences", default="none")
+    parser.add_argument("--upper-protect-confidences", default="none")
     parser.add_argument("--train-sample-limit", type=int, default=None)
     parser.add_argument("--family-limit", type=int, default=None)
     parser.add_argument("--families", default="", help="Comma-separated visual-family labels to probe explicitly.")
@@ -225,6 +283,10 @@ def main() -> None:
                 source_group_sets=parse_source_group_sets(args.source_groups),
                 probe_confidences=parse_float_values(args.probe_confidences),
                 probe_margins=parse_float_values(args.probe_margins),
+                base_confidence_maxes=parse_optional_float_values(args.base_confidence_maxes),
+                base_margin_maxes=parse_optional_float_values(args.base_margin_maxes),
+                digit_protect_confidences=parse_optional_float_values(args.digit_protect_confidences),
+                upper_protect_confidences=parse_optional_float_values(args.upper_protect_confidences),
                 train_sample_limit=args.train_sample_limit,
                 family_limit=args.family_limit,
                 families=parse_family_names(args.families),

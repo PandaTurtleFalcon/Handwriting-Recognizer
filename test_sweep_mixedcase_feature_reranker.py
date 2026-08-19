@@ -5,6 +5,7 @@ from scripts.sweep_mixedcase_feature_reranker import (
     best_sweep_row,
     parse_float_values,
     parse_int_values,
+    parse_optional_float_values,
     parse_source_group_sets,
     run_sweep,
 )
@@ -22,6 +23,11 @@ class SweepMixedcaseFeatureRerankerTests(unittest.TestCase):
         self.assertEqual(parse_float_values("0.1, 2"), [0.1, 2.0])
         with self.assertRaisesRegex(ValueError, "At least one"):
             parse_float_values(" , ")
+
+    def test_parse_optional_float_values_accepts_none(self) -> None:
+        self.assertEqual(parse_optional_float_values("none, 0.25, null"), [None, 0.25, None])
+        with self.assertRaisesRegex(ValueError, "At least one"):
+            parse_optional_float_values(" , ")
 
     def test_parse_source_group_sets_accepts_semicolon_sets(self) -> None:
         self.assertEqual(parse_source_group_sets("digit,upper;lower"), [("digit", "upper"), ("lower",)])
@@ -70,6 +76,10 @@ class SweepMixedcaseFeatureRerankerTests(unittest.TestCase):
                 source_group_sets=[("digit",), ("upper",)],
                 probe_confidences=[0.0],
                 probe_margins=[0.0, 0.1],
+                base_confidence_maxes=[None, 0.35],
+                base_margin_maxes=[None],
+                digit_protect_confidences=[None, 0.95],
+                upper_protect_confidences=[None],
                 train_sample_limit=10,
                 family_limit=None,
                 families=("0Oo",),
@@ -96,7 +106,7 @@ class SweepMixedcaseFeatureRerankerTests(unittest.TestCase):
 
         self.assertEqual(len(prepare_calls), 1)
         self.assertEqual(len(calls), 3)
-        self.assertEqual(report["planned_runs"], 16)
+        self.assertEqual(report["planned_runs"], 64)
         self.assertEqual(report["completed_runs"], 3)
         self.assertTrue(report["truncated"])
         self.assertTrue(report["prepared_once"])
@@ -109,9 +119,13 @@ class SweepMixedcaseFeatureRerankerTests(unittest.TestCase):
         self.assertTrue(prepare_calls[0]["include_embedding_features"])
         self.assertEqual(calls[0]["max_probe_train_samples"], 128)
         self.assertEqual(calls[0]["mini_batch_size"], 32)
+        self.assertIsNone(calls[0]["base_confidence_max"])
+        self.assertIsNone(calls[0]["digit_protect_confidence"])
         self.assertEqual(report["extra_roots"], ["cvl.pt"])
         self.assertTrue(report["include_pixel_features"])
         self.assertTrue(report["include_embedding_features"])
+        self.assertEqual(report["base_confidence_maxes"], [None, 0.35])
+        self.assertEqual(report["digit_protect_confidences"], [None, 0.95])
         self.assertEqual(report["max_probe_train_samples"], 128)
         self.assertEqual(report["mini_batch_size"], 32)
 

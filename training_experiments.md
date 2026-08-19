@@ -1680,3 +1680,9 @@ restored, so future improvement loops do not repeat known-bad blends.
   - Smoke: a one-run `0Oo` sweep with rough `80/class` extras completed with no promotable candidate and reported `balanced_score=73.1513`, matching the current lower-case bottleneck on the standard split.
   - Verification: `test_mixedcase_feature_reranker.py` and `test_sweep_mixedcase_feature_reranker.py` passed (`34` tests), and the modified probe/sweep scripts compiled.
   - Takeaway: future sweeps can now optimize toward the actual goal shape (`all protected splits up`) instead of chasing exact-only movement that repeatedly regresses upper or lower accuracy.
+
+- Safety-gate grid support for balanced reranker sweeps:
+  - Tooling: `scripts/sweep_mixedcase_feature_reranker.py` now accepts `--base-confidence-maxes`, `--base-margin-maxes`, `--digit-protect-confidences`, and `--upper-protect-confidences`, with `none`/`null` supported as unset values. This lets the sweep wrapper search the gates that previously had to be run manually.
+  - Smoke: a two-run `0Oo` sweep over `digit_protect_confidence=None,0.95` with `base_confidence_max=0.35` completed end to end. Both rows stayed non-promotable and reported unchanged `balanced_score=73.1513`, so no artifact was written.
+  - Verification: `test_sweep_mixedcase_feature_reranker.py` and `test_mixedcase_feature_reranker.py` passed (`35` tests), and the modified sweep/probe scripts compiled.
+  - Takeaway: the search harness now covers the currently useful safety dimensions. The next improvement loop can run broader balanced sweeps without hand-writing one-off shell loops.
