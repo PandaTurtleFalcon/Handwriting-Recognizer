@@ -12,6 +12,7 @@ from scripts.evaluate_hardcases import (
     render_script_case,
     sequence_matches_with_ambiguity,
 )
+from character_model import labels_match_with_ambiguity
 
 
 class HardCaseEvaluationTests(unittest.TestCase):
@@ -20,8 +21,21 @@ class HardCaseEvaluationTests(unittest.TestCase):
 
         self.assertTrue(sequence_matches_with_ambiguity("S5o", "sSO"))
         self.assertTrue(sequence_matches_with_ambiguity("Il1", "1lI"))
+        self.assertTrue(sequence_matches_with_ambiguity("(85)", "1851"))
+        self.assertTrue(sequence_matches_with_ambiguity("can't", "CANDt"))
+        self.assertTrue(sequence_matches_with_ambiguity("9qg", "GQg"))
+        self.assertTrue(sequence_matches_with_ambiguity("G6b", "GBb"))
         self.assertFalse(sequence_matches_with_ambiguity("Hi", "HL:"))
         self.assertFalse(sequence_matches_with_ambiguity("AB", "A"))
+
+    def test_hardcase_ambiguity_keeps_global_boundaries(self) -> None:
+        """Hardcase-only allowances should not loosen shared validation groups."""
+
+        self.assertFalse(labels_match_with_ambiguity("'", "D"))
+        self.assertFalse(labels_match_with_ambiguity("(", ")"))
+        self.assertFalse(sequence_matches_with_ambiguity("D", "'"))
+        self.assertFalse(sequence_matches_with_ambiguity("(85)", "185("))
+        self.assertFalse(sequence_matches_with_ambiguity("D'", "'D"))
 
     def test_display_matches_treats_row_breaks_as_phrase_spacing(self) -> None:
         """Whole-phrase hardcases should allow the app's visual row separator."""

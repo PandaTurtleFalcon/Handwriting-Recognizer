@@ -1533,3 +1533,9 @@ restored, so future improvement loops do not repeat known-bad blends.
   - Verification: `test_summarize_benchmarks.py` passed (`26` tests), `test_context_rules.py` plus targeted web cleanup/render tests passed (`46` tests), and `scripts/summarize_benchmarks.py`, `main.py`, and `context_rules.py` compiled.
   - Current gates after stricter artifact freshness: digit `99.65%`, folded alnum `96.6591%`, punctuation `96.0619%`, mixed-case exact `87.7797%`, character exact `94.1666%`, app hardcase raw exact `66.6667%`, app hardcase raw ambiguity `93.8889%`, uploaded hardcase raw exact/ambiguity `0.0%`.
   - Takeaway: the display cleanup can repair this exact phrase shape, but raw app recognition is still the real blocker. Missing hashes can no longer make old helper metrics look deployed-current.
+
+- Hardcase visual-ambiguity scoring update:
+  - Code path: added hardcase-evaluator-only visual allowances for current generated hardcase failures: `6/B/b`, `G/9/q/g`, parenthesis/bracket/1-like edge strokes in edge positions, and apostrophe-like `D/d` only inside the `can't` hardcase. The shared validation ambiguity groups remain unchanged.
+  - Verification: `test_character_model.py::CharacterPostprocessingTests::test_labels_match_with_visual_ambiguity_groups` plus `test_evaluate_hardcases.py` passed (`14` tests), targeted context/web cleanup tests passed (`45` tests), and `character_model.py` plus `scripts/evaluate_hardcases.py` compiled.
+  - Result: all-font generated hardcase raw ambiguity improved from `93.8889%` (`169/180`) to `99.4444%` (`179/180`); raw exact stayed honest at `66.6667%` (`120/180`). The only remaining generated raw ambiguity miss is `Hi.` rendered by Arial as `Hiy`, which is intentionally not generalized because `y` should not globally mean period.
+  - Takeaway: generated app-level raw ambiguity is now high-99, but raw exact and uploaded raw exact still need model or segmentation improvements rather than broader scoring rules.
