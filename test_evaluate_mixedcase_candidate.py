@@ -297,6 +297,7 @@ class MixedcaseCandidateEvaluatorTests(unittest.TestCase):
             "evaluate_mixedcase_candidate.py",
             "--include-deployed-baseline",
             "--require-baseline",
+            "--allow-baseline-mode-mismatch",
             "--json",
         ]
 
@@ -311,6 +312,24 @@ class MixedcaseCandidateEvaluatorTests(unittest.TestCase):
         report = mixedcase_candidate.json.loads(payload)
         self.assertEqual(len(report["baseline_gates"]), len(mixedcase_candidate.GATE_KEYS))
         self.assertTrue(all(row["passed"] for row in report["baseline_gates"]))
+
+    def test_main_rejects_required_deployed_baseline_mode_mismatch_by_default(self) -> None:
+        candidate_report = {
+            "checkpoint_path": "candidate.pt",
+            "mode": "raw",
+            "sample_limit": None,
+            "total_examples": 1,
+            "metrics": {"test_accuracy": 98.0},
+            "deployed_baseline": {"mode": "deployed", "metrics": {"test_accuracy": 97.0}},
+        }
+        argv = ["evaluate_mixedcase_candidate.py", "--include-deployed-baseline", "--require-baseline"]
+
+        with (
+            patch("sys.argv", argv),
+            patch("scripts.evaluate_mixedcase_candidate.evaluate_candidate", return_value=candidate_report),
+        ):
+            with self.assertRaisesRegex(RuntimeError, "different evaluation modes"):
+                mixedcase_candidate.main()
 
 
 if __name__ == "__main__":

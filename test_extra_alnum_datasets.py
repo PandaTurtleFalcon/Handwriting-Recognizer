@@ -303,6 +303,22 @@ class ExtraAlnumDatasetTests(unittest.TestCase):
         trainable = [name for name, parameter in model.named_parameters() if parameter.requires_grad]
         self.assertEqual(trainable, ["network.10.weight", "network.10.bias"])
 
+    def test_freeze_feature_layers_can_leave_late_tail_trainable(self) -> None:
+        model = MODEL_CLASSES["widecnn"](num_classes=len(MIXEDCASE_LABELS))
+
+        freeze_feature_layers(model, trainable_tail_modules=2)
+
+        trainable = [name for name, parameter in model.named_parameters() if parameter.requires_grad]
+        self.assertEqual(
+            trainable,
+            [
+                "network.7.weight",
+                "network.7.bias",
+                "network.10.weight",
+                "network.10.bias",
+            ],
+        )
+
     def test_mixedcase_train_dataset_can_enable_tensor_augmentation(self) -> None:
         images = torch.zeros((2, 1, 28, 28), dtype=torch.float32)
         targets = torch.tensor([0, 1], dtype=torch.long)
@@ -575,6 +591,7 @@ class ExtraAlnumDatasetTests(unittest.TestCase):
         self.assertEqual(metrics["output_metrics_path"], str(metrics_path))
         self.assertTrue(metrics["wrote_weights"])
         self.assertEqual(metrics["best_observed_checkpoint"]["test_accuracy"], 13.0)
+        self.assertEqual(metrics["trainable_tail_modules"], 1)
 
     def test_save_mixedcase_checkpoint_reports_missing_weights(self) -> None:
         """Metrics should say when no checkpoint satisfied save floors."""

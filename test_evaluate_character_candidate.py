@@ -10,6 +10,7 @@ from scripts.evaluate_character_candidate import (
     baseline_rows,
     candidate_validation_tensors,
     evaluate_candidate,
+    evaluate_deployed_stack,
     failed_rows,
     gate_rows,
     improvement_row,
@@ -201,6 +202,131 @@ class CharacterCandidateEvaluatorTests(unittest.TestCase):
             attach_bias.assert_called_once()
             attach_rules.assert_called_once()
             self.assertFalse(predictions.call_args.kwargs["apply_calibration"])
+
+    def test_evaluate_deployed_stack_uses_wrapped_model(self) -> None:
+        images = torch.zeros((2, 1, 28, 28), dtype=torch.float32)
+        targets = torch.tensor([1, 1], dtype=torch.long)
+        labels = ["A", "B"]
+
+        class FixedModel(torch.nn.Module):
+            def forward(self, inputs: torch.Tensor) -> torch.Tensor:
+                return torch.zeros((inputs.size(0), len(labels)), dtype=torch.float32)
+
+        with (
+            patch(
+                "scripts.evaluate_character_candidate.candidate_validation_tensors",
+                return_value=(images, targets, labels),
+            ),
+            patch("scripts.evaluate_character_candidate.load_character_model", return_value=(FixedModel(), labels)),
+            patch("scripts.evaluate_character_candidate.calibrated_predictions", return_value=targets) as predictions,
+        ):
+            report = evaluate_deployed_stack(batch_size=2, device_name="cpu", sample_limit=2)
+
+        self.assertEqual(report["mode"], "deployed")
+        self.assertEqual(report["total_examples"], 2)
+        self.assertEqual(report["metrics"]["validation_accuracy"], 100.0)
+        self.assertTrue(predictions.call_args.kwargs["apply_calibration"])
+
+    def test_candidate_can_include_deployed_baseline_report(self) -> None:
+        class FixedModel(torch.nn.Module):
+            def forward(self, inputs: torch.Tensor) -> torch.Tensor:
+                return torch.zeros((inputs.size(0), 2), dtype=torch.float32)
+
+        with tempfile.TemporaryDirectory() as directory:
+            checkpoint_path = Path(directory) / "candidate.pt"
+            with (
+                patch(
+                    "scripts.evaluate_character_candidate.candidate_validation_tensors",
+                    return_value=(torch.zeros((1, 1, 28, 28)), torch.zeros(1, dtype=torch.long), ["A", "B"]),
+                ),
+                patch("scripts.evaluate_character_candidate.load_candidate_checkpoint", return_value=FixedModel()),
+                patch(
+                    "scripts.evaluate_character_candidate.evaluate_deployed_stack",
+                    return_value={
+                        "mode": "deployed",
+                        "metrics": {
+                            "validation_accuracy": 99.0,
+                            "ambiguity_aware_validation_accuracy": 99.0,
+                            "digit_validation_accuracy": 99.0,
+                            "letter_validation_accuracy": 99.0,
+                            "punctuation_validation_accuracy": 99.0,
+                        },
+                    },
+                ) as deployed,
+            ):
+                report = evaluate_candidate(
+                    checkpoint_path,
+                    batch_size=4,
+                    device_name="cpu",
+                    mode="raw",
+                    include_deployed_baseline=True,
+                    sample_limit=1,
+                )
+
+        self.assertEqual(report["deployed_baseline"]["mode"], "deployed")
+        deployed.assert_called_once_with(batch_size=4, device_name="cpu", sample_limit=1)
+
+    def test_main_can_compare_against_deployed_baseline(self) -> None:
+        candidate_report = {
+            "checkpoint_path": "candidate.pt",
+            "mode": "raw",
+            "sample_limit": None,
+            "total_examples": 1,
+            "metrics": {
+                "validation_accuracy": 98.0,
+                "ambiguity_aware_validation_accuracy": 98.0,
+                "digit_validation_accuracy": 98.0,
+                "letter_validation_accuracy": 98.0,
+                "punctuation_validation_accuracy": 98.0,
+            },
+            "deployed_baseline": {
+                "mode": "deployed",
+                "metrics": {
+                    "validation_accuracy": 97.0,
+                    "ambiguity_aware_validation_accuracy": 97.0,
+                    "digit_validation_accuracy": 97.0,
+                    "letter_validation_accuracy": 97.0,
+                    "punctuation_validation_accuracy": 97.0,
+                },
+            },
+        }
+        argv = [
+            "evaluate_character_candidate.py",
+            "--include-deployed-baseline",
+            "--require-baseline",
+            "--allow-baseline-mode-mismatch",
+            "--json",
+        ]
+
+        with (
+            patch("sys.argv", argv),
+            patch("scripts.evaluate_character_candidate.evaluate_candidate", return_value=candidate_report),
+            patch("builtins.print") as printer,
+        ):
+            character_candidate.main()
+
+        payload = printer.call_args.args[0]
+        report = character_candidate.json.loads(payload)
+        self.assertEqual(len(report["baseline_gates"]), len(character_candidate.GATE_KEYS))
+        self.assertTrue(all(row["passed"] for row in report["baseline_gates"]))
+
+    def test_main_rejects_required_deployed_baseline_mode_mismatch_by_default(self) -> None:
+        candidate_report = {
+            "checkpoint_path": "candidate.pt",
+            "mode": "raw",
+            "sample_limit": None,
+            "total_examples": 1,
+            "metrics": {"validation_accuracy": 98.0},
+            "deployed_baseline": {"mode": "deployed", "metrics": {"validation_accuracy": 97.0}},
+        }
+        argv = ["evaluate_character_candidate.py", "--include-deployed-baseline", "--require-baseline"]
+
+        with (
+            patch("sys.argv", argv),
+            patch("scripts.evaluate_character_candidate.evaluate_candidate", return_value=candidate_report),
+        ):
+            with self.assertRaisesRegex(RuntimeError, "different evaluation modes"):
+                character_candidate.main()
 
 
 if __name__ == "__main__":

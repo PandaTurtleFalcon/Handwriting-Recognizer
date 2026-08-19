@@ -456,10 +456,13 @@ class WebAppRenderingTests(unittest.TestCase):
             main.MnistWebHandler.labels = previous_labels
 
         self.assertEqual(results[0]["sequence"], "lo")
+        self.assertEqual(results[0]["raw_sequence"], "7O")
+        self.assertEqual(results[0]["raw_row_sequences"], ["7O"])
+        self.assertEqual(results[0]["replayed_sequence"], "lo")
         self.assertTrue(results[0]["used_sequence_correction"])
 
-    def test_classify_files_keeps_visible_boxes_for_dropped_context_rows(self) -> None:
-        """Dropped display rows should not make sequence corrections untrainable."""
+    def test_classify_files_keeps_all_boxes_when_context_rows_merge(self) -> None:
+        """Merged display rows should still preserve every detected training box."""
 
         fake_predictions = [
             {"label": "H", "confidence": 0.9, "x": 1, "y": 1, "width": 20, "height": 20, "row": 1},
@@ -481,7 +484,7 @@ class WebAppRenderingTests(unittest.TestCase):
 
         self.assertEqual(results[0]["sequence"], "Hi")
         self.assertEqual(results[0]["raw_sequence"], "HL:")
-        self.assertEqual([item["label"] for item in results[0]["correction_predictions"]], ["H", "L"])
+        self.assertEqual([item["label"] for item in results[0]["correction_predictions"]], ["H", "L", ":"])
 
     def test_parse_multipart_accepts_case_insensitive_content_type(self) -> None:
         """Multipart content type parsing should be case-insensitive."""
@@ -1215,8 +1218,8 @@ class WebAppRenderingTests(unittest.TestCase):
         self.assertIn("&quot;original_label&quot;:&quot;H&quot;", html)
         self.assertIn("&quot;width&quot;:30", html)
 
-    def test_full_result_correction_uses_visible_training_boxes(self) -> None:
-        """A display-cleaned result should post only boxes that match the text field."""
+    def test_full_result_correction_keeps_all_training_boxes(self) -> None:
+        """A display-cleaned result should post every detected box for retraining."""
 
         html = main.render_full_correction_form(
             {
@@ -1227,6 +1230,7 @@ class WebAppRenderingTests(unittest.TestCase):
                 "correction_predictions": [
                     {"label": "H", "x": 1, "y": 2, "width": 30, "height": 40, "row": 1},
                     {"label": "L", "x": 45, "y": 2, "width": 10, "height": 40, "row": 1},
+                    {"label": ":", "x": 12, "y": 60, "width": 5, "height": 12, "row": 2},
                 ],
                 "predictions": [
                     {"label": "H", "x": 1, "y": 2, "width": 30, "height": 40, "row": 1},
@@ -1237,10 +1241,10 @@ class WebAppRenderingTests(unittest.TestCase):
         )
 
         self.assertIn('value="Hi"', html)
-        self.assertIn('name="sequence" value="HL"', html)
+        self.assertIn('name="sequence" value="HL:"', html)
         self.assertIn('name="display_sequence" value="Hi"', html)
-        self.assertIn('name="original_label" value="HL"', html)
-        self.assertNotIn("&quot;original_label&quot;:&quot;:&quot;", html)
+        self.assertIn('name="original_label" value="HL:"', html)
+        self.assertIn("&quot;original_label&quot;:&quot;:&quot;", html)
 
     def test_character_correction_rejects_multi_character_text(self) -> None:
         """Per-character corrections should be trainable one-character labels."""

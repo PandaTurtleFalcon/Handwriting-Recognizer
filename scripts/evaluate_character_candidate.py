@@ -22,6 +22,7 @@ from character_model import (  # noqa: E402
     attach_character_logit_bias,
     attach_character_pair_rules,
     evaluate_character_breakdown,
+    load_character_model,
 )
 from mnist_model import get_device  # noqa: E402
 from scripts.probe_character_checkpoint_ensemble import (  # noqa: E402
@@ -71,6 +72,49 @@ def load_candidate_checkpoint(path: Path, labels: list[str], device: torch.devic
     return model
 
 
+def _selected_device(device_name: str) -> torch.device:
+    """Return the requested torch device for candidate evaluation."""
+
+    if device_name == "cpu":
+        return torch.device("cpu")
+    if device_name == "mps":
+        if getattr(torch.backends, "mps", None) is None or not torch.backends.mps.is_available():
+            raise RuntimeError("MPS was requested but is not available.")
+        return torch.device("mps")
+    return get_device()
+
+
+def evaluate_deployed_stack(
+    batch_size: int = 4096,
+    device_name: str = "auto",
+    sample_limit: int | None = None,
+) -> dict[str, object]:
+    """Evaluate the fully deployed character stack on the candidate validation split."""
+
+    device = _selected_device(device_name)
+    images, targets, labels = candidate_validation_tensors(sample_limit=sample_limit)
+    model, deployed_labels = load_character_model(device=device)
+    if model is None or deployed_labels is None:
+        raise RuntimeError("The deployed character model could not be loaded.")
+    if list(deployed_labels) != list(labels):
+        raise RuntimeError("The deployed character labels do not match the expected label order.")
+    predictions = calibrated_predictions(
+        model,
+        images,
+        labels,
+        device,
+        batch_size,
+        apply_calibration=True,
+    )
+    return {
+        "checkpoint_path": str(WEIGHTS_PATH),
+        "mode": "deployed",
+        "sample_limit": sample_limit,
+        "total_examples": int(targets.numel()),
+        "metrics": _metrics(predictions, targets, labels),
+    }
+
+
 def evaluate_candidate(
     checkpoint_path: Path,
     batch_size: int = 4096,
@@ -80,17 +124,11 @@ def evaluate_candidate(
     allow_deployed_calibration: bool = False,
     logit_bias_path: Path | None = None,
     pair_rules_path: Path | None = None,
+    include_deployed_baseline: bool = False,
 ) -> dict[str, object]:
     """Evaluate one candidate checkpoint and return benchmark-style metrics."""
 
-    if device_name == "cpu":
-        device = torch.device("cpu")
-    elif device_name == "mps":
-        if getattr(torch.backends, "mps", None) is None or not torch.backends.mps.is_available():
-            raise RuntimeError("MPS was requested but is not available.")
-        device = torch.device("mps")
-    else:
-        device = get_device()
+    device = _selected_device(device_name)
     images, targets, labels = candidate_validation_tensors(sample_limit=sample_limit)
     model = load_candidate_checkpoint(checkpoint_path, labels, device)
     if mode == "calibrated":
@@ -122,13 +160,20 @@ def evaluate_candidate(
         metrics = evaluate_character_breakdown(model, loader, criterion, labels, device)
     else:
         raise ValueError(f"Unknown candidate evaluation mode: {mode}")
-    return {
+    report: dict[str, object] = {
         "checkpoint_path": str(checkpoint_path),
         "mode": mode,
         "sample_limit": sample_limit,
         "total_examples": int(targets.numel()),
         "metrics": metrics,
     }
+    if include_deployed_baseline:
+        report["deployed_baseline"] = evaluate_deployed_stack(
+            batch_size=batch_size,
+            device_name=device_name,
+            sample_limit=sample_limit,
+        )
+    return report
 
 
 def gate_rows(metrics: dict[str, float], target: float) -> list[dict[str, object]]:
@@ -261,6 +306,11 @@ def main() -> None:
     parser.add_argument("--pair-rules-path", type=Path, default=None)
     parser.add_argument("--target", type=float, default=95.0)
     parser.add_argument("--baseline-json", type=Path, default=None)
+    parser.add_argument(
+        "--include-deployed-baseline",
+        action="store_true",
+        help="Evaluate the current fully deployed character stack on the same examples.",
+    )
     parser.add_argument("--baseline-tolerance", type=float, default=0.0)
     parser.add_argument("--baseline-objective", choices=GATE_KEYS, default="validation_accuracy")
     parser.add_argument("--baseline-min-delta", type=float, default=0.0)
@@ -290,9 +340,30 @@ def main() -> None:
         allow_deployed_calibration=args.allow_deployed_calibration,
         logit_bias_path=args.logit_bias_path,
         pair_rules_path=args.pair_rules_path,
+        include_deployed_baseline=args.include_deployed_baseline,
     )
+    if (
+        args.include_deployed_baseline
+        and (args.require_baseline or args.require_improvement)
+        and not args.allow_baseline_mode_mismatch
+        and report.get("mode") != "deployed"
+    ):
+        raise RuntimeError(
+            "Required deployed-baseline gates would compare different evaluation modes. "
+            "Use --allow-baseline-mode-mismatch only for an explicit diagnostic."
+        )
     target_rows = gate_rows(report["metrics"], args.target)
     baseline_metrics = read_baseline_metrics(args.baseline_json)
+    if not baseline_metrics and args.include_deployed_baseline:
+        deployed_baseline = report.get("deployed_baseline")
+        if isinstance(deployed_baseline, dict):
+            deployed_metrics = deployed_baseline.get("metrics")
+            if isinstance(deployed_metrics, dict):
+                baseline_metrics = {
+                    key: float(value)
+                    for key, value in deployed_metrics.items()
+                    if key in GATE_KEYS and isinstance(value, (int, float))
+                }
     comparison_rows = baseline_rows(report["metrics"], baseline_metrics, args.baseline_tolerance)
     objective_row = improvement_row(
         report["metrics"],

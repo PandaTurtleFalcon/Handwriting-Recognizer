@@ -346,6 +346,16 @@ def main() -> None:
         hybrid_artifact_path=args.hybrid_artifact_path,
         include_deployed_baseline=args.include_deployed_baseline,
     )
+    if (
+        args.include_deployed_baseline
+        and (args.require_baseline or args.require_improvement)
+        and not args.allow_baseline_mode_mismatch
+        and report.get("mode") != "deployed"
+    ):
+        raise RuntimeError(
+            "Required deployed-baseline gates would compare different evaluation modes. "
+            "Use --allow-baseline-mode-mismatch only for an explicit diagnostic."
+        )
     target_rows = gate_rows(report["metrics"], args.target)
     baseline_metrics = read_baseline_metrics(args.baseline_json)
     if not baseline_metrics and args.include_deployed_baseline:

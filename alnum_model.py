@@ -2174,26 +2174,34 @@ def initialize_mixedcase_from_folded_checkpoint(
     return True
 
 
-def freeze_feature_layers(model: nn.Module) -> int:
-    """Freeze all parameters except the final classifier layer.
+def freeze_feature_layers(model: nn.Module, trainable_tail_modules: int = 1) -> int:
+    """Freeze all parameters except the requested final sequential modules.
 
     The EMNIST CNN variants in this project expose their stack as
-    ``model.network`` with the output classifier as the final module. Freezing
-    the earlier layers makes bounded mixed-case experiments less destructive:
-    the shared stroke features stay fixed while only the 62-class decision
-    surface is adjusted.
+    ``model.network`` with the output classifier as the final module. A tail
+    width of one preserves the original classifier-only behavior; larger
+    values let bounded experiments adapt late convolutional features too.
     """
 
     network = getattr(model, "network", None)
     if not isinstance(network, nn.Sequential) or len(network) == 0:
         return 0
-    trainable_module = network[-1]
+    modules_with_parameters = [
+        (index, module)
+        for index, module in enumerate(network)
+        if any(True for _name, _parameter in module.named_parameters(recurse=False))
+    ]
+    trainable_parameter_modules = modules_with_parameters[-max(1, trainable_tail_modules) :]
+    trainable_indices = {index for index, _module in trainable_parameter_modules}
     frozen_count = 0
     for parameter in model.parameters():
         parameter.requires_grad = False
         frozen_count += 1
-    for parameter in trainable_module.parameters():
-        parameter.requires_grad = True
+    for index, module in enumerate(network):
+        if index not in trainable_indices:
+            continue
+        for parameter in module.parameters():
+            parameter.requires_grad = True
     return frozen_count
 
 
@@ -2229,6 +2237,7 @@ def save_mixedcase_checkpoint(
     transfer_from_folded: bool = False,
     class_balance_strength: float = 0.0,
     freeze_feature_layers: bool = False,
+    trainable_tail_modules: int = 1,
     checkpoint_objective: str = "test_accuracy",
     min_checkpoint_case_or_visual: float = 0.0,
     min_checkpoint_digit: float = 0.0,
@@ -2271,6 +2280,7 @@ def save_mixedcase_checkpoint(
                 "transfer_from_folded": transfer_from_folded,
                 "class_balance_strength": class_balance_strength,
                 "freeze_feature_layers": freeze_feature_layers,
+                "trainable_tail_modules": trainable_tail_modules,
                 "checkpoint_objective": checkpoint_objective,
                 "min_checkpoint_case_or_visual": min_checkpoint_case_or_visual,
                 "min_checkpoint_digit": min_checkpoint_digit,
@@ -2309,6 +2319,7 @@ def save_mixedcase_checkpoint(
                 "transfer_from_folded": transfer_from_folded,
                 "class_balance_strength": class_balance_strength,
                 "freeze_feature_layers": freeze_feature_layers,
+                "trainable_tail_modules": trainable_tail_modules,
                 "checkpoint_objective": checkpoint_objective,
                 "min_checkpoint_case_or_visual": min_checkpoint_case_or_visual,
                 "min_checkpoint_digit": min_checkpoint_digit,
@@ -2430,6 +2441,7 @@ def train_mixedcase(
     transfer_from_folded: bool = False,
     class_balance_strength: float = 0.0,
     freeze_feature_layers_enabled: bool = False,
+    trainable_tail_modules: int = 1,
     checkpoint_objective: str = "test_accuracy",
     min_checkpoint_case_or_visual: float = 0.0,
     min_checkpoint_digit: float = 0.0,
@@ -2496,7 +2508,7 @@ def train_mixedcase(
         validate_mixedcase_warm_start_checkpoint(checkpoint, model_type)
         model.load_state_dict(checkpoint["model_state_dict"])
     if freeze_feature_layers_enabled:
-        freeze_feature_layers(model)
+        freeze_feature_layers(model, trainable_tail_modules)
     trainable_parameters = [parameter for parameter in model.parameters() if parameter.requires_grad]
     optimizer = torch.optim.AdamW(trainable_parameters, lr=learning_rate, weight_decay=0.0005)
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=epochs)
@@ -2677,6 +2689,7 @@ def train_mixedcase(
             transferred_from_folded,
             class_balance_strength,
             freeze_feature_layers_enabled,
+            trainable_tail_modules,
             checkpoint_objective,
             min_checkpoint_case_or_visual,
             min_checkpoint_digit,
@@ -3019,6 +3032,12 @@ def main() -> None:
         help="Train only the final mixed-case classifier layer while keeping learned stroke features fixed.",
     )
     parser.add_argument(
+        "--mixedcase-trainable-tail-modules",
+        type=int,
+        default=1,
+        help="When freezing mixed-case features, keep this many final parameterized network modules trainable.",
+    )
+    parser.add_argument(
         "--mixedcase-checkpoint-objective",
         default="test_accuracy",
         choices=sorted(MIXEDCASE_CHECKPOINT_OBJECTIVES),
@@ -3146,6 +3165,7 @@ def main() -> None:
                 transfer_from_folded=args.mixedcase_transfer_from_folded,
                 class_balance_strength=args.mixedcase_class_balance_strength,
                 freeze_feature_layers_enabled=args.mixedcase_freeze_feature_layers,
+                trainable_tail_modules=args.mixedcase_trainable_tail_modules,
                 checkpoint_objective=args.mixedcase_checkpoint_objective,
                 min_checkpoint_case_or_visual=args.mixedcase_min_checkpoint_case_or_visual,
                 min_checkpoint_digit=args.mixedcase_min_checkpoint_digit,

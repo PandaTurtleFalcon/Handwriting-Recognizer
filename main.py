@@ -1404,6 +1404,12 @@ def classify_files(
                 predictions = digit_predictions
         else:
             predictions = predict_digits(model, image, device)
+        pristine_predictions = [
+            dict(prediction) if isinstance(prediction, dict) else prediction
+            for prediction in predictions
+        ]
+        pristine_raw_sequence = "".join(prediction_value(item) for item in pristine_predictions)
+        pristine_raw_row_sequences = build_row_sequences(pristine_predictions)
         predictions = relabel_predictions_from_exact_sequence_correction(image_id, predictions)
         used_sequence_correction = any(
             isinstance(prediction, dict) and bool(prediction.get("user_corrected"))
@@ -1421,28 +1427,22 @@ def classify_files(
             )
             continue
 
-        raw_sequence = "".join(prediction_value(item) for item in predictions)
-        raw_row_sequences = build_row_sequences(predictions)
-        context = cleanup_context(raw_sequence, raw_row_sequences)
-        correction_predictions = predictions
-        if len(context.rows) < len(raw_row_sequences):
-            visible_rows = set(range(1, len(context.rows) + 1))
-            correction_predictions = [
-                item
-                for item in predictions
-                if isinstance(item, dict) and int(item.get("row", 1)) in visible_rows
-            ]
+        display_sequence = "".join(prediction_value(item) for item in predictions)
+        display_row_sequences = build_row_sequences(predictions)
+        context = cleanup_context(display_sequence, display_row_sequences)
         results.append(
             {
                 "filename": filename,
                 "sequence": context.display,
-                "raw_sequence": raw_sequence,
+                "raw_sequence": pristine_raw_sequence,
                 "row_sequences": context.rows,
-                "raw_row_sequences": raw_row_sequences,
+                "raw_row_sequences": pristine_raw_row_sequences,
+                "replayed_sequence": display_sequence,
+                "replayed_row_sequences": display_row_sequences,
                 "context_notes": context.notes,
                 "used_sequence_correction": used_sequence_correction,
                 "predictions": predictions,
-                "correction_predictions": correction_predictions,
+                "correction_predictions": predictions,
                 "preview": image_to_data_url(image),
                 "image_id": image_id,
                 "image_width": image.width,
