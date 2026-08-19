@@ -16,6 +16,7 @@ from scripts.evaluate_mixedcase_candidate import (
     gate_rows,
     improvement_row,
     load_candidate_checkpoint,
+    load_tensor_pack,
     read_baseline_metrics,
     read_baseline_mode,
 )
@@ -141,6 +142,27 @@ class MixedcaseCandidateEvaluatorTests(unittest.TestCase):
         self.assertEqual(first_targets.tolist(), second_targets.tolist())
         self.assertEqual(first_images.flatten().tolist(), second_images.flatten().tolist())
         self.assertEqual(int(first_targets.numel()), 5)
+
+    def test_candidate_test_tensors_can_load_external_tensor_pack(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "pack.pt"
+            images = torch.arange(6, dtype=torch.float32).view(3, 1, 1, 2)
+            targets = torch.tensor([2, 1, 0])
+            torch.save({"images": images, "targets": targets}, path)
+
+            loaded_images, loaded_targets = candidate_test_tensors(sample_limit=2, seed=1, tensor_path=path)
+
+        self.assertEqual(int(loaded_targets.numel()), 2)
+        self.assertEqual(tuple(loaded_images.shape[1:]), (1, 1, 2))
+        self.assertTrue(set(loaded_targets.tolist()).issubset({0, 1, 2}))
+
+    def test_load_tensor_pack_rejects_mismatched_lengths(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "bad-pack.pt"
+            torch.save({"images": torch.zeros((2, 1, 1, 1)), "targets": torch.zeros(3, dtype=torch.long)}, path)
+
+            with self.assertRaisesRegex(RuntimeError, "images but"):
+                load_tensor_pack(path)
 
     def test_load_candidate_checkpoint_rejects_wrong_labels(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -268,6 +290,37 @@ class MixedcaseCandidateEvaluatorTests(unittest.TestCase):
 
         self.assertEqual(report["deployed_baseline"]["mode"], "deployed")
         deployed.assert_called_once_with(batch_size=4, device_name="cpu", sample_limit=1)
+
+    def test_candidate_baseline_uses_same_external_tensor_pack(self) -> None:
+        class FixedModel(torch.nn.Module):
+            def forward(self, inputs: torch.Tensor) -> torch.Tensor:
+                logits = torch.zeros((inputs.size(0), len(MIXEDCASE_LABELS)))
+                logits[:, 0] = 1.0
+                return logits
+
+        with tempfile.TemporaryDirectory() as directory:
+            checkpoint_path = Path(directory) / "candidate.pt"
+            tensor_path = Path(directory) / "pack.pt"
+            with (
+                patch(
+                    "scripts.evaluate_mixedcase_candidate.candidate_test_tensors",
+                    return_value=(torch.zeros((1, 1, 28, 28)), torch.zeros(1, dtype=torch.long)),
+                ),
+                patch("scripts.evaluate_mixedcase_candidate.load_candidate_checkpoint", return_value=FixedModel()),
+                patch(
+                    "scripts.evaluate_mixedcase_candidate.evaluate_deployed_stack",
+                    return_value={"mode": "deployed", "metrics": {"test_accuracy": 99.0}},
+                ) as deployed,
+            ):
+                report = evaluate_candidate(
+                    checkpoint_path,
+                    device_name="cpu",
+                    include_deployed_baseline=True,
+                    tensor_path=tensor_path,
+                )
+
+        self.assertEqual(report["tensor_path"], str(tensor_path))
+        deployed.assert_called_once_with(batch_size=4096, device_name="cpu", sample_limit=None, tensor_path=tensor_path)
 
     def test_main_can_compare_against_deployed_baseline(self) -> None:
         candidate_report = {

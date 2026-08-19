@@ -39,13 +39,35 @@ GATE_KEYS = (
 )
 
 
-def candidate_test_tensors(sample_limit: int | None = None, seed: int = 2026) -> tuple[torch.Tensor, torch.Tensor]:
-    """Return MNIST plus EMNIST ByClass mixed-case test tensors."""
+def load_tensor_pack(path: Path) -> tuple[torch.Tensor, torch.Tensor]:
+    """Load an external mixed-case tensor pack with `images` and `targets`."""
 
-    mnist_images, mnist_targets = build_or_load_mnist_cache(train=False)
-    byclass_images, byclass_targets = build_or_load_emnist_byclass_mixedcase_cache(train=False)
-    images = torch.cat([mnist_images, byclass_images])
-    targets = torch.cat([mnist_targets, byclass_targets])
+    payload = torch.load(path, map_location="cpu", weights_only=False)
+    if not isinstance(payload, dict) or not isinstance(payload.get("images"), torch.Tensor):
+        raise RuntimeError(f"{path} does not contain an images tensor.")
+    if not isinstance(payload.get("targets"), torch.Tensor):
+        raise RuntimeError(f"{path} does not contain a targets tensor.")
+    images = payload["images"].float()
+    targets = payload["targets"].long()
+    if int(images.shape[0]) != int(targets.numel()):
+        raise RuntimeError(f"{path} has {images.shape[0]} images but {targets.numel()} targets.")
+    return images, targets
+
+
+def candidate_test_tensors(
+    sample_limit: int | None = None,
+    seed: int = 2026,
+    tensor_path: Path | None = None,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """Return the default test tensors or a supplied external tensor pack."""
+
+    if tensor_path is None:
+        mnist_images, mnist_targets = build_or_load_mnist_cache(train=False)
+        byclass_images, byclass_targets = build_or_load_emnist_byclass_mixedcase_cache(train=False)
+        images = torch.cat([mnist_images, byclass_images])
+        targets = torch.cat([mnist_targets, byclass_targets])
+    else:
+        images, targets = load_tensor_pack(tensor_path)
     if sample_limit is None or sample_limit >= int(targets.numel()):
         return images, targets
     generator = torch.Generator().manual_seed(seed)
@@ -85,6 +107,7 @@ def evaluate_deployed_stack(
     batch_size: int = 4096,
     device_name: str = "auto",
     sample_limit: int | None = None,
+    tensor_path: Path | None = None,
 ) -> dict[str, object]:
     """Evaluate the fully deployed mixed-case stack on the candidate tensor split."""
 
@@ -94,7 +117,7 @@ def evaluate_deployed_stack(
         raise RuntimeError("The deployed mixed-case model could not be loaded.")
     if list(labels) != list(MIXEDCASE_LABELS):
         raise RuntimeError("The deployed mixed-case labels do not match the expected label order.")
-    images, targets = candidate_test_tensors(sample_limit=sample_limit)
+    images, targets = candidate_test_tensors(sample_limit=sample_limit, tensor_path=tensor_path)
     loader = DataLoader(TensorDataset(images, targets), batch_size=batch_size, shuffle=False)
     criterion = nn.CrossEntropyLoss()
     metrics = evaluate_mixedcase_breakdown(model, loader, criterion, list(MIXEDCASE_LABELS), device)
@@ -107,6 +130,7 @@ def evaluate_deployed_stack(
         "checkpoint_path": str(MIXEDCASE_WEIGHTS_PATH),
         "mode": "deployed",
         "sample_limit": sample_limit,
+        "tensor_path": str(tensor_path) if tensor_path is not None else None,
         "total_examples": int(targets.numel()),
         "metrics": metrics,
     }
@@ -121,12 +145,13 @@ def evaluate_candidate(
     allow_deployed_calibration: bool = False,
     hybrid_artifact_path: Path | None = None,
     include_deployed_baseline: bool = False,
+    tensor_path: Path | None = None,
 ) -> dict[str, object]:
     """Evaluate one candidate checkpoint and return benchmark-style metrics."""
 
     device = _selected_device(device_name)
     model = load_candidate_checkpoint(checkpoint_path, device)
-    images, targets = candidate_test_tensors(sample_limit=sample_limit)
+    images, targets = candidate_test_tensors(sample_limit=sample_limit, tensor_path=tensor_path)
     if mode == "hybrid":
         artifact_path = hybrid_artifact_path
         if artifact_path is None and checkpoint_path.resolve() == MIXEDCASE_WEIGHTS_PATH.resolve():
@@ -165,14 +190,19 @@ def evaluate_candidate(
         "mode": mode,
         "hybrid_artifact_path": str(hybrid_artifact_path) if hybrid_artifact_path is not None else None,
         "sample_limit": sample_limit,
+        "tensor_path": str(tensor_path) if tensor_path is not None else None,
         "total_examples": int(targets.numel()),
         "metrics": metrics,
     }
     if include_deployed_baseline:
+        baseline_kwargs: dict[str, Path] = {}
+        if tensor_path is not None:
+            baseline_kwargs["tensor_path"] = tensor_path
         report["deployed_baseline"] = evaluate_deployed_stack(
             batch_size=batch_size,
             device_name=device_name,
             sample_limit=sample_limit,
+            **baseline_kwargs,
         )
     return report
 
@@ -309,6 +339,7 @@ def main() -> None:
         help="Candidate-specific hybrid artifact to use for --mode hybrid.",
     )
     parser.add_argument("--sample-limit", type=int, default=None)
+    parser.add_argument("--tensor-path", type=Path, default=None, help="Optional external tensor pack to evaluate.")
     parser.add_argument("--target", type=float, default=95.0)
     parser.add_argument("--baseline-json", type=Path, default=None)
     parser.add_argument(
@@ -342,6 +373,7 @@ def main() -> None:
         device_name=args.device,
         mode=args.mode,
         sample_limit=args.sample_limit,
+        tensor_path=args.tensor_path,
         allow_deployed_calibration=args.allow_deployed_calibration,
         hybrid_artifact_path=args.hybrid_artifact_path,
         include_deployed_baseline=args.include_deployed_baseline,

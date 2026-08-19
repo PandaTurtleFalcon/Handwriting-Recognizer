@@ -1633,3 +1633,8 @@ restored, so future improvement loops do not repeat known-bad blends.
   - Smoke: the top-six rough family command produced `tmp/mixedcase_rough_top6_train_validation_smoke.pt` and `tmp/mixedcase_rough_top6_holdout_validation_smoke.pt`, each with `240` samples balanced at `12` per label.
   - Verification: `test_prepare_mixedcase_family_pack.py`, `test_generate_rough_character_variants.py`, and `test_context_rules.py` passed (`54` tests), and `scripts/prepare_mixedcase_family_pack.py` plus `context_rules.py` compiled.
   - Takeaway: this is infrastructure and regression coverage, not a deployed model improvement. Mixed-case exact remains below target until a candidate improves strict held-out metrics.
+
+- Rough held-out pack baseline diagnostics:
+  - Tooling: `scripts/evaluate_mixedcase_candidate.py` now accepts `--tensor-path`, so saved tensor packs can be scored with the same mixed-case breakdown as the standard test split. This is useful for generated or curated hard-family validation packs.
+  - Result: the deployed raw checkpoint scored only `35.0%` exact on both the rough train smoke pack and the rough held-out smoke pack, while case-or-visual ambiguity stayed high (`96.25%` train, `96.6667%` held-out). Deployed hybrid on the held-out pack scored `32.9167%` exact and `97.5%` case-or-visual, with lowercase at `0.0%`.
+  - Takeaway: rough-script samples are useful as a visual-family stress set because the model usually sees the right family, but exact case/class identity collapses. They should feed a family-aware objective or resolver, not direct promotion.
