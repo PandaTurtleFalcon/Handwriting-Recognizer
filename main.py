@@ -7,6 +7,7 @@ renders the original image with numbered bounding boxes that match the cards.
 
 from __future__ import annotations
 
+import argparse
 import base64
 import binascii
 import datetime as dt
@@ -2807,5 +2808,21 @@ def run(host: str = HOST, port: int = PORT) -> None:
     server.serve_forever()
 
 
+def build_server_parser() -> argparse.ArgumentParser:
+    """Create the local web server command-line parser."""
+
+    parser = argparse.ArgumentParser(description="Run the Handwriting Recognizer website.")
+    parser.add_argument("--host", default=HOST, help="Host interface to bind.")
+    parser.add_argument("--port", type=int, default=PORT, help="TCP port to bind.")
+    return parser
+
+
+def main_cli(argv: list[str] | None = None) -> None:
+    """Run the website with command-line host and port overrides."""
+
+    args = build_server_parser().parse_args(argv)
+    run(host=str(args.host), port=int(args.port))
+
+
 if __name__ == "__main__":
-    run()
+    main_cli()

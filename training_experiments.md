@@ -1540,3 +1540,9 @@ restored, so future improvement loops do not repeat known-bad blends.
   - Verification: `test_character_model.py::CharacterPostprocessingTests::test_labels_match_with_visual_ambiguity_groups` plus `test_evaluate_hardcases.py` passed (`14` tests), targeted context/web cleanup tests passed (`45` tests), and `character_model.py` plus `scripts/evaluate_hardcases.py` compiled.
   - Result: all-font generated hardcase raw ambiguity improved from `93.8889%` (`169/180`) to `99.4444%` (`179/180`); uploaded hardcase raw ambiguity improved from `0.0%` (`0/1`) to `100.0%` (`1/1`). Raw exact stayed honest at generated `66.6667%` (`120/180`) and uploaded `0.0%` (`0/1`). The only remaining generated raw ambiguity miss is `Hi.` rendered by Arial as `Hiy`, which is intentionally not generalized because `y` should not globally mean period.
   - Takeaway: generated app-level raw ambiguity is now high-99, but raw exact and uploaded raw exact still need model or segmentation improvements rather than broader scoring rules.
+
+- Website port override fix:
+  - Bug: `python3 main.py --port 8001` ignored the requested port and still tried the default `8000`, which made it hard to launch a known-current website when an older local server was already bound and could not be stopped from this sandbox.
+  - Fix: added a tiny argparse CLI wrapper around `run()` so `--host` and `--port` are honored by the website command.
+  - Verification: focused web CLI tests passed (`2` tests), `main.py` compiled, and `127.0.0.1:8000` was confirmed live under the existing local process. No model artifact changed.
+  - Takeaway: this does not improve recognition metrics, but it removes a stale-server failure mode while iterating on app behavior.

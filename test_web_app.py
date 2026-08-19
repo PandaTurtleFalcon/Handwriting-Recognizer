@@ -208,6 +208,23 @@ class WebAppRenderingTests(unittest.TestCase):
         self.assertIn("payload.revision", script)
         self.assertIn("live @", script)
 
+    def test_server_cli_accepts_host_and_port(self) -> None:
+        """The website command should be able to bind an alternate local port."""
+
+        parser = main.build_server_parser()
+        args = parser.parse_args(["--host", "0.0.0.0", "--port", "8123"])
+
+        self.assertEqual(args.host, "0.0.0.0")
+        self.assertEqual(args.port, 8123)
+
+    def test_main_cli_passes_host_and_port_to_runner(self) -> None:
+        """The command-line entrypoint should not ignore server overrides."""
+
+        with patch.object(main, "run") as runner:
+            main.main_cli(["--host", "127.0.0.1", "--port", "8124"])
+
+        runner.assert_called_once_with(host="127.0.0.1", port=8124)
+
     def test_render_page_shows_digit_specialist_accuracy(self) -> None:
         """The badge should expose separate specialist metrics."""
 
