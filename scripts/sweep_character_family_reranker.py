@@ -81,6 +81,7 @@ def run_sweep(
     confirmation_ratio: float,
     min_family_delta: float,
     seed: int,
+    train_only_extra_roots: tuple[Path, ...] = (),
     max_runs: int | None = None,
 ) -> dict[str, object]:
     """Run bounded character-family reranker probes and summarize results."""
@@ -113,6 +114,7 @@ def run_sweep(
             seed=seed,
             hidden_units=hidden_count,
             source_groups=source_groups,
+            train_only_extra_roots=train_only_extra_roots,
         )
         rows.append(compact_probe_report(report, parameters))
     best = best_sweep_row(rows)
@@ -125,6 +127,7 @@ def run_sweep(
         "confirmation_ratio": confirmation_ratio,
         "min_family_delta": min_family_delta,
         "seed": seed,
+        "train_only_extra_roots": [str(root) for root in train_only_extra_roots],
         "planned_runs": len(all_runs),
         "completed_runs": len(rows),
         "truncated": max_runs is not None and len(all_runs) > max_runs,
@@ -145,6 +148,12 @@ def main() -> None:
     parser.add_argument("--confirmation-ratio", type=float, default=0.5)
     parser.add_argument("--min-family-delta", type=float, default=0.0)
     parser.add_argument("--seed", type=int, default=20260818)
+    parser.add_argument(
+        "--train-only-extra-root",
+        action="append",
+        default=[],
+        help="Extra ASCII folder or .pt tensor cache used only for fitting rerankers.",
+    )
     parser.add_argument("--max-runs", type=int, default=None)
     args = parser.parse_args()
     print(
@@ -160,6 +169,7 @@ def main() -> None:
                 confirmation_ratio=args.confirmation_ratio,
                 min_family_delta=args.min_family_delta,
                 seed=args.seed,
+                train_only_extra_roots=tuple(Path(root) for root in args.train_only_extra_root),
                 max_runs=args.max_runs,
             ),
             indent=2,

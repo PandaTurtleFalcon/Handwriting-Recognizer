@@ -1,4 +1,5 @@
 import unittest
+from pathlib import Path
 from unittest.mock import patch
 
 import torch
@@ -193,6 +194,64 @@ class CharacterFamilyRerankerTests(unittest.TestCase):
         self.assertEqual(report["families"][0]["rejection_reason"], "confirmation_validation_delta_below_floor")
         self.assertEqual(report["validation_delta"], 0.0)
         self.assertFalse(report["promotable"])
+
+    def test_run_probe_adds_train_only_extras_to_fit_split(self) -> None:
+        """External caches should train rerankers without touching holdout tensors."""
+
+        labels = ["!", "1"]
+        images = torch.zeros((12, 1, 32, 32), dtype=torch.float32)
+        targets = torch.tensor([0, 1] * 6, dtype=torch.long)
+        outputs = torch.zeros((12, 2), dtype=torch.float32)
+        captured_fit = {}
+
+        class FixedModel(torch.nn.Module):
+            def forward(self, batch: torch.Tensor) -> torch.Tensor:
+                return torch.zeros((batch.shape[0], 2), dtype=torch.float32)
+
+        def fake_train_family_probe(features, train_targets, *_args, **_kwargs):
+            captured_fit["feature_rows"] = int(features.shape[0])
+            captured_fit["target_rows"] = int(train_targets.numel())
+            return None
+
+        def fake_model_outputs(_model, batch_images, *_args, **_kwargs):
+            return torch.zeros((batch_images.shape[0], 2), dtype=torch.float32)
+
+        with (
+            patch("scripts.probe_character_family_reranker.get_device", return_value=torch.device("cpu")),
+            patch("scripts.probe_character_family_reranker.load_character_model", return_value=(FixedModel(), labels)),
+            patch("scripts.probe_character_family_reranker._character_tensors", return_value=(images, targets, labels)),
+            patch(
+                "scripts.probe_character_family_reranker.stratified_split_indices",
+                return_value=([0, 1, 2, 3, 4, 5, 6, 7], [8, 9, 10, 11]),
+            ),
+            patch("scripts.probe_character_family_reranker._model_outputs", side_effect=fake_model_outputs),
+            patch("scripts.probe_character_family_reranker.family_features", return_value=torch.zeros((8, 1))),
+            patch("scripts.probe_character_family_reranker.train_family_probe", side_effect=fake_train_family_probe),
+            patch(
+                "scripts.probe_character_family_reranker.load_extra_character_tensors",
+                return_value=(torch.zeros((2, 1, 32, 32)), torch.tensor([0, 1], dtype=torch.long)),
+            ),
+        ):
+            report = run_probe(
+                batch_size=4,
+                epochs=1,
+                learning_rate=0.01,
+                families=("!1",),
+                calibration_ratio=0.5,
+                confirmation_ratio=0.5,
+                min_family_delta=0.01,
+                seed=3,
+                hidden_units=4,
+                source_groups=None,
+                train_only_extra_roots=(Path("extra.pt"),),
+            )
+
+        self.assertEqual(report["train_only_extra_samples"], 2)
+        self.assertEqual(report["fit_samples"], 6)
+        self.assertEqual(report["selection_samples"], 2)
+        self.assertEqual(report["validation_samples"], 4)
+        self.assertEqual(captured_fit["feature_rows"], 8)
+        self.assertEqual(captured_fit["target_rows"], 6)
 
 
 if __name__ == "__main__":

@@ -23,6 +23,7 @@ from character_model import (  # noqa: E402
     build_or_load_combined_cache,
     labels_match_with_ambiguity,
     load_character_model,
+    load_extra_character_tensors,
     stratified_split_indices,
 )
 from mnist_model import get_device  # noqa: E402
@@ -340,6 +341,7 @@ def run_probe(
     seed: int,
     hidden_units: int,
     source_groups: tuple[str, ...] | None = None,
+    train_only_extra_roots: tuple[Path, ...] = (),
 ) -> dict[str, object]:
     """Train confirmed family rerankers and evaluate them on validation."""
 
@@ -368,6 +370,13 @@ def run_probe(
     )
     fit_images = train_images[fit_indices]
     fit_targets = train_targets[fit_indices]
+    train_only_count = 0
+    train_only_extra = load_extra_character_tensors(list(train_only_extra_roots), labels)
+    if train_only_extra is not None:
+        extra_images, extra_targets = train_only_extra
+        train_only_count = int(extra_targets.numel())
+        fit_images = torch.cat((fit_images, extra_images), dim=0)
+        fit_targets = torch.cat((fit_targets, extra_targets), dim=0)
     selection_images = train_images[selection_indices]
     selection_targets = train_targets[selection_indices]
     confirmation_images = train_images[confirmation_indices]
@@ -520,6 +529,7 @@ def run_probe(
         "validation_delta": reranked_metrics["validation_accuracy"] - base_metrics["validation_accuracy"],
         "promotable": promotable,
         "fit_samples": int(fit_targets.numel()),
+        "train_only_extra_samples": train_only_count,
         "selection_samples": int(selection_targets.numel()),
         "confirmation_samples": int(confirmation_targets.numel()),
         "validation_samples": int(validation_targets.numel()),
@@ -543,6 +553,12 @@ def main() -> None:
     parser.add_argument("--seed", type=int, default=20260818)
     parser.add_argument("--hidden-units", type=int, default=32)
     parser.add_argument("--source-groups", default="")
+    parser.add_argument(
+        "--train-only-extra-root",
+        action="append",
+        default=[],
+        help="Extra ASCII folder or .pt tensor cache used only for fitting rerankers, never selection/validation.",
+    )
     args = parser.parse_args()
     print(
         json.dumps(
@@ -557,6 +573,7 @@ def main() -> None:
                 seed=args.seed,
                 hidden_units=args.hidden_units,
                 source_groups=parse_label_groups(args.source_groups),
+                train_only_extra_roots=tuple(Path(root) for root in args.train_only_extra_root),
             ),
             indent=2,
         )

@@ -1,4 +1,5 @@
 import unittest
+from pathlib import Path
 
 from scripts.sweep_character_family_reranker import (
     best_sweep_row,
@@ -55,6 +56,7 @@ class SweepCharacterFamilyRerankerTests(unittest.TestCase):
                 confirmation_ratio=0.5,
                 min_family_delta=0.0,
                 seed=7,
+                train_only_extra_roots=(Path("cvl.pt"),),
                 max_runs=3,
             )
         finally:
@@ -64,6 +66,8 @@ class SweepCharacterFamilyRerankerTests(unittest.TestCase):
         self.assertEqual(report["planned_runs"], 8)
         self.assertEqual(report["completed_runs"], 3)
         self.assertTrue(report["truncated"])
+        self.assertEqual(calls[0]["train_only_extra_roots"], (Path("cvl.pt"),))
+        self.assertEqual(report["train_only_extra_roots"], ["cvl.pt"])
 
 
 if __name__ == "__main__":
