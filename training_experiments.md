@@ -1763,3 +1763,10 @@ restored, so future improvement loops do not repeat known-bad blends.
   - Result: stopped after epoch 1 because it repeated the known tradeoff: lower rose to `86.66%`, but exact fell to `77.37%`, digit to `82.66%`, upper to `57.87%`, and case/visual to `97.22%`. No candidate weights were promoted or deployed.
   - Verification: `test_extra_alnum_datasets.py` passed (`52` tests), `alnum_model.py` compiled, and benchmark summary remained unchanged.
   - Takeaway: even a gentle full fine-tune with distillation and auxiliary type/folded losses still pushes lower-case by stealing digit/uppercase capacity. The next model-side route should be architecture-level separation, such as a dedicated type/case head with constrained inference, rather than more shared-head reweighting.
+
+- Mixed-case identity/type factorization diagnostic:
+  - Tooling: added `scripts/analyze_mixedcase_factorization.py`, which evaluates a separated decoder using folded-model identity plus mixed-case digit/upper/lower type logits, then sweeps confidence gates for replacing deployed hybrid predictions.
+  - Result: naive factorized decoding is worse than the deployed hybrid (`87.3903%` exact vs `87.7797%`, digit `94.6259%` vs `95.0175%`, upper `83.9469%` vs `84.7062%`, lower `73.2178%` vs `73.1734%`). It changed `1,865` samples, fixed `433`, and broke `925`.
+  - Headroom: an oracle that only applies factorized replacements when they fix a deployed error reaches `88.1225%` exact, with upper `85.1656%` and lower `74.1232%`. The best simple gate is promotable but microscopic: `8` changes, `5` fixes, `3` breaks, exact `87.7813%`.
+  - Verification: `test_mixedcase_factorization.py` passed (`4` tests), the new analyzer compiled, and benchmark summary remained unchanged because no serving artifact was promoted.
+  - Takeaway: the identity/type separation idea has real but small recoverable signal. Raw aggregate type logits are not reliable enough to deploy directly; the next useful route is a learned replacement gate trained to choose when the factorized prediction should override the deployed hybrid.
