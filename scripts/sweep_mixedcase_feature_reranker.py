@@ -82,6 +82,7 @@ def run_sweep(
     extra_samples_per_class: int | None,
     include_digit_features: bool,
     include_pixel_features: bool,
+    include_embedding_features: bool,
     min_digit: float | None,
     min_upper: float | None,
     min_lower: float | None,
@@ -119,6 +120,7 @@ def run_sweep(
             source_groups=source_groups,
             include_digit_features=include_digit_features,
             include_pixel_features=include_pixel_features,
+            include_embedding_features=include_embedding_features,
             min_digit=min_digit,
             min_upper=min_upper,
             min_lower=min_lower,
@@ -143,6 +145,7 @@ def run_sweep(
         "extra_samples_per_class": extra_samples_per_class,
         "include_digit_features": include_digit_features,
         "include_pixel_features": include_pixel_features,
+        "include_embedding_features": include_embedding_features,
         "minimum_gates": {
             "case_or_ambiguity_aware_test_accuracy": min_case_or_visual,
             "digit_test_accuracy": min_digit,
@@ -177,6 +180,7 @@ def main() -> None:
     parser.add_argument("--extra-samples-per-class", type=int, default=None)
     parser.add_argument("--include-digit-features", action="store_true")
     parser.add_argument("--include-pixel-features", action="store_true")
+    parser.add_argument("--include-embedding-features", action="store_true")
     parser.add_argument("--min-digit", type=float, default=None)
     parser.add_argument("--min-upper", type=float, default=None)
     parser.add_argument("--min-lower", type=float, default=None)
@@ -204,6 +208,7 @@ def main() -> None:
                 extra_samples_per_class=args.extra_samples_per_class,
                 include_digit_features=args.include_digit_features,
                 include_pixel_features=args.include_pixel_features,
+                include_embedding_features=args.include_embedding_features,
                 min_digit=args.min_digit,
                 min_upper=args.min_upper,
                 min_lower=args.min_lower,

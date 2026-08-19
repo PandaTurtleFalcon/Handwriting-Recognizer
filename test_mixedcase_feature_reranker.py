@@ -99,6 +99,20 @@ class MixedcaseFeatureRerankerTests(unittest.TestCase):
         self.assertEqual(enriched.shape[0], base.shape[0])
         self.assertEqual(enriched.shape[1], base.shape[1] + 144)
 
+    def test_family_features_can_include_learned_embeddings(self) -> None:
+        """CNN penultimate activations should be optional reranker evidence."""
+
+        images = torch.zeros((2, 1, 28, 28), dtype=torch.float32)
+        mixed = torch.zeros((2, 62), dtype=torch.float32)
+        folded = torch.zeros((2, 36), dtype=torch.float32)
+        embeddings = torch.ones((2, 5), dtype=torch.float32)
+
+        base = family_features(images, mixed, folded, (10, 36))
+        enriched = family_features(images, mixed, folded, (10, 36), embedding_outputs=embeddings)
+
+        self.assertEqual(enriched.shape[0], base.shape[0])
+        self.assertEqual(enriched.shape[1], base.shape[1] + 5)
+
     def test_apply_family_probe_respects_probe_confidence_gate(self) -> None:
         """Low-confidence family probe predictions should abstain."""
 

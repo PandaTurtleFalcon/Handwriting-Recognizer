@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import pickle
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -217,22 +218,61 @@ def _fit_tensors(
 def _model_outputs(images: torch.Tensor, batch_size: int) -> tuple[torch.Tensor, torch.Tensor]:
     """Return calibrated mixed-case logits and folded logits for images."""
 
+    mixed_outputs, folded_outputs, _embedding_outputs = _model_outputs_with_embeddings(
+        images,
+        batch_size,
+        include_embedding_features=False,
+    )
+    return mixed_outputs, folded_outputs
+
+
+def _embedding_extractor(model: nn.Module) -> nn.Module | None:
+    """Return the model body before its final linear classifier when available."""
+
+    network = getattr(model, "network", None)
+    if not isinstance(network, nn.Sequential) or len(network) < 2:
+        return None
+    modules = list(network.children())
+    if not isinstance(modules[-1], nn.Linear):
+        return None
+    return nn.Sequential(*modules[:-1]).eval()
+
+
+def _model_outputs_with_embeddings(
+    images: torch.Tensor,
+    batch_size: int,
+    include_embedding_features: bool,
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor | None]:
+    """Return model logits plus optional mixed-case penultimate activations."""
+
     device = get_device()
-    mixed_model, mixed_labels = load_mixedcase_model(device=device, hybrid_path=None)
+    mixed_model, mixed_labels = load_mixedcase_model(device=device, hybrid_path=None, family_reranker_path=None)
     folded_model, folded_labels = load_alnum_model(device=device)
     if mixed_model is None or folded_model is None or mixed_labels is None or folded_labels is None:
         raise RuntimeError("Mixed-case and folded alnum checkpoints are required.")
     if list(mixed_labels) != list(MIXEDCASE_LABELS) or list(folded_labels) != list(LABELS):
         raise RuntimeError("Checkpoint labels do not match expected label order.")
+    extractor = _embedding_extractor(mixed_model) if include_embedding_features else None
+    if include_embedding_features and extractor is None:
+        raise RuntimeError("The mixed-case checkpoint does not expose an embeddable sequential network.")
+    if extractor is not None:
+        extractor.to(device)
     loader = DataLoader(TensorDataset(images), batch_size=batch_size, shuffle=False)
     mixed_outputs: list[torch.Tensor] = []
     folded_outputs: list[torch.Tensor] = []
+    embedding_outputs: list[torch.Tensor] = []
     with torch.no_grad():
         for (batch_images,) in loader:
             inputs = batch_images.to(device)
             mixed_outputs.append(mixed_model(inputs).cpu())
             folded_outputs.append(folded_model(inputs).cpu())
-    return torch.cat(mixed_outputs), torch.cat(folded_outputs)
+            if extractor is not None:
+                embedding_outputs.append(extractor(inputs).flatten(start_dim=1).cpu())
+    return (
+        torch.cat(mixed_outputs),
+        torch.cat(folded_outputs),
+        torch.cat(embedding_outputs) if embedding_outputs else None,
+    )
 
 
 def _digit_outputs(images: torch.Tensor, batch_size: int) -> torch.Tensor:
@@ -340,6 +380,7 @@ def family_features(
     family_indices: tuple[int, ...],
     digit_outputs: torch.Tensor | None = None,
     include_pixel_features: bool = False,
+    embedding_outputs: torch.Tensor | None = None,
 ) -> torch.Tensor:
     """Build reranker features for one visual family."""
 
@@ -358,6 +399,8 @@ def family_features(
     parts = [family_logits, family_probs, folded_logits, geometry_features(images)]
     if include_pixel_features:
         parts.append(pixel_features(images))
+    if embedding_outputs is not None:
+        parts.append(torch.nn.functional.normalize(embedding_outputs.float(), dim=1))
     if digit_outputs is not None:
         digit_probs = digit_outputs.softmax(dim=1)
         digit_top2 = digit_probs.topk(2, dim=1).values
@@ -419,6 +462,7 @@ def apply_family_probe(
     probe_confidence: float = 0.0,
     probe_margin: float = 0.0,
     include_pixel_features: bool = False,
+    embedding_outputs: torch.Tensor | None = None,
 ) -> torch.Tensor:
     """Return predictions after one family probe replaces in-family guesses."""
 
@@ -435,6 +479,7 @@ def apply_family_probe(
         probe.family_indices,
         digit_outputs,
         include_pixel_features,
+        embedding_outputs,
     )
     with torch.no_grad():
         logits = probe.model(features[current_in_family])
@@ -556,6 +601,7 @@ def run_probe(
     source_groups: tuple[str, ...] = ("digit", "upper", "lower"),
     include_digit_features: bool = False,
     include_pixel_features: bool = False,
+    include_embedding_features: bool = False,
     min_digit: float | None = None,
     min_upper: float | None = None,
     min_lower: float | None = None,
@@ -593,14 +639,26 @@ def run_probe(
     selection_targets = train_targets[selection_indices]
     confirmation_images = train_images[confirmation_indices]
     confirmation_targets = train_targets[confirmation_indices]
-    fit_mixed, fit_folded = _model_outputs(fit_images, batch_size)
-    selection_mixed, selection_folded = _model_outputs(selection_images, batch_size)
-    confirmation_mixed, confirmation_folded = (
-        _model_outputs(confirmation_images, batch_size)
-        if int(confirmation_targets.numel()) > 0
-        else (torch.empty((0, len(MIXEDCASE_LABELS))), torch.empty((0, len(LABELS))))
+    fit_mixed, fit_folded, fit_embedding = _model_outputs_with_embeddings(
+        fit_images,
+        batch_size,
+        include_embedding_features,
     )
-    test_mixed, test_folded = _model_outputs(test_images, batch_size)
+    selection_mixed, selection_folded, selection_embedding = _model_outputs_with_embeddings(
+        selection_images,
+        batch_size,
+        include_embedding_features,
+    )
+    confirmation_mixed, confirmation_folded, confirmation_embedding = (
+        _model_outputs_with_embeddings(confirmation_images, batch_size, include_embedding_features)
+        if int(confirmation_targets.numel()) > 0
+        else (torch.empty((0, len(MIXEDCASE_LABELS))), torch.empty((0, len(LABELS))), None)
+    )
+    test_mixed, test_folded, test_embedding = _model_outputs_with_embeddings(
+        test_images,
+        batch_size,
+        include_embedding_features,
+    )
     fit_digit = _digit_outputs(fit_images, batch_size) if include_digit_features else None
     selection_digit = _digit_outputs(selection_images, batch_size) if include_digit_features else None
     confirmation_digit = (
@@ -628,6 +686,7 @@ def run_probe(
             family_indices,
             fit_digit,
             include_pixel_features,
+            fit_embedding,
         )
         probe = train_family_probe(train_features, fit_targets, family_indices, epochs, learning_rate, hidden_units)
         if probe is None:
@@ -643,6 +702,7 @@ def run_probe(
             probe_confidence,
             probe_margin,
             include_pixel_features,
+            selection_embedding,
         )
         selection_before = _metrics(selection_predictions, selection_targets)
         selection_after = _metrics(selection_candidate, selection_targets)
@@ -660,6 +720,7 @@ def run_probe(
                 probe_confidence,
                 probe_margin,
                 include_pixel_features,
+                confirmation_embedding,
             )
             confirmation_before = _metrics(confirmation_predictions, confirmation_targets)
             confirmation_after = _metrics(confirmation_candidate, confirmation_targets)
@@ -698,6 +759,7 @@ def run_probe(
             probe_confidence,
             probe_margin,
             include_pixel_features,
+            test_embedding,
         )
         after = _metrics(candidate_predictions, test_targets)
         final_rejection = _final_gate_rejection(
@@ -750,6 +812,7 @@ def run_probe(
                 "probe_margin": probe_margin,
                 "include_digit_features": include_digit_features,
                 "include_pixel_features": include_pixel_features,
+                "include_embedding_features": include_embedding_features,
             }
         )
         probe_predictions = candidate_predictions
@@ -803,6 +866,7 @@ def run_probe(
         "source_groups": list(source_groups),
         "include_digit_features": include_digit_features,
         "include_pixel_features": include_pixel_features,
+        "include_embedding_features": include_embedding_features,
         "minimum_gates": {
             "case_or_ambiguity_aware_test_accuracy": min_case_or_visual,
             "digit_test_accuracy": min_digit,
@@ -855,6 +919,11 @@ def main() -> None:
         action="store_true",
         help="Append a compact downsampled foreground-pixel sketch to reranker features.",
     )
+    parser.add_argument(
+        "--include-embedding-features",
+        action="store_true",
+        help="Append normalized mixed-case CNN penultimate activations to reranker features.",
+    )
     parser.add_argument("--min-digit", type=float, default=None)
     parser.add_argument("--min-upper", type=float, default=None)
     parser.add_argument("--min-lower", type=float, default=None)
@@ -883,6 +952,7 @@ def main() -> None:
                 source_groups=parse_source_groups(args.source_groups),
                 include_digit_features=args.include_digit_features,
                 include_pixel_features=args.include_pixel_features,
+                include_embedding_features=args.include_embedding_features,
                 min_digit=args.min_digit,
                 min_upper=args.min_upper,
                 min_lower=args.min_lower,

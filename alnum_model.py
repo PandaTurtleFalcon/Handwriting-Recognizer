@@ -1739,6 +1739,7 @@ def _mixedcase_family_features(
     folded_outputs: torch.Tensor,
     family_indices: tuple[int, ...],
     digit_outputs: torch.Tensor | None = None,
+    embedding_outputs: torch.Tensor | None = None,
     include_pixel_features: bool = False,
 ) -> torch.Tensor:
     """Build feature-reranker inputs for one visual family."""
@@ -1763,11 +1764,27 @@ def _mixedcase_family_features(
             align_corners=False,
         )
         parts.append(pixels.flatten(start_dim=1).float())
+    if embedding_outputs is not None:
+        parts.append(torch.nn.functional.normalize(embedding_outputs.float(), dim=1))
     if digit_outputs is not None:
         digit_probs = digit_outputs.softmax(dim=1)
         digit_top2 = digit_probs.topk(2, dim=1).values
         parts.extend((digit_outputs, digit_probs, digit_top2[:, :1], digit_top2[:, :1] - digit_top2[:, 1:2]))
     return torch.cat(parts, dim=1).float()
+
+
+def _mixedcase_embedding_features(model: nn.Module, inputs: torch.Tensor) -> torch.Tensor | None:
+    """Return normalized mixed-case penultimate activations when the model exposes them."""
+
+    model = getattr(model, "mixedcase_model", model)
+    network = getattr(model, "network", None)
+    if not isinstance(network, nn.Sequential) or len(network) < 2:
+        return None
+    modules = list(network.children())
+    if not isinstance(modules[-1], nn.Linear):
+        return None
+    extractor = nn.Sequential(*modules[:-1]).to(inputs.device).eval()
+    return extractor(inputs).flatten(start_dim=1)
 
 
 class FamilyRerankedMixedcaseModel(nn.Module):
@@ -1814,6 +1831,7 @@ class FamilyRerankedMixedcaseModel(nn.Module):
                     "probe_margin": float(probe.get("probe_margin", 0.0)),
                     "include_digit_features": bool(probe.get("include_digit_features", False)),
                     "include_pixel_features": bool(probe.get("include_pixel_features", False)),
+                    "include_embedding_features": bool(probe.get("include_embedding_features", False)),
                 }
             )
 
@@ -1825,6 +1843,11 @@ class FamilyRerankedMixedcaseModel(nn.Module):
             foreground = (inputs * EMNIST_STD + EMNIST_MEAN).clamp(0.0, 1.0)
             digit_inputs = (foreground - MNIST_MEAN) / MNIST_STD
             digit_outputs = self.digit_model(digit_inputs)
+        embedding_outputs = (
+            _mixedcase_embedding_features(self.base_model, inputs)
+            if any(bool(config["include_embedding_features"]) for config in self.probe_configs)
+            else None
+        )
         outputs = mixed_outputs.clone()
         predictions = outputs.argmax(dim=1)
         row_max = outputs.max(dim=1).values + 1e-4
@@ -1842,6 +1865,7 @@ class FamilyRerankedMixedcaseModel(nn.Module):
                 folded_outputs,
                 family_indices,
                 digit_outputs if config["include_digit_features"] else None,
+                embedding_outputs if config["include_embedding_features"] else None,
                 config["include_pixel_features"],
             )
             logits = module(features[current_in_family])
