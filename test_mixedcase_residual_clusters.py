@@ -7,6 +7,7 @@ import torch
 from scripts.probe_mixedcase_feature_reranker import FamilyProbe
 from scripts.probe_mixedcase_residual_clusters import (
     DEFAULT_CLUSTERS,
+    apply_cluster_probe,
     _gate_metrics,
     _split_calibration,
     cluster_indices,
@@ -55,6 +56,31 @@ class MixedcaseResidualClusterTests(unittest.TestCase):
         self.assertFalse(passed)
         self.assertEqual(reason, "upper_test_accuracy_regressed")
         self.assertGreater(delta, 0)
+
+    def test_apply_cluster_probe_respects_source_groups(self) -> None:
+        predictions = torch.tensor([6, 37, 16], dtype=torch.long)
+        images = torch.zeros((3, 1, 28, 28), dtype=torch.float32)
+        mixed_outputs = torch.zeros((3, 62), dtype=torch.float32)
+        folded_outputs = torch.zeros((3, 36), dtype=torch.float32)
+        probe = FamilyProbe("6bG", (6, 37, 16), torch.nn.Linear(1, 3))
+
+        def fake_apply(predictions_arg, *_args, **kwargs):
+            self.assertEqual(kwargs["source_groups"], ("digit", "lower"))
+            candidate = predictions_arg.clone()
+            candidate[:] = 37
+            return candidate
+
+        with patch("scripts.probe_mixedcase_residual_clusters.apply_family_probe", side_effect=fake_apply):
+            reranked = apply_cluster_probe(
+                predictions,
+                images,
+                mixed_outputs,
+                folded_outputs,
+                probe,
+                source_groups=("digit", "lower"),
+            )
+
+        self.assertEqual(reranked.tolist(), [37, 37, 37])
 
     def test_run_probe_rejects_cluster_without_confirmation_gain(self) -> None:
         train_images = torch.zeros((8, 1, 28, 28), dtype=torch.float32)
@@ -164,6 +190,7 @@ class MixedcaseResidualClusterTests(unittest.TestCase):
                 seed=3,
                 extra_roots=[Path("unused")],
                 hidden_units=4,
+                source_groups=("digit", "lower"),
             )
 
         self.assertEqual(report["clusters"][0]["rejection_reason"], "confirmation_test_delta_below_floor")
@@ -171,6 +198,7 @@ class MixedcaseResidualClusterTests(unittest.TestCase):
         self.assertLessEqual(report["clusters"][0]["confirmation_delta"], 0)
         self.assertEqual(report["test_delta"], 0.0)
         self.assertEqual(report["hidden_units"], 4)
+        self.assertEqual(report["source_groups"], ["digit", "lower"])
 
 
 if __name__ == "__main__":

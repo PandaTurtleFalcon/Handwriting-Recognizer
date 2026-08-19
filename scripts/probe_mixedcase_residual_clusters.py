@@ -24,6 +24,7 @@ from scripts.probe_mixedcase_feature_reranker import (  # noqa: E402
     _split_tensors,
     apply_family_probe,
     family_features,
+    parse_source_groups,
     train_family_probe,
 )
 
@@ -89,6 +90,26 @@ def _gate_metrics(
     return True, None, delta
 
 
+def apply_cluster_probe(
+    predictions: torch.Tensor,
+    images: torch.Tensor,
+    mixed_outputs: torch.Tensor,
+    folded_outputs: torch.Tensor,
+    probe,
+    source_groups: tuple[str, ...],
+) -> torch.Tensor:
+    """Return residual-cluster predictions after applying the selected source groups."""
+
+    return apply_family_probe(
+        predictions,
+        images,
+        mixed_outputs,
+        folded_outputs,
+        probe,
+        source_groups=source_groups,
+    )
+
+
 def run_probe(
     batch_size: int,
     epochs: int,
@@ -102,6 +123,7 @@ def run_probe(
     extra_roots: list[Path] | None = None,
     extra_samples_per_class: int | None = None,
     hidden_units: int = 0,
+    source_groups: tuple[str, ...] = ("digit", "upper", "lower"),
 ) -> dict[str, object]:
     """Train cluster probes on train split and evaluate only confirmed adapters."""
 
@@ -157,12 +179,13 @@ def run_probe(
             skipped.append(cluster)
             continue
 
-        selection_candidate = apply_family_probe(
+        selection_candidate = apply_cluster_probe(
             selection_predictions,
             selection_images,
             selection_mixed,
             selection_folded,
             probe,
+            source_groups,
         )
         selection_before = _metrics(selection_predictions, selection_targets)
         selection_after = _metrics(selection_candidate, selection_targets)
@@ -175,12 +198,13 @@ def run_probe(
         confirmation_passed = True
         confirmation_reason = None
         if int(confirmation_targets.numel()) > 0:
-            confirmation_candidate = apply_family_probe(
+            confirmation_candidate = apply_cluster_probe(
                 confirmation_predictions,
                 confirmation_images,
                 confirmation_mixed,
                 confirmation_folded,
                 probe,
+                source_groups,
             )
             confirmation_before = _metrics(confirmation_predictions, confirmation_targets)
             confirmation_after = _metrics(confirmation_candidate, confirmation_targets)
@@ -213,7 +237,14 @@ def run_probe(
             continue
 
         before = _metrics(probe_predictions, test_targets)
-        candidate_predictions = apply_family_probe(probe_predictions, test_images, test_mixed, test_folded, probe)
+        candidate_predictions = apply_cluster_probe(
+            probe_predictions,
+            test_images,
+            test_mixed,
+            test_folded,
+            probe,
+            source_groups,
+        )
         after = _metrics(candidate_predictions, test_targets)
         test_passed, test_reason, test_delta = _gate_metrics(before, after, min_cluster_delta)
         if not test_passed:
@@ -261,6 +292,7 @@ def run_probe(
         "extra_samples_per_class": extra_samples_per_class,
         "hidden_units": hidden_units,
         "confirmation_ratio": confirmation_ratio,
+        "source_groups": list(source_groups),
     }
 
 
@@ -280,6 +312,7 @@ def main() -> None:
     parser.add_argument("--extra-root", action="append", type=Path, default=[])
     parser.add_argument("--extra-samples-per-class", type=int, default=None)
     parser.add_argument("--hidden-units", type=int, default=32)
+    parser.add_argument("--source-groups", default="digit,upper,lower")
     args = parser.parse_args()
     print(
         json.dumps(
@@ -296,6 +329,7 @@ def main() -> None:
                 extra_roots=args.extra_root,
                 extra_samples_per_class=args.extra_samples_per_class,
                 hidden_units=args.hidden_units,
+                source_groups=parse_source_groups(args.source_groups),
             ),
             indent=2,
         )
