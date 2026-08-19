@@ -1336,3 +1336,10 @@ restored, so future improvement loops do not repeat known-bad blends.
   - Headroom: the resolver oracle remains meaningful (`92.3561%` exact and `94.5379%` lower), so the problem is not lack of theoretical recovery. The current resolver features/training objective cannot capture that recovery without violating digit, upper, lower, or case/visual preservation floors.
   - Verification: `test_mixedcase_case_resolver.py`, `test_mixedcase_feature_reranker.py`, `test_calibrate_mixedcase_hybrid.py`, `test_context_rules.py`, and `test_web_app.py` passed; `scripts/probe_mixedcase_case_resolver.py`, `scripts/calibrate_mixedcase_hybrid.py`, `main.py`, and `context_rules.py` compiled.
   - Takeaway: mixed-case needs a stronger representation or a new case-specific training target, not more threshold tuning on the deployed outputs.
+
+- Rejected character `!/1Iil|` sweep wrapper smoke:
+  - Code path: added `scripts/sweep_character_family_reranker.py`, a bounded JSON sweep wrapper around the existing character family reranker. It supports grids over epochs, learning rates, hidden units, source groups, and `--max-runs` so probes stay measurable instead of becoming long manual loops.
+  - Rejected probe A: `!/1Iil|`, letter-only sources, linear head, 40 epochs, learning rate `0.003` produced no accepted family and no validation movement. Selection and confirmation both regressed by about `0.65` points.
+  - Rejected probe B: `!/1Iil|`, letter+punctuation sources, 64 hidden units, 80 epochs, learning rate `0.01` was closer but still failed selection (`-0.0834` validation delta), so no live artifact changed.
+  - Verification: `test_sweep_character_family_reranker.py` and `test_character_family_reranker.py` passed; the new sweep script compiled.
+  - Takeaway: the simple feature reranker remains too weak even on the single character family that theoretically crosses the broad character gate. The next character attempt needs either stronger features, a different confidence-gated correction rule, or more real correction exemplars for `!/1Iil|`.
