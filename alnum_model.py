@@ -2202,6 +2202,7 @@ def save_mixedcase_checkpoint(
     best_state: dict[str, torch.Tensor] | None,
     best_accuracy: float,
     best_metrics: dict[str, float | str] | None,
+    best_observed_metrics: dict[str, float | int | str] | None,
     model_type: str,
     learning_rate: float,
     seed: int,
@@ -2320,6 +2321,7 @@ def save_mixedcase_checkpoint(
                 "wrote_weights": wrote_weights,
                 "per_class_accuracy": per_class_accuracy or {},
                 "best_checkpoint": best_metrics or {"test_accuracy": best_accuracy},
+                "best_observed_checkpoint": best_observed_metrics or {},
                 "history": history,
             },
             indent=2,
@@ -2504,6 +2506,8 @@ def train_mixedcase(
     best_state = None
     best_per_class_accuracy: dict[str, float] = {}
     best_metrics: dict[str, float | str] | None = None
+    best_observed_accuracy = 0.0
+    best_observed_metrics: dict[str, float | int | str] | None = None
     last_checkpoint_floor_failures: list[str] = []
     wrote_weights = False
     if warm_start:
@@ -2535,6 +2539,8 @@ def train_mixedcase(
                 min_upper=min_checkpoint_upper,
                 min_lower=min_checkpoint_lower,
             )
+        best_observed_accuracy = warm_start_metrics["test_accuracy"]
+        best_observed_metrics = {**warm_start_metrics, "source": "warm_start_seed"}
         print(
             f"Warm-start mixed-case exact={best_accuracy:.2f}% "
             f"case_or_visual={warm_start_metrics['case_or_ambiguity_aware_test_accuracy']:.2f}%",
@@ -2611,6 +2617,9 @@ def train_mixedcase(
                 "balanced_group_accuracy": mixedcase_checkpoint_score(best_epoch_metrics, "balanced_group_accuracy"),
             }
         )
+        if best_epoch_metrics["test_accuracy"] > best_observed_accuracy:
+            best_observed_accuracy = best_epoch_metrics["test_accuracy"]
+            best_observed_metrics = {**best_epoch_metrics, "epoch": epoch, "source": f"epoch_{epoch}"}
         history.append(metrics)
         candidate_score = mixedcase_checkpoint_score(best_epoch_metrics, checkpoint_objective)
         floor_failures = mixedcase_checkpoint_floor_failures(
@@ -2641,6 +2650,7 @@ def train_mixedcase(
             state_to_write,
             best_accuracy,
             best_metrics,
+            best_observed_metrics,
             model_type,
             learning_rate,
             seed,
@@ -2692,7 +2702,22 @@ def train_mixedcase(
             break
 
     if best_accuracy < min_accuracy:
-        raise RuntimeError(f"Best mixed-case test accuracy was {best_accuracy:.2f}%, below {min_accuracy:.2f}%.")
+        observed_details = ""
+        if best_observed_metrics is not None:
+            observed_source = best_observed_metrics.get("source", best_observed_metrics.get("epoch", "unknown"))
+            observed_details = (
+                f" Best observed mixed-case candidate {observed_source} reached "
+                f"{best_observed_accuracy:.2f}% exact"
+                f", digits {float(best_observed_metrics.get('digit_test_accuracy', 0.0)):.2f}%"
+                f", upper {float(best_observed_metrics.get('upper_test_accuracy', 0.0)):.2f}%"
+                f", lower {float(best_observed_metrics.get('lower_test_accuracy', 0.0)):.2f}%"
+                f", case_or_visual "
+                f"{float(best_observed_metrics.get('case_or_ambiguity_aware_test_accuracy', 0.0)):.2f}%."
+            )
+        raise RuntimeError(
+            f"Best accepted mixed-case checkpoint accuracy was {best_accuracy:.2f}%, "
+            f"below {min_accuracy:.2f}%.{observed_details}"
+        )
     if not wrote_weights:
         details = "; ".join(last_checkpoint_floor_failures) if last_checkpoint_floor_failures else "no accepted checkpoint"
         if require_trained_checkpoint and str((best_metrics or {}).get("source", "")).startswith("warm_start"):

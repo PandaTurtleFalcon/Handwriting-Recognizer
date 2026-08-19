@@ -556,6 +556,7 @@ class ExtraAlnumDatasetTests(unittest.TestCase):
                 best_state={"classifier.weight": torch.zeros(1, 1)},
                 best_accuracy=12.5,
                 best_metrics={"test_accuracy": 12.5, "source": "unit_test"},
+                best_observed_metrics={"test_accuracy": 13.0, "source": "observed_unit_test"},
                 model_type="cnn",
                 learning_rate=0.001,
                 seed=123,
@@ -573,6 +574,7 @@ class ExtraAlnumDatasetTests(unittest.TestCase):
         self.assertEqual(metrics["output_weights_path"], str(weights_path))
         self.assertEqual(metrics["output_metrics_path"], str(metrics_path))
         self.assertTrue(metrics["wrote_weights"])
+        self.assertEqual(metrics["best_observed_checkpoint"]["test_accuracy"], 13.0)
 
     def test_save_mixedcase_checkpoint_reports_missing_weights(self) -> None:
         """Metrics should say when no checkpoint satisfied save floors."""
@@ -586,6 +588,7 @@ class ExtraAlnumDatasetTests(unittest.TestCase):
                 best_state=None,
                 best_accuracy=12.5,
                 best_metrics=None,
+                best_observed_metrics={"test_accuracy": 12.5, "source": "epoch_1"},
                 model_type="cnn",
                 learning_rate=0.001,
                 seed=123,
@@ -599,6 +602,7 @@ class ExtraAlnumDatasetTests(unittest.TestCase):
         self.assertFalse(wrote_weights)
         self.assertFalse(weights_path.exists())
         self.assertFalse(metrics["wrote_weights"])
+        self.assertEqual(metrics["best_observed_checkpoint"]["source"], "epoch_1")
 
     def test_train_mixedcase_rejects_when_no_checkpoint_is_written(self) -> None:
         """Candidate runs should fail clearly if all checkpoints miss floors."""
