@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+from dataclasses import dataclass
 from pathlib import Path
 
 import torch
@@ -25,6 +26,36 @@ from scripts.probe_mixedcase_feature_reranker import (  # noqa: E402
     _split_tensors,
     geometry_features,
 )
+
+
+@dataclass(frozen=True)
+class CaseResolverData:
+    """Precomputed tensors shared by one or more case-resolver probes."""
+
+    train_features: torch.Tensor
+    train_targets: torch.Tensor
+    train_folded_predictions: torch.Tensor
+    selection_predictions: torch.Tensor
+    selection_targets: torch.Tensor
+    selection_features: torch.Tensor
+    selection_folded_predictions: torch.Tensor
+    confirmation_predictions: torch.Tensor
+    confirmation_targets: torch.Tensor
+    confirmation_features: torch.Tensor
+    confirmation_folded_predictions: torch.Tensor
+    base_predictions: torch.Tensor
+    test_targets: torch.Tensor
+    test_features: torch.Tensor
+    test_folded_predictions: torch.Tensor
+    test_folded_outputs: torch.Tensor
+    fit_case_counts: dict[str, int]
+    folded_letter_identity_accuracy: float
+    fit_samples: int
+    selection_samples: int
+    confirmation_samples: int
+    test_samples: int
+    extra_roots: tuple[Path, ...]
+    extra_samples_per_class: int | None
 
 
 def _letter_identity_index(targets: torch.Tensor) -> torch.Tensor:
@@ -335,91 +366,18 @@ def _split_fit_selection_confirmation(
     )
 
 
-def select_confirm_case_resolver_thresholds(
-    selection_predictions: torch.Tensor,
-    selection_targets: torch.Tensor,
-    selection_features: torch.Tensor,
-    selection_folded_predictions: torch.Tensor,
-    confirmation_predictions: torch.Tensor,
-    confirmation_targets: torch.Tensor,
-    confirmation_features: torch.Tensor,
-    confirmation_folded_predictions: torch.Tensor,
-    model: nn.Module | None,
-    confidence_thresholds: list[float],
-    margin_thresholds: list[float],
-    objective: str = "exact",
-) -> tuple[dict[str, object] | None, dict[str, object] | None, list[dict[str, object]]]:
-    """Pick resolver gates on selection data and require confirmation before test use."""
-
-    _, _, selection_rows = sweep_case_resolver_thresholds(
-        selection_predictions,
-        selection_targets,
-        selection_features,
-        selection_folded_predictions,
-        model,
-        confidence_thresholds,
-        margin_thresholds,
-    )
-    safe_rows = [row for row in selection_rows if bool(row.get("safe"))]
-    selected = max(safe_rows, key=lambda row: _resolver_objective(row["metrics"], objective), default=None)
-    if selected is None or model is None:
-        return None, None, selection_rows
-    base_confirmation = _metrics(confirmation_predictions, confirmation_targets)
-    best_confirmed: tuple[dict[str, object], dict[str, object]] | None = None
-    best_rejected_confirmation: dict[str, object] | None = None
-    for row in safe_rows:
-        candidate_predictions = apply_case_resolver(
-            confirmation_predictions,
-            confirmation_features,
-            confirmation_folded_predictions,
-            model,
-            float(row["confidence_threshold"]),
-            float(row["margin_threshold"]),
-        )
-        confirmation_metrics = _metrics(candidate_predictions, confirmation_targets)
-        confirmation = {
-            "safe": _resolver_candidate_is_safe(base_confirmation, confirmation_metrics),
-            "metrics": confirmation_metrics,
-            "test_delta": confirmation_metrics["test_accuracy"] - base_confirmation["test_accuracy"],
-        }
-        if bool(confirmation["safe"]):
-            if best_confirmed is None or _resolver_objective(confirmation_metrics, objective) > _resolver_objective(
-                best_confirmed[1]["metrics"],
-                objective,
-            ):
-                best_confirmed = (row, confirmation)
-        elif (
-            best_rejected_confirmation is None
-            or float(confirmation["test_delta"]) > float(best_rejected_confirmation["test_delta"])
-        ):
-            best_rejected_confirmation = confirmation
-    if best_confirmed is None:
-        return None, best_rejected_confirmation, selection_rows
-    return best_confirmed[0], best_confirmed[1], selection_rows
-
-
-def run_probe(
+def prepare_case_resolver_data(
     batch_size: int,
     train_sample_limit: int | None,
-    epochs: int,
-    learning_rate: float,
-    hidden_units: int,
-    confidence_threshold: float,
-    margin_threshold: float,
     seed: int,
-    confidence_thresholds: list[float] | None = None,
-    margin_thresholds: list[float] | None = None,
     extra_roots: list[Path] | None = None,
     extra_samples_per_class: int | None = None,
     calibration_ratio: float = 0.2,
     confirmation_ratio: float = 0.5,
     include_embedding_features: bool = False,
-    objective: str = "exact",
-    class_weighting: str = "none",
-) -> dict[str, object]:
-    """Train and evaluate a case-resolver probe without writing artifacts."""
+) -> CaseResolverData:
+    """Precompute fixed split features and deployed predictions for resolver probes."""
 
-    torch.manual_seed(seed)
     train_images, train_targets = _split_tensors(train=True, sample_limit=train_sample_limit)
     fit_indices, selection_indices, confirmation_indices = _split_fit_selection_confirmation(
         train_targets,
@@ -492,36 +450,148 @@ def run_probe(
         test_folded,
         test_embedding,
     )
+    artifact = _load_hybrid_artifact()
+    selection_predictions = hybrid_predictions(selection_mixed, selection_folded, artifact)
+    confirmation_predictions = hybrid_predictions(confirmation_mixed, confirmation_folded, artifact)
+    base_predictions = hybrid_predictions(test_mixed, test_folded, artifact)
+    target_identity = _letter_identity_index(test_targets)
+    folded_identity = test_folded_predictions - 10
+    letter_mask = target_identity >= 0
+    folded_letter_identity_accuracy = 100.0 * float(
+        (folded_identity[letter_mask] == target_identity[letter_mask]).float().mean()
+    )
+    return CaseResolverData(
+        train_features=train_features,
+        train_targets=fit_targets,
+        train_folded_predictions=train_folded_predictions,
+        selection_predictions=selection_predictions,
+        selection_targets=selection_targets,
+        selection_features=selection_features,
+        selection_folded_predictions=selection_folded_predictions,
+        confirmation_predictions=confirmation_predictions,
+        confirmation_targets=confirmation_targets,
+        confirmation_features=confirmation_features,
+        confirmation_folded_predictions=confirmation_folded_predictions,
+        base_predictions=base_predictions,
+        test_targets=test_targets,
+        test_features=test_features,
+        test_folded_predictions=test_folded_predictions,
+        test_folded_outputs=test_folded,
+        fit_case_counts=_case_target_counts(fit_targets, train_folded_predictions),
+        folded_letter_identity_accuracy=folded_letter_identity_accuracy,
+        fit_samples=int(fit_targets.numel()),
+        selection_samples=int(selection_targets.numel()),
+        confirmation_samples=int(confirmation_targets.numel()),
+        test_samples=int(test_targets.numel()),
+        extra_roots=tuple(extra_roots or []),
+        extra_samples_per_class=extra_samples_per_class,
+    )
+
+
+def select_confirm_case_resolver_thresholds(
+    selection_predictions: torch.Tensor,
+    selection_targets: torch.Tensor,
+    selection_features: torch.Tensor,
+    selection_folded_predictions: torch.Tensor,
+    confirmation_predictions: torch.Tensor,
+    confirmation_targets: torch.Tensor,
+    confirmation_features: torch.Tensor,
+    confirmation_folded_predictions: torch.Tensor,
+    model: nn.Module | None,
+    confidence_thresholds: list[float],
+    margin_thresholds: list[float],
+    objective: str = "exact",
+) -> tuple[dict[str, object] | None, dict[str, object] | None, list[dict[str, object]]]:
+    """Pick resolver gates on selection data and require confirmation before test use."""
+
+    _, _, selection_rows = sweep_case_resolver_thresholds(
+        selection_predictions,
+        selection_targets,
+        selection_features,
+        selection_folded_predictions,
+        model,
+        confidence_thresholds,
+        margin_thresholds,
+    )
+    safe_rows = [row for row in selection_rows if bool(row.get("safe"))]
+    selected = max(safe_rows, key=lambda row: _resolver_objective(row["metrics"], objective), default=None)
+    if selected is None or model is None:
+        return None, None, selection_rows
+    base_confirmation = _metrics(confirmation_predictions, confirmation_targets)
+    best_confirmed: tuple[dict[str, object], dict[str, object]] | None = None
+    best_rejected_confirmation: dict[str, object] | None = None
+    for row in safe_rows:
+        candidate_predictions = apply_case_resolver(
+            confirmation_predictions,
+            confirmation_features,
+            confirmation_folded_predictions,
+            model,
+            float(row["confidence_threshold"]),
+            float(row["margin_threshold"]),
+        )
+        confirmation_metrics = _metrics(candidate_predictions, confirmation_targets)
+        confirmation = {
+            "safe": _resolver_candidate_is_safe(base_confirmation, confirmation_metrics),
+            "metrics": confirmation_metrics,
+            "test_delta": confirmation_metrics["test_accuracy"] - base_confirmation["test_accuracy"],
+        }
+        if bool(confirmation["safe"]):
+            if best_confirmed is None or _resolver_objective(confirmation_metrics, objective) > _resolver_objective(
+                best_confirmed[1]["metrics"],
+                objective,
+            ):
+                best_confirmed = (row, confirmation)
+        elif (
+            best_rejected_confirmation is None
+            or float(confirmation["test_delta"]) > float(best_rejected_confirmation["test_delta"])
+        ):
+            best_rejected_confirmation = confirmation
+    if best_confirmed is None:
+        return None, best_rejected_confirmation, selection_rows
+    return best_confirmed[0], best_confirmed[1], selection_rows
+
+
+def run_probe_from_data(
+    data: CaseResolverData,
+    epochs: int,
+    learning_rate: float,
+    hidden_units: int,
+    confidence_threshold: float,
+    margin_threshold: float,
+    seed: int,
+    confidence_thresholds: list[float] | None = None,
+    margin_thresholds: list[float] | None = None,
+    calibration_ratio: float = 0.2,
+    confirmation_ratio: float = 0.5,
+    include_embedding_features: bool = False,
+    objective: str = "exact",
+    class_weighting: str = "none",
+) -> dict[str, object]:
+    """Train and evaluate a case resolver from precomputed split tensors."""
+
+    torch.manual_seed(seed)
     resolver = train_case_resolver(
-        train_features,
-        fit_targets,
-        train_folded_predictions,
+        data.train_features,
+        data.train_targets,
+        data.train_folded_predictions,
         hidden_units,
         epochs,
         learning_rate,
         class_weighting,
     )
-    artifact = _load_hybrid_artifact()
-    selection_predictions = hybrid_predictions(selection_mixed, selection_folded, artifact)
-    confirmation_predictions = hybrid_predictions(confirmation_mixed, confirmation_folded, artifact)
-    base_predictions = hybrid_predictions(test_mixed, test_folded, artifact)
-    oracle_predictions = oracle_case_predictions(base_predictions, test_folded, test_targets)
-    base_metrics = _metrics(base_predictions, test_targets)
-    target_identity = _letter_identity_index(test_targets)
-    folded_identity = test_folded_predictions - 10
-    letter_mask = target_identity >= 0
-    folded_identity_accuracy = 100.0 * float((folded_identity[letter_mask] == target_identity[letter_mask]).float().mean())
+    oracle_predictions = oracle_case_predictions(data.base_predictions, data.test_folded_outputs, data.test_targets)
+    base_metrics = _metrics(data.base_predictions, data.test_targets)
     confidence_values = confidence_thresholds or [confidence_threshold]
     margin_values = margin_thresholds or [margin_threshold]
     selected_thresholds, confirmation, selection_rows = select_confirm_case_resolver_thresholds(
-        selection_predictions,
-        selection_targets,
-        selection_features,
-        selection_folded_predictions,
-        confirmation_predictions,
-        confirmation_targets,
-        confirmation_features,
-        confirmation_folded_predictions,
+        data.selection_predictions,
+        data.selection_targets,
+        data.selection_features,
+        data.selection_folded_predictions,
+        data.confirmation_predictions,
+        data.confirmation_targets,
+        data.confirmation_features,
+        data.confirmation_folded_predictions,
         resolver,
         confidence_values,
         margin_values,
@@ -529,21 +599,21 @@ def run_probe(
     )
     final_selected_candidate: dict[str, object] | None = None
     if resolver is None or selected_thresholds is None:
-        resolved_predictions = base_predictions
+        resolved_predictions = data.base_predictions
         sweep_rows = []
-        resolved_metrics = _metrics(resolved_predictions, test_targets)
+        resolved_metrics = _metrics(resolved_predictions, data.test_targets)
     else:
         selected_confidence = float(selected_thresholds["confidence_threshold"])
         selected_margin = float(selected_thresholds["margin_threshold"])
         candidate_predictions = apply_case_resolver(
-            base_predictions,
-            test_features,
-            test_folded_predictions,
+            data.base_predictions,
+            data.test_features,
+            data.test_folded_predictions,
             resolver,
             selected_confidence,
             selected_margin,
         )
-        candidate_metrics = _metrics(candidate_predictions, test_targets)
+        candidate_metrics = _metrics(candidate_predictions, data.test_targets)
         final_selected_candidate = {
             "confidence_threshold": selected_confidence,
             "margin_threshold": selected_margin,
@@ -552,21 +622,21 @@ def run_probe(
             "test_delta": candidate_metrics["test_accuracy"] - base_metrics["test_accuracy"],
         }
         resolved_predictions, resolved_metrics, sweep_rows = sweep_case_resolver_thresholds(
-            base_predictions,
-            test_targets,
-            test_features,
-            test_folded_predictions,
+            data.base_predictions,
+            data.test_targets,
+            data.test_features,
+            data.test_folded_predictions,
             resolver,
             [selected_confidence],
             [selected_margin],
         )
-    oracle_metrics = _metrics(oracle_predictions, test_targets)
+    oracle_metrics = _metrics(oracle_predictions, data.test_targets)
     best_sweep_row = max(sweep_rows, key=lambda row: float(row["test_delta"]), default=None)
     return {
         "base": base_metrics,
         "resolved": resolved_metrics,
         "oracle": oracle_metrics,
-        "folded_letter_identity_accuracy": folded_identity_accuracy,
+        "folded_letter_identity_accuracy": data.folded_letter_identity_accuracy,
         "test_delta": resolved_metrics["test_accuracy"] - base_metrics["test_accuracy"],
         "oracle_delta": oracle_metrics["test_accuracy"] - base_metrics["test_accuracy"],
         "promotable": resolved_metrics["test_accuracy"] > base_metrics["test_accuracy"]
@@ -580,13 +650,13 @@ def run_probe(
             )
         ),
         "resolver_trained": resolver is not None,
-        "fit_samples": int(fit_targets.numel()),
-        "selection_samples": int(selection_targets.numel()),
-        "confirmation_samples": int(confirmation_targets.numel()),
-        "test_samples": int(test_targets.numel()),
+        "fit_samples": data.fit_samples,
+        "selection_samples": data.selection_samples,
+        "confirmation_samples": data.confirmation_samples,
+        "test_samples": data.test_samples,
         "hidden_units": hidden_units,
         "class_weighting": class_weighting,
-        "fit_case_counts": _case_target_counts(fit_targets, train_folded_predictions),
+        "fit_case_counts": data.fit_case_counts,
         "confidence_threshold": confidence_threshold,
         "margin_threshold": margin_threshold,
         "selected_thresholds": selected_thresholds,
@@ -598,13 +668,62 @@ def run_probe(
         "best_sweep_row": best_sweep_row,
         "selection_sweep_rows": selection_rows,
         "sweep_rows": sweep_rows,
-        "extra_roots": [str(path) for path in (extra_roots or [])],
-        "extra_samples_per_class": extra_samples_per_class,
+        "extra_roots": [str(path) for path in data.extra_roots],
+        "extra_samples_per_class": data.extra_samples_per_class,
         "calibration_ratio": calibration_ratio,
         "confirmation_ratio": confirmation_ratio,
         "include_embedding_features": include_embedding_features,
         "objective": objective,
     }
+
+
+def run_probe(
+    batch_size: int,
+    train_sample_limit: int | None,
+    epochs: int,
+    learning_rate: float,
+    hidden_units: int,
+    confidence_threshold: float,
+    margin_threshold: float,
+    seed: int,
+    confidence_thresholds: list[float] | None = None,
+    margin_thresholds: list[float] | None = None,
+    extra_roots: list[Path] | None = None,
+    extra_samples_per_class: int | None = None,
+    calibration_ratio: float = 0.2,
+    confirmation_ratio: float = 0.5,
+    include_embedding_features: bool = False,
+    objective: str = "exact",
+    class_weighting: str = "none",
+) -> dict[str, object]:
+    """Train and evaluate a case-resolver probe without writing artifacts."""
+
+    data = prepare_case_resolver_data(
+        batch_size=batch_size,
+        train_sample_limit=train_sample_limit,
+        seed=seed,
+        extra_roots=extra_roots,
+        extra_samples_per_class=extra_samples_per_class,
+        calibration_ratio=calibration_ratio,
+        confirmation_ratio=confirmation_ratio,
+        include_embedding_features=include_embedding_features,
+    )
+    return run_probe_from_data(
+        data,
+        epochs=epochs,
+        learning_rate=learning_rate,
+        hidden_units=hidden_units,
+        confidence_threshold=confidence_threshold,
+        margin_threshold=margin_threshold,
+        seed=seed,
+        confidence_thresholds=confidence_thresholds,
+        margin_thresholds=margin_thresholds,
+        calibration_ratio=calibration_ratio,
+        confirmation_ratio=confirmation_ratio,
+        include_embedding_features=include_embedding_features,
+        objective=objective,
+        class_weighting=class_weighting,
+    )
 
 
 def main() -> None:

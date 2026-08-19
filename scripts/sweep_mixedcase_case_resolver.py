@@ -12,7 +12,7 @@ PROJECT_DIR = Path(__file__).resolve().parents[1]
 if str(PROJECT_DIR) not in sys.path:
     sys.path.insert(0, str(PROJECT_DIR))
 
-from scripts.probe_mixedcase_case_resolver import run_probe  # noqa: E402
+from scripts.probe_mixedcase_case_resolver import prepare_case_resolver_data, run_probe_from_data  # noqa: E402
 
 
 def parse_int_values(raw: str) -> list[int]:
@@ -109,6 +109,7 @@ def run_sweep(
     rows: list[dict[str, object]] = []
     all_runs = list(product(epochs, learning_rates, hidden_units, objectives, class_weightings, seeds))
     selected_runs = all_runs[:max_runs] if max_runs is not None else all_runs
+    cached_data = {}
     for epoch_count, learning_rate, hidden_count, objective, class_weighting, seed in selected_runs:
         parameters = {
             "epochs": epoch_count,
@@ -118,9 +119,19 @@ def run_sweep(
             "class_weighting": class_weighting,
             "seed": seed,
         }
-        report = run_probe(
-            batch_size=batch_size,
-            train_sample_limit=train_sample_limit,
+        if seed not in cached_data:
+            cached_data[seed] = prepare_case_resolver_data(
+                batch_size=batch_size,
+                train_sample_limit=train_sample_limit,
+                seed=seed,
+                extra_roots=extra_roots,
+                extra_samples_per_class=extra_samples_per_class,
+                calibration_ratio=calibration_ratio,
+                confirmation_ratio=confirmation_ratio,
+                include_embedding_features=include_embedding_features,
+            )
+        report = run_probe_from_data(
+            cached_data[seed],
             epochs=epoch_count,
             learning_rate=learning_rate,
             hidden_units=hidden_count,
@@ -129,8 +140,6 @@ def run_sweep(
             confidence_thresholds=confidence_thresholds,
             margin_thresholds=margin_thresholds,
             seed=seed,
-            extra_roots=extra_roots,
-            extra_samples_per_class=extra_samples_per_class,
             calibration_ratio=calibration_ratio,
             confirmation_ratio=confirmation_ratio,
             include_embedding_features=include_embedding_features,
@@ -155,6 +164,7 @@ def run_sweep(
         "planned_runs": len(all_runs),
         "completed_runs": len(rows),
         "truncated": max_runs is not None and len(all_runs) > max_runs,
+        "cached_seed_count": len(cached_data),
     }
 
 

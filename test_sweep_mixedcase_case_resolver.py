@@ -1,4 +1,6 @@
 import unittest
+from pathlib import Path
+from unittest.mock import patch
 
 from scripts.sweep_mixedcase_case_resolver import (
     best_sweep_row,
@@ -6,6 +8,7 @@ from scripts.sweep_mixedcase_case_resolver import (
     parse_choice_values,
     parse_float_values,
     parse_int_values,
+    run_sweep,
 )
 
 
@@ -48,6 +51,47 @@ class SweepMixedcaseCaseResolverTests(unittest.TestCase):
         ]
 
         self.assertIs(best_sweep_row(rows), rows[2])
+
+    def test_run_sweep_reuses_prepared_data_per_seed(self) -> None:
+        """Repeated hyperparameter rows should share cached model outputs."""
+
+        prepared_by_seed = {101: object(), 202: object()}
+
+        def fake_prepare(**kwargs):
+            return prepared_by_seed[kwargs["seed"]]
+
+        def fake_probe(data, **kwargs):
+            return {
+                "promotable": data is prepared_by_seed[202],
+                "test_delta": 0.1 if data is prepared_by_seed[202] else 0.0,
+                "final_selected_candidate": {"safe": data is prepared_by_seed[202], "test_delta": 0.1},
+            }
+
+        with patch("scripts.sweep_mixedcase_case_resolver.prepare_case_resolver_data", side_effect=fake_prepare) as prepare:
+            with patch("scripts.sweep_mixedcase_case_resolver.run_probe_from_data", side_effect=fake_probe) as probe:
+                report = run_sweep(
+                    batch_size=16,
+                    train_sample_limit=40,
+                    epochs=[1, 2],
+                    learning_rates=[0.01],
+                    hidden_units=[0],
+                    objectives=["exact"],
+                    class_weightings=["none"],
+                    confidence_thresholds=[0.0],
+                    margin_thresholds=[0.0],
+                    calibration_ratio=0.25,
+                    confirmation_ratio=0.5,
+                    seeds=[101, 202],
+                    extra_roots=[Path("tmp/example.pt")],
+                    extra_samples_per_class=3,
+                    include_embedding_features=True,
+                )
+
+        self.assertEqual(prepare.call_count, 2)
+        self.assertEqual(probe.call_count, 4)
+        self.assertEqual(report["cached_seed_count"], 2)
+        self.assertEqual(report["completed_runs"], 4)
+        self.assertEqual(report["promotable_count"], 2)
 
 
 if __name__ == "__main__":
