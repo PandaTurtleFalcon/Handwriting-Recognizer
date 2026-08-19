@@ -6,6 +6,7 @@ from unittest.mock import patch
 import torch
 
 from scripts.probe_mixedcase_feature_reranker import FamilyProbe
+from scripts.probe_mixedcase_feature_reranker import base_prediction_uncertainty_mask
 from scripts.probe_mixedcase_feature_reranker import _final_gate_rejection
 from scripts.probe_mixedcase_feature_reranker import _fit_tensors
 from scripts.probe_mixedcase_feature_reranker import _is_promotable
@@ -162,6 +163,47 @@ class MixedcaseFeatureRerankerTests(unittest.TestCase):
 
         self.assertEqual(kept.tolist(), [10])
         self.assertEqual(changed.tolist(), [11])
+
+    def test_base_prediction_uncertainty_mask_can_require_low_confidence(self) -> None:
+        """Family probes should be able to touch only uncertain base predictions."""
+
+        mixed = torch.zeros((2, 62), dtype=torch.float32)
+        mixed[0, 10] = 8.0
+        mixed[1, 10] = 0.2
+        mixed[1, 11] = 0.1
+        predictions = torch.tensor([10, 10], dtype=torch.long)
+
+        mask = base_prediction_uncertainty_mask(mixed, predictions, confidence_max=0.2, margin_max=0.1)
+
+        self.assertEqual(mask.tolist(), [False, True])
+
+    def test_apply_family_probe_respects_base_confidence_gate(self) -> None:
+        """High-confidence base predictions should be protected when requested."""
+
+        model = torch.nn.Linear(28, 2)
+        with torch.no_grad():
+            model.weight.zero_()
+            model.bias[:] = torch.tensor([0.0, 5.0])
+        probe = FamilyProbe("AB", (10, 11), model)
+        predictions = torch.tensor([10, 10], dtype=torch.long)
+        images = torch.zeros((2, 1, 28, 28), dtype=torch.float32)
+        mixed = torch.zeros((2, 62), dtype=torch.float32)
+        mixed[0, 10] = 8.0
+        mixed[1, 10] = 0.2
+        mixed[1, 11] = 0.1
+        folded = torch.zeros((2, 36), dtype=torch.float32)
+
+        gated = apply_family_probe(
+            predictions,
+            images,
+            mixed,
+            folded,
+            probe,
+            base_confidence_max=0.2,
+            base_margin_max=0.1,
+        )
+
+        self.assertEqual(gated.tolist(), [10, 11])
 
     def test_fit_tensors_appends_capped_extra_roots(self) -> None:
         """Optional adviser data should be capped before joining fit tensors."""
@@ -347,7 +389,10 @@ class MixedcaseFeatureRerankerTests(unittest.TestCase):
                 "lower_test_accuracy": None,
             },
         )
-        self.assertEqual(report["probe_thresholds"], {"confidence": 0.0, "margin": 0.0})
+        self.assertEqual(
+            report["probe_thresholds"],
+            {"confidence": 0.0, "margin": 0.0, "base_confidence_max": None, "base_margin_max": None},
+        )
         self.assertEqual(report["selection_samples"], 1)
         self.assertEqual(report["confirmation_samples"], 2)
         self.assertEqual(report["test_delta"], 0.0)

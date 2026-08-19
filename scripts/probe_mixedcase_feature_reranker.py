@@ -210,6 +210,29 @@ def source_group_mask(predictions: torch.Tensor, groups: tuple[str, ...]) -> tor
     return mask
 
 
+def base_prediction_uncertainty_mask(
+    mixed_outputs: torch.Tensor,
+    predictions: torch.Tensor,
+    confidence_max: float | None = None,
+    margin_max: float | None = None,
+) -> torch.Tensor:
+    """Return samples whose deployed mixed-case prediction is uncertain enough."""
+
+    if confidence_max is None and margin_max is None:
+        return torch.ones_like(predictions, dtype=torch.bool)
+    probabilities = mixed_outputs.softmax(dim=1)
+    top2 = probabilities.topk(2, dim=1).values
+    row_indices = torch.arange(predictions.numel())
+    base_confidence = probabilities[row_indices, predictions]
+    base_margin = top2[:, 0] - top2[:, 1]
+    mask = torch.ones_like(predictions, dtype=torch.bool)
+    if confidence_max is not None:
+        mask &= base_confidence <= confidence_max
+    if margin_max is not None:
+        mask &= base_margin <= margin_max
+    return mask
+
+
 def _load_hybrid_artifact() -> dict[str, object]:
     """Return the deployed hybrid settings, or a disabled default."""
 
@@ -537,6 +560,8 @@ def apply_family_probe(
     digit_outputs: torch.Tensor | None = None,
     probe_confidence: float = 0.0,
     probe_margin: float = 0.0,
+    base_confidence_max: float | None = None,
+    base_margin_max: float | None = None,
     include_pixel_features: bool = False,
     embedding_outputs: torch.Tensor | None = None,
 ) -> torch.Tensor:
@@ -546,6 +571,12 @@ def apply_family_probe(
     for family_index in probe.family_indices:
         current_in_family |= predictions == family_index
     current_in_family &= source_group_mask(predictions, source_groups)
+    current_in_family &= base_prediction_uncertainty_mask(
+        mixed_outputs,
+        predictions,
+        confidence_max=base_confidence_max,
+        margin_max=base_margin_max,
+    )
     if not bool(current_in_family.any()):
         return predictions
     features = family_features(
@@ -798,6 +829,8 @@ def run_probe_from_data(
     min_case_or_visual: float | None = None,
     probe_confidence: float = 0.0,
     probe_margin: float = 0.0,
+    base_confidence_max: float | None = None,
+    base_margin_max: float | None = None,
     max_probe_train_samples: int | None = None,
     mini_batch_size: int | None = None,
     output_path: Path = MIXEDCASE_FAMILY_RERANKER_PATH,
@@ -841,6 +874,8 @@ def run_probe_from_data(
             data.selection_digit,
             probe_confidence,
             probe_margin,
+            base_confidence_max,
+            base_margin_max,
             include_pixel_features,
             data.selection_embedding,
         )
@@ -859,6 +894,8 @@ def run_probe_from_data(
                 data.confirmation_digit,
                 probe_confidence,
                 probe_margin,
+                base_confidence_max,
+                base_margin_max,
                 include_pixel_features,
                 data.confirmation_embedding,
             )
@@ -898,6 +935,8 @@ def run_probe_from_data(
             data.test_digit,
             probe_confidence,
             probe_margin,
+            base_confidence_max,
+            base_margin_max,
             include_pixel_features,
             data.test_embedding,
         )
@@ -950,6 +989,8 @@ def run_probe_from_data(
                 "source_groups": source_groups,
                 "probe_confidence": probe_confidence,
                 "probe_margin": probe_margin,
+                "base_confidence_max": base_confidence_max,
+                "base_margin_max": base_margin_max,
                 "include_digit_features": data.fit_digit is not None,
                 "include_pixel_features": include_pixel_features,
                 "include_embedding_features": data.fit_embedding is not None,
@@ -1020,6 +1061,8 @@ def run_probe_from_data(
         "probe_thresholds": {
             "confidence": probe_confidence,
             "margin": probe_margin,
+            "base_confidence_max": base_confidence_max,
+            "base_margin_max": base_margin_max,
         },
         "wrote": wrote,
         "output_path": str(output_path),
@@ -1051,6 +1094,8 @@ def run_probe(
     min_case_or_visual: float | None = None,
     probe_confidence: float = 0.0,
     probe_margin: float = 0.0,
+    base_confidence_max: float | None = None,
+    base_margin_max: float | None = None,
     max_probe_train_samples: int | None = None,
     mini_batch_size: int | None = None,
     output_path: Path = MIXEDCASE_FAMILY_RERANKER_PATH,
@@ -1160,6 +1205,8 @@ def run_probe(
             selection_digit,
             probe_confidence,
             probe_margin,
+            base_confidence_max,
+            base_margin_max,
             include_pixel_features,
             selection_embedding,
         )
@@ -1178,6 +1225,8 @@ def run_probe(
                 confirmation_digit,
                 probe_confidence,
                 probe_margin,
+                base_confidence_max,
+                base_margin_max,
                 include_pixel_features,
                 confirmation_embedding,
             )
@@ -1217,6 +1266,8 @@ def run_probe(
             test_digit,
             probe_confidence,
             probe_margin,
+            base_confidence_max,
+            base_margin_max,
             include_pixel_features,
             test_embedding,
         )
@@ -1269,6 +1320,8 @@ def run_probe(
                 "source_groups": source_groups,
                 "probe_confidence": probe_confidence,
                 "probe_margin": probe_margin,
+                "base_confidence_max": base_confidence_max,
+                "base_margin_max": base_margin_max,
                 "include_digit_features": include_digit_features,
                 "include_pixel_features": include_pixel_features,
                 "include_embedding_features": include_embedding_features,
@@ -1340,6 +1393,8 @@ def run_probe(
         "probe_thresholds": {
             "confidence": probe_confidence,
             "margin": probe_margin,
+            "base_confidence_max": base_confidence_max,
+            "base_margin_max": base_margin_max,
         },
         "wrote": wrote,
         "output_path": str(output_path),
@@ -1395,6 +1450,8 @@ def main() -> None:
     parser.add_argument("--min-case-or-visual", type=float, default=None)
     parser.add_argument("--probe-confidence", type=float, default=0.0)
     parser.add_argument("--probe-margin", type=float, default=0.0)
+    parser.add_argument("--base-confidence-max", type=float, default=None)
+    parser.add_argument("--base-margin-max", type=float, default=None)
     parser.add_argument(
         "--max-probe-train-samples",
         type=int,
@@ -1437,6 +1494,8 @@ def main() -> None:
                 min_case_or_visual=args.min_case_or_visual,
                 probe_confidence=args.probe_confidence,
                 probe_margin=args.probe_margin,
+                base_confidence_max=args.base_confidence_max,
+                base_margin_max=args.base_margin_max,
                 max_probe_train_samples=args.max_probe_train_samples,
                 mini_batch_size=args.mini_batch_size,
                 output_path=args.output_path,
