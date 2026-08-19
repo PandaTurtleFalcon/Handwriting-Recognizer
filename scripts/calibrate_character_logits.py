@@ -176,6 +176,7 @@ def calibrate_character_pair_rules(
     min_punctuation: float | None = None,
     source_groups: tuple[str, ...] | None = None,
     target_groups: tuple[str, ...] | None = None,
+    include_existing_rules: bool = True,
     write: bool = True,
 ) -> dict[str, object]:
     """Greedily tune ordered pairwise visual-twin rules for character logits."""
@@ -184,7 +185,7 @@ def calibrate_character_pair_rules(
     starting_bias = _load_existing_bias(bias_path, labels)
     scores = logits + starting_bias
     raw_predictions = scores.argmax(dim=1)
-    existing_rules = _load_existing_pair_rules(output_path, labels)
+    existing_rules = _load_existing_pair_rules(output_path, labels) if include_existing_rules else []
     starting_predictions = _apply_pair_rules_to_predictions(scores, raw_predictions, labels, existing_rules)
     base_breakdown = _breakdown(starting_predictions, targets, labels)
     if objective not in base_breakdown:
@@ -294,6 +295,7 @@ def calibrate_character_pair_rules(
         "best_checkpoint": best_breakdown,
         "steps": steps,
         "new_steps": new_steps,
+        "includes_existing_rules": include_existing_rules,
         "wrote": bool(write and improved),
         "output_path": str(output_path),
     }
@@ -613,6 +615,11 @@ def main() -> None:
     )
     parser.add_argument("--pair-rules", action="store_true", help="Tune ordered visual-twin pair rules instead of bias.")
     parser.add_argument(
+        "--ignore-existing-pair-rules",
+        action="store_true",
+        help="Start pair-rule diagnostics from raw biased logits instead of the current pair-rule artifact.",
+    )
+    parser.add_argument(
         "--pair-families",
         default="0Oo,1Ili|!/,5Ss,2Zz,9qg,UuVv,NnMm,Cc,Pp,Ff,Kk,Xx,Ww,Yy4,Tt7,Jj,8B,-_,.'`,:;i!,+t",
         help="Comma-separated visual families considered by --pair-rules.",
@@ -692,6 +699,7 @@ def main() -> None:
             min_punctuation=args.min_punctuation,
             source_groups=source_groups,
             target_groups=target_groups,
+            include_existing_rules=not args.ignore_existing_pair_rules,
             write=not args.dry_run,
         )
     elif args.greedy_labels:

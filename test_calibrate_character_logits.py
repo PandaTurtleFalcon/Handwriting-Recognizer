@@ -187,6 +187,43 @@ class CharacterCalibrationCliTests(unittest.TestCase):
             self.assertEqual(calibrate.call_args.kwargs["target_groups"], ("letter", "punctuation"))
             self.assertEqual(calibrate.call_args.kwargs["weights_path"], weights_path)
             self.assertEqual(calibrate.call_args.kwargs["bias_path"], bias_path)
+            self.assertTrue(calibrate.call_args.kwargs["include_existing_rules"])
+
+    def test_cli_can_disable_existing_pair_rules_for_isolated_diagnostics(self) -> None:
+        """One-family diagnostics should be able to start without deployed pair rules."""
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            output_path = Path(temp_dir) / "character_pair_rules.json"
+            output = StringIO()
+            with (
+                patch(
+                    "sys.argv",
+                    [
+                        "calibrate_character_logits.py",
+                        "--pair-rules",
+                        "--ignore-existing-pair-rules",
+                        "--output-path",
+                        str(output_path),
+                        "--dry-run",
+                    ],
+                ),
+                patch(
+                    "scripts.calibrate_character_logits.calibrate_character_pair_rules",
+                    return_value={
+                        "base_accuracy": 93.0,
+                        "calibrated_accuracy": 93.0,
+                        "best_scale": "greedy-pair-rules",
+                        "improvement": 0.0,
+                        "best_checkpoint": {"validation_accuracy": 93.0},
+                        "wrote": False,
+                        "output_path": str(output_path),
+                    },
+                ) as calibrate,
+                patch("sys.stdout", output),
+            ):
+                main()
+
+            self.assertFalse(calibrate.call_args.kwargs["include_existing_rules"])
 
     def test_cli_passes_greedy_label_group_filter(self) -> None:
         """Greedy bias searches can ignore labels outside requested groups."""
@@ -684,6 +721,58 @@ class CharacterCalibrationCliTests(unittest.TestCase):
             self.assertFalse(report["wrote"])
             self.assertEqual(report["calibrated_objective"], report["base_objective"])
             self.assertFalse(output_path.exists())
+
+    def test_pair_rules_can_ignore_existing_rules(self) -> None:
+        """Isolated diagnostics should not apply existing output-path rules."""
+
+        logits = torch.tensor(
+            [
+                [0.60, 0.50],
+                [0.50, 0.60],
+            ],
+            dtype=torch.float32,
+        )
+        targets = torch.tensor([0, 1], dtype=torch.long)
+        train_targets = torch.tensor([0, 1], dtype=torch.long)
+        labels = ["0", "O"]
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            output_path = Path(temp_dir) / "character_pair_rules.json"
+            output_path.write_text(
+                json.dumps({"labels": labels, "rules": [{"from": "0", "to": "O", "threshold": -1.0}]}),
+                encoding="utf-8",
+            )
+            with (
+                patch("scripts.calibrate_character_logits._validation_logits", return_value=(logits, targets, train_targets, labels)),
+                patch("scripts.calibrate_character_logits.LOGIT_BIAS_PATH", Path(temp_dir) / "missing.pt"),
+            ):
+                with_existing = calibrate_character_pair_rules(
+                    output_path=output_path,
+                    batch_size=2,
+                    families=("0O",),
+                    rounds=0,
+                    min_ambiguity=0.0,
+                    min_digit=0.0,
+                    min_letter=0.0,
+                    min_punctuation=0.0,
+                    write=False,
+                )
+                isolated = calibrate_character_pair_rules(
+                    output_path=output_path,
+                    batch_size=2,
+                    families=("0O",),
+                    rounds=0,
+                    min_ambiguity=0.0,
+                    min_digit=0.0,
+                    min_letter=0.0,
+                    min_punctuation=0.0,
+                    include_existing_rules=False,
+                    write=False,
+                )
+
+            self.assertTrue(with_existing["includes_existing_rules"])
+            self.assertFalse(isolated["includes_existing_rules"])
+            self.assertLess(with_existing["base_accuracy"], isolated["base_accuracy"])
 
 
 if __name__ == "__main__":

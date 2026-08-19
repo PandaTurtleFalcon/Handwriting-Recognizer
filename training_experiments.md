@@ -1343,3 +1343,9 @@ restored, so future improvement loops do not repeat known-bad blends.
   - Rejected probe B: `!/1Iil|`, letter+punctuation sources, 64 hidden units, 80 epochs, learning rate `0.01` was closer but still failed selection (`-0.0834` validation delta), so no live artifact changed.
   - Verification: `test_sweep_character_family_reranker.py` and `test_character_family_reranker.py` passed; the new sweep script compiled.
   - Takeaway: the simple feature reranker remains too weak even on the single character family that theoretically crosses the broad character gate. The next character attempt needs either stronger features, a different confidence-gated correction rule, or more real correction exemplars for `!/1Iil|`.
+
+- Rejected isolated character `!/1Iil|` pair-rule diagnostic:
+  - Code path: added `--ignore-existing-pair-rules` to `scripts/calibrate_character_logits.py` so one-family diagnostics can start from raw biased logits instead of silently applying the deployed all-family pair-rule artifact first. Default behavior still includes existing rules for deployed-compatible calibration.
+  - Result: an isolated `!/1Iil|` letter+punctuation dry-run found four tiny rule steps and improved the isolated raw-biased objective by `0.0536` points, but its final validation accuracy was only `93.5710%`, below the deployed calibrated stack's `94.1666%`.
+  - Verification: `test_calibrate_character_logits.py` passed and `scripts/calibrate_character_logits.py` compiled. No live artifact changed.
+  - Takeaway: isolated family pair rules can recover a few samples but cannot replace the existing deployed rule stack. Future promotion attempts should either tune additively on top of the deployed stack with stricter reporting, or move to better features/real correction exemplars.
