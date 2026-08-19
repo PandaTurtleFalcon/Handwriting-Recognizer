@@ -347,6 +347,8 @@ class MixedcaseCalibrationCliTests(unittest.TestCase):
                 )
 
             self.assertTrue(report["includes_pair_rules"])
+            self.assertEqual(report["pair_rule_count"], 1)
+            self.assertIsNotNone(report["pair_rules_sha256"])
             self.assertEqual(report["base_accuracy"], 100.0)
 
     def test_greedy_bias_rejects_unknown_objective(self) -> None:

@@ -510,6 +510,7 @@ def calibrate_mixedcase_greedy_bias(
         raise RuntimeError("Mixed-case checkpoint labels do not match the expected label order.")
     starting_bias = _load_existing_bias(output_path, labels)
     pair_rules = _load_existing_pair_rules(MIXEDCASE_PAIR_RULES_PATH, labels) if include_pair_rules else []
+    pair_rules_sha256 = _file_sha256(MIXEDCASE_PAIR_RULES_PATH) if include_pair_rules else None
     base_scores = logits + starting_bias
     base_predictions = _apply_pair_rules_to_predictions(base_scores, base_scores.argmax(dim=1), labels, pair_rules)
     base_metrics = _metrics(base_predictions, targets, labels)
@@ -588,7 +589,8 @@ def calibrate_mixedcase_greedy_bias(
                 "best_checkpoint": best_metrics,
                 "source": "greedy_per_label_test_probe",
                 "includes_pair_rules": include_pair_rules,
-                "pair_rules_sha256": _file_sha256(MIXEDCASE_PAIR_RULES_PATH) if include_pair_rules else None,
+                "pair_rules_sha256": pair_rules_sha256,
+                "pair_rule_count": len(pair_rules),
                 "tuned_labels": [labels[index] for index in tuned_indices],
                 "steps": steps,
             },
@@ -605,6 +607,8 @@ def calibrate_mixedcase_greedy_bias(
         "best_checkpoint": best_metrics,
         "steps": steps,
         "includes_pair_rules": include_pair_rules,
+        "pair_rules_sha256": pair_rules_sha256,
+        "pair_rule_count": len(pair_rules),
         "wrote": bool(write and improved),
         "output_path": str(output_path),
     }
