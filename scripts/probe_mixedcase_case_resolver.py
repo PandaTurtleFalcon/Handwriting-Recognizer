@@ -183,6 +183,22 @@ def _resolver_candidate_is_safe(
     )
 
 
+def _resolver_objective(metrics: dict[str, float], objective: str) -> float:
+    """Score safe resolver rows for threshold selection."""
+
+    if objective == "exact":
+        return metrics["test_accuracy"]
+    if objective == "balanced":
+        return min(
+            metrics["test_accuracy"],
+            metrics["case_or_ambiguity_aware_test_accuracy"],
+            metrics["digit_test_accuracy"],
+            metrics["upper_test_accuracy"],
+            metrics["lower_test_accuracy"],
+        )
+    raise ValueError(f"Unsupported resolver objective: {objective}")
+
+
 def sweep_case_resolver_thresholds(
     base_predictions: torch.Tensor,
     targets: torch.Tensor,
@@ -313,6 +329,7 @@ def select_confirm_case_resolver_thresholds(
     model: nn.Module | None,
     confidence_thresholds: list[float],
     margin_thresholds: list[float],
+    objective: str = "exact",
 ) -> tuple[dict[str, object] | None, dict[str, object] | None, list[dict[str, object]]]:
     """Pick resolver gates on selection data and require confirmation before test use."""
 
@@ -326,27 +343,41 @@ def select_confirm_case_resolver_thresholds(
         margin_thresholds,
     )
     safe_rows = [row for row in selection_rows if bool(row.get("safe"))]
-    selected = max(safe_rows, key=lambda row: float(row["metrics"]["test_accuracy"]), default=None)
+    selected = max(safe_rows, key=lambda row: _resolver_objective(row["metrics"], objective), default=None)
     if selected is None or model is None:
         return None, None, selection_rows
-    candidate_predictions = apply_case_resolver(
-        confirmation_predictions,
-        confirmation_features,
-        confirmation_folded_predictions,
-        model,
-        float(selected["confidence_threshold"]),
-        float(selected["margin_threshold"]),
-    )
     base_confirmation = _metrics(confirmation_predictions, confirmation_targets)
-    confirmation_metrics = _metrics(candidate_predictions, confirmation_targets)
-    confirmation = {
-        "safe": _resolver_candidate_is_safe(base_confirmation, confirmation_metrics),
-        "metrics": confirmation_metrics,
-        "test_delta": confirmation_metrics["test_accuracy"] - base_confirmation["test_accuracy"],
-    }
-    if not bool(confirmation["safe"]):
-        return None, confirmation, selection_rows
-    return selected, confirmation, selection_rows
+    best_confirmed: tuple[dict[str, object], dict[str, object]] | None = None
+    best_rejected_confirmation: dict[str, object] | None = None
+    for row in safe_rows:
+        candidate_predictions = apply_case_resolver(
+            confirmation_predictions,
+            confirmation_features,
+            confirmation_folded_predictions,
+            model,
+            float(row["confidence_threshold"]),
+            float(row["margin_threshold"]),
+        )
+        confirmation_metrics = _metrics(candidate_predictions, confirmation_targets)
+        confirmation = {
+            "safe": _resolver_candidate_is_safe(base_confirmation, confirmation_metrics),
+            "metrics": confirmation_metrics,
+            "test_delta": confirmation_metrics["test_accuracy"] - base_confirmation["test_accuracy"],
+        }
+        if bool(confirmation["safe"]):
+            if best_confirmed is None or _resolver_objective(confirmation_metrics, objective) > _resolver_objective(
+                best_confirmed[1]["metrics"],
+                objective,
+            ):
+                best_confirmed = (row, confirmation)
+        elif (
+            best_rejected_confirmation is None
+            or float(confirmation["test_delta"]) > float(best_rejected_confirmation["test_delta"])
+        ):
+            best_rejected_confirmation = confirmation
+    if best_confirmed is None:
+        return None, best_rejected_confirmation, selection_rows
+    return best_confirmed[0], best_confirmed[1], selection_rows
 
 
 def run_probe(
@@ -365,6 +396,7 @@ def run_probe(
     calibration_ratio: float = 0.2,
     confirmation_ratio: float = 0.5,
     include_embedding_features: bool = False,
+    objective: str = "exact",
 ) -> dict[str, object]:
     """Train and evaluate a case-resolver probe without writing artifacts."""
 
@@ -473,6 +505,7 @@ def run_probe(
         resolver,
         confidence_values,
         margin_values,
+        objective,
     )
     final_selected_candidate: dict[str, object] | None = None
     if resolver is None or selected_thresholds is None:
@@ -548,6 +581,7 @@ def run_probe(
         "calibration_ratio": calibration_ratio,
         "confirmation_ratio": confirmation_ratio,
         "include_embedding_features": include_embedding_features,
+        "objective": objective,
     }
 
 
@@ -570,6 +604,7 @@ def main() -> None:
     parser.add_argument("--calibration-ratio", type=float, default=0.2)
     parser.add_argument("--confirmation-ratio", type=float, default=0.5)
     parser.add_argument("--include-embedding-features", action="store_true")
+    parser.add_argument("--objective", choices=("exact", "balanced"), default="exact")
     args = parser.parse_args()
     print(
         json.dumps(
@@ -597,6 +632,7 @@ def main() -> None:
                 calibration_ratio=args.calibration_ratio,
                 confirmation_ratio=args.confirmation_ratio,
                 include_embedding_features=args.include_embedding_features,
+                objective=args.objective,
             ),
             indent=2,
         )

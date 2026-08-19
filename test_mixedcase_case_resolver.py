@@ -4,6 +4,7 @@ import torch
 
 from scripts.probe_mixedcase_case_resolver import (
     _letter_identity_index,
+    _resolver_objective,
     apply_case_resolver,
     case_resolver_features,
     oracle_case_predictions,
@@ -139,6 +140,22 @@ class MixedcaseCaseResolverTests(unittest.TestCase):
         self.assertTrue(rows[0]["safe"])
         self.assertFalse(rows[1]["safe"])
 
+    def test_resolver_objective_can_score_balanced_group_floor(self) -> None:
+        """Balanced selection should prefer the weakest protected metric."""
+
+        metrics = {
+            "test_accuracy": 90.0,
+            "case_or_ambiguity_aware_test_accuracy": 99.0,
+            "digit_test_accuracy": 96.0,
+            "upper_test_accuracy": 88.0,
+            "lower_test_accuracy": 75.0,
+        }
+
+        self.assertEqual(_resolver_objective(metrics, "exact"), 90.0)
+        self.assertEqual(_resolver_objective(metrics, "balanced"), 75.0)
+        with self.assertRaisesRegex(ValueError, "Unsupported"):
+            _resolver_objective(metrics, "mystery")
+
     def test_train_case_resolver_returns_none_without_matching_identity_samples(self) -> None:
         """Training should abstain when folded identity never matches true letters."""
 
@@ -236,6 +253,57 @@ class MixedcaseCaseResolverTests(unittest.TestCase):
         self.assertIsNotNone(confirmation)
         self.assertTrue(confirmation["safe"])
         self.assertEqual(selected["confidence_threshold"], 0.0)
+
+    def test_select_confirm_case_resolver_checks_later_safe_rows(self) -> None:
+        """A rejected first choice should not hide another confirmed threshold."""
+
+        model = torch.nn.Linear(3, 2)
+        with torch.no_grad():
+            model.weight[:] = torch.tensor([[0.0, 0.0, 0.0], [5.0, 0.0, 0.0]])
+            model.bias.zero_()
+        selection_predictions = torch.tensor([10, 10, 36, 36], dtype=torch.long)
+        selection_targets = torch.tensor([10, 36, 36, 36], dtype=torch.long)
+        confirmation_predictions = torch.tensor([10, 10, 10, 36], dtype=torch.long)
+        confirmation_targets = torch.tensor([10, 10, 36, 36], dtype=torch.long)
+        folded_predictions = torch.tensor([10, 10, 10, 10], dtype=torch.long)
+        selection_features = torch.tensor(
+            [
+                [-1.0, 0.0, 0.0],
+                [1.0, 0.0, 0.0],
+                [0.8, 0.0, 0.0],
+                [0.7, 0.0, 0.0],
+            ],
+            dtype=torch.float32,
+        )
+        confirmation_features = torch.tensor(
+            [
+                [-1.0, 0.0, 0.0],
+                [0.3, 0.0, 0.0],
+                [0.8, 0.0, 0.0],
+                [0.7, 0.0, 0.0],
+            ],
+            dtype=torch.float32,
+        )
+
+        selected, confirmation, rows = select_confirm_case_resolver_thresholds(
+            selection_predictions,
+            selection_targets,
+            selection_features,
+            folded_predictions,
+            confirmation_predictions,
+            confirmation_targets,
+            confirmation_features,
+            folded_predictions,
+            model,
+            confidence_thresholds=[0.0, 0.95],
+            margin_thresholds=[0.0],
+        )
+
+        self.assertEqual(len(rows), 2)
+        self.assertIsNotNone(selected)
+        self.assertIsNotNone(confirmation)
+        self.assertTrue(confirmation["safe"])
+        self.assertEqual(selected["confidence_threshold"], 0.95)
 
 
 if __name__ == "__main__":
