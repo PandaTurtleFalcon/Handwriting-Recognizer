@@ -60,6 +60,15 @@ def _empty_split_counts() -> dict[str, int]:
     return {"digit": 0, "upper": 0, "lower": 0}
 
 
+def _empty_error_type_counts() -> dict[str, object]:
+    """Return zeroed counters for one exact-error bucket."""
+
+    return {
+        "count": 0,
+        "split_counts": _empty_split_counts(),
+    }
+
+
 def headroom_report(
     expected_labels: list[str],
     predicted_labels: list[str],
@@ -81,6 +90,12 @@ def headroom_report(
     split_total: Counter[str] = Counter()
     split_exact: Counter[str] = Counter()
     split_case_or_visual: Counter[str] = Counter()
+    error_types: dict[str, dict[str, object]] = {
+        "case_only": _empty_error_type_counts(),
+        "visual_family": _empty_error_type_counts(),
+        "case_or_visual_overlap": _empty_error_type_counts(),
+        "other_identity": _empty_error_type_counts(),
+    }
 
     for expected, predicted in zip(expected_labels, predicted_labels):
         expected_split = _group(expected)
@@ -99,6 +114,19 @@ def headroom_report(
         case_or_visual_oracle += int(is_case_or_visual_match)
         split_exact[expected_split] += int(is_exact)
         split_case_or_visual[expected_split] += int(is_case_or_visual_match)
+        if not is_exact:
+            if is_case_match and family_name is not None:
+                error_type = "case_or_visual_overlap"
+            elif is_case_match:
+                error_type = "case_only"
+            elif family_name is not None:
+                error_type = "visual_family"
+            else:
+                error_type = "other_identity"
+            error_types[error_type]["count"] = int(error_types[error_type]["count"]) + 1
+            split_counts = error_types[error_type]["split_counts"]
+            assert isinstance(split_counts, dict)
+            split_counts[expected_split] += 1
         if family_name is not None and not is_exact:
             family_recoverable[family_name] += 1
             family_total[family_name] += 1
@@ -144,6 +172,10 @@ def headroom_report(
         )
 
     families_to_95 = next((row for row in cumulative_rows if bool(row["reaches_95"])), None)
+    exact_errors = max(len(expected_labels) - exact, 1)
+    for row in error_types.values():
+        row["error_percent"] = 100.0 * int(row["count"]) / exact_errors
+        row["accuracy_gain_if_fixed"] = percent(int(row["count"]))
 
     return {
         "total": len(expected_labels),
@@ -153,6 +185,7 @@ def headroom_report(
         "case_or_visual_oracle_accuracy": percent(case_or_visual_oracle),
         "case_or_visual_recoverable_errors": case_or_visual_oracle - exact,
         "remaining_non_family_errors": len(expected_labels) - case_or_visual_oracle,
+        "error_types": error_types,
         "splits": split_rows,
         "families": family_rows,
         "cumulative_family_oracle": cumulative_rows,
@@ -217,6 +250,13 @@ def main() -> None:
     )
     print(f"recoverable_family_errors={report['case_or_visual_recoverable_errors']}")
     print(f"remaining_non_family_errors={report['remaining_non_family_errors']}")
+    for name, row in report["error_types"].items():
+        splits = row["split_counts"]
+        print(
+            f"  {name}: {row['count']} errors "
+            f"(gain {row['accuracy_gain_if_fixed']:.2f} pts; "
+            f"digit {splits['digit']}, upper {splits['upper']}, lower {splits['lower']})"
+        )
     if report["families_to_reach_95"] is not None:
         threshold = report["families_to_reach_95"]
         print(
