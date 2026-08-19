@@ -907,6 +907,8 @@ class WebAppRenderingTests(unittest.TestCase):
         self.assertIn(".practice-sample-progress", css)
         self.assertIn(".practice-focus", css)
         self.assertIn(".practice-focus-button", css)
+        self.assertIn(".practice-family-focus", css)
+        self.assertIn(".practice-family-button", css)
         self.assertIn(".practice-batch", css)
         self.assertIn(".practice-batch-button", css)
         self.assertIn(".practice-batch-next", css)
@@ -928,6 +930,7 @@ class WebAppRenderingTests(unittest.TestCase):
         self.assertIn("Pick one of the practice labels.", js)
         self.assertIn("practiceLabelValuesFromCoverage", js)
         self.assertIn("renderSelectedPracticeProgress", js)
+        self.assertIn("practice-family-button", js)
         self.assertIn("selectedPracticeCoverage", js)
         self.assertIn("repeatPracticeStatus", js)
         self.assertIn('`Saved ${label}. Next: ${nextLabel || "none"}.`', js)
@@ -1743,6 +1746,9 @@ class WebAppRenderingTests(unittest.TestCase):
         self.assertEqual(report["focus_target_samples"], 20)
         self.assertEqual(report["focus_needed_samples"], 17)
         self.assertAlmostEqual(report["focus_coverage_percent"], 15.0)
+        self.assertEqual(report["families"][0]["family"], "0/O/o")
+        self.assertEqual(report["families"][0]["labels"], ["0", "O"])
+        self.assertEqual(report["families"][0]["needed_samples"], 17)
         self.assertEqual(report["recommended_batch_labels"], ["0"])
         self.assertEqual(report["recommended_batch_size"], 1)
         self.assertEqual(report["focus_labels"], ["0"])
@@ -1802,6 +1808,8 @@ class WebAppRenderingTests(unittest.TestCase):
         self.assertEqual(report["not_ready_label_count"], 3)
         self.assertEqual(report["not_ready_label_list"], ["B", "C", "A"])
         self.assertEqual(report["recommended_batch_size"], 3)
+        self.assertEqual(report["families"][0]["family"], "C/c")
+        self.assertEqual(report["families"][0]["labels"], ["C"])
         self.assertEqual(
             report["focus_items"],
             [

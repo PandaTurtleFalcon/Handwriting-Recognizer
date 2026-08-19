@@ -22,6 +22,7 @@ from scripts.train_from_corrections import (
     dry_run_report,
     exportable_character_correction_counts,
     exported_character_crop_counts,
+    family_coverage,
     filter_priority_labels,
     format_next_needed_summary,
     format_not_ready_queue_summary,
@@ -192,6 +193,18 @@ class TrainFromCorrectionsTests(unittest.TestCase):
             ],
         )
 
+    def test_family_coverage_groups_visual_twin_blockers(self) -> None:
+        """Dry-run coverage should expose measured visual-twin family gaps."""
+
+        coverage = family_coverage({"0": 20, "O": 3, "o": 1}, "0Oo", target_per_label=20)
+
+        self.assertEqual(coverage[0]["family"], "0/O/o")
+        self.assertEqual(coverage[0]["labels"], ["0", "O", "o"])
+        self.assertEqual(coverage[0]["samples"], 24)
+        self.assertEqual(coverage[0]["target_samples"], 60)
+        self.assertEqual(coverage[0]["needed_samples"], 36)
+        self.assertFalse(coverage[0]["ready"])
+
     def test_not_ready_label_list_returns_full_ordered_gap_queue(self) -> None:
         """Automation should be able to read every missing label without scraping rows."""
 
@@ -285,6 +298,7 @@ class TrainFromCorrectionsTests(unittest.TestCase):
         self.assertEqual(report["character"]["recommended_label"], "-")
         self.assertEqual(report["character"]["not_ready_label_count"], 2)
         self.assertEqual(report["character"]["not_ready_label_list"], ["-", "+"])
+        self.assertEqual(report["character"]["families"][0]["family"], "-/_")
         self.assertEqual(report["folded_alnum"]["priority_labels"], ["A"])
         self.assertEqual(report["folded_alnum"]["recommended_action"], "collect_corrections")
         self.assertEqual(report["folded_alnum"]["recommended_label"], "A")

@@ -377,6 +377,29 @@ function renderPracticeCoverage(payload) {
     });
     practiceCoverageEl.append(focus);
   }
+  const familyItems = Array.isArray(payload.families) ? payload.families.slice(0, 6) : [];
+  if (familyItems.length > 0) {
+    const familyWrap = makeElement("div", "practice-family-focus");
+    familyWrap.append(makeElement("strong", "", "Families"));
+    familyItems.forEach((item) => {
+      const family = text(item.family);
+      const needed = Number(item.needed_samples || 0);
+      const samples = Number(item.samples || 0);
+      const target = Number(item.target_samples || 0);
+      const button = makeElement("button", item.ready ? "practice-family-button ready" : "practice-family-button", `${family}:${needed}`);
+      button.type = "button";
+      button.title = `${samples}/${target} samples`;
+      const labels = Array.isArray(item.labels) ? item.labels.map((label) => text(label)).filter((label) => label) : [];
+      button.addEventListener("click", () => {
+        const nextFamilyLabel = labels.find((label) => Number(selectedPracticeCoverage(label)?.needed || 0) > 0) || labels[0];
+        if (nextFamilyLabel) {
+          setPracticeLabel(nextFamilyLabel);
+        }
+      });
+      familyWrap.append(button);
+    });
+    practiceCoverageEl.append(familyWrap);
+  }
   renderPracticeBatch(payload);
   const grid = makeElement("div", "practice-coverage-grid");
   payload.labels.forEach((item) => {

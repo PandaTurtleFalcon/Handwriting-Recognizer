@@ -175,6 +175,20 @@ MIXEDCASE_PRACTICE_PRIORITY_LABELS = [
     "j",
 ]
 PRACTICE_PRIORITY_LABELS = list(dict.fromkeys(CHARACTER_PRACTICE_PRIORITY_LABELS + MIXEDCASE_PRACTICE_PRIORITY_LABELS))
+PRACTICE_FAMILY_PRIORITY_LABELS = [
+    ("1/I/l/i/!/|", list("1Ili|!/")),
+    ("0/O/o", list("0Oo")),
+    ("5/S/s", list("5Ss")),
+    ("9/q/g", list("9qg")),
+    ("U/u/V/v", list("UuVv")),
+    ("M/N/m/n", list("MNmn")),
+    ("2/Z/z", list("2Zz")),
+    ("C/c", list("Cc")),
+    ("P/p", list("Pp")),
+    ("-/_", ["-", "_"]),
+    ("./'", [".", "'"]),
+    (":/;/!", [":", ";", "!"]),
+]
 PRACTICE_PRIORITY_EVIDENCE = {
     "s": "top mixed-case 5/S/s visual twin family",
     "O": "worst character label and O/0/o confusion",
@@ -1521,6 +1535,7 @@ def build_correction_coverage_report(
     focus_needed_samples = sum(int(item["needed"]) for item in focus_items)
     focus_target_samples = focus_samples + focus_needed_samples
     focus_coverage_percent = 100.0 * focus_samples / focus_target_samples if focus_target_samples else 100.0
+    families = build_practice_family_coverage(rows, target_per_label)
     next_item = focus_items[0] if focus_items else None
     next_count = 0 if next_item is None else int(next_item["count"])
     next_target = target_per_label if next_item is not None else 0
@@ -1557,12 +1572,43 @@ def build_correction_coverage_report(
         "focus_target_samples": focus_target_samples,
         "focus_needed_samples": focus_needed_samples,
         "focus_coverage_percent": focus_coverage_percent,
+        "families": families,
         "recommended_batch_labels": focus_labels,
         "recommended_batch_size": len(focus_labels),
         "focus_labels": focus_labels,
         "focus_items": focus_items,
         "labels": rows,
     }
+
+
+def build_practice_family_coverage(
+    rows: list[dict[str, object]],
+    target_per_label: int,
+) -> list[dict[str, object]]:
+    """Summarize correction coverage for measured visual-twin families."""
+
+    row_by_label = {str(row["label"]): row for row in rows}
+    family_rows = []
+    for name, family_labels in PRACTICE_FAMILY_PRIORITY_LABELS:
+        present_labels = [label for label in family_labels if label in row_by_label]
+        if not present_labels:
+            continue
+        sample_count = sum(int(row_by_label[label]["count"]) for label in present_labels)
+        target_samples = len(present_labels) * target_per_label
+        needed_samples = sum(int(row_by_label[label]["needed"]) for label in present_labels)
+        family_rows.append(
+            {
+                "family": name,
+                "labels": present_labels,
+                "samples": sample_count,
+                "target_samples": target_samples,
+                "needed_samples": needed_samples,
+                "coverage_percent": 100.0 * sample_count / target_samples if target_samples else 100.0,
+                "ready": needed_samples == 0,
+            }
+        )
+    family_rows.sort(key=lambda row: (-int(row["needed_samples"]), float(row["coverage_percent"]), str(row["family"])))
+    return family_rows
 
 
 def correction_coverage_report(mode: str = "character") -> dict[str, object]:

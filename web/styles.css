@@ -307,6 +307,37 @@ h2 {
   outline: 2px solid rgba(67, 56, 202, 0.18);
 }
 
+.practice-family-focus {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  color: var(--muted);
+  font-weight: 900;
+}
+
+.practice-family-button {
+  min-height: 32px;
+  padding: 3px 8px;
+  border: 1px solid #a36b00;
+  border-radius: 8px;
+  background: #fff7ed;
+  color: #7a3e00;
+  cursor: pointer;
+  font-weight: 900;
+}
+
+.practice-family-button.ready {
+  border-color: #a7d8bd;
+  background: #f0fbf5;
+  color: #146c43;
+}
+
+.practice-family-button:hover,
+.practice-family-button:focus {
+  outline: 2px solid rgba(163, 107, 0, 0.2);
+}
+
 .practice-batch {
   display: flex;
   flex-wrap: wrap;

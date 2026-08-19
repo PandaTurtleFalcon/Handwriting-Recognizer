@@ -44,6 +44,7 @@ from character_model import train_character_model
 from main import (
     CHARACTER_PRACTICE_PRIORITY_LABELS,
     MIXEDCASE_PRACTICE_PRIORITY_LABELS,
+    PRACTICE_FAMILY_PRIORITY_LABELS,
     PRACTICE_PRIORITY_EVIDENCE,
     PRACTICE_TARGET_PER_LABEL,
 )
@@ -404,6 +405,37 @@ def next_needed_labels(
     ]
 
 
+def family_coverage(
+    counts: Counter[str],
+    priority_labels: str,
+    target_per_label: int = PRACTICE_TARGET_PER_LABEL,
+) -> list[dict[str, object]]:
+    """Summarize correction readiness for measured visual-twin families."""
+
+    priority = set(priority_labels)
+    rows = []
+    for name, family_labels in PRACTICE_FAMILY_PRIORITY_LABELS:
+        labels = [label for label in family_labels if label in priority]
+        if not labels:
+            continue
+        samples = sum(counts.get(label, 0) for label in labels)
+        target_samples = len(labels) * target_per_label
+        needed_samples = sum(max(0, target_per_label - counts.get(label, 0)) for label in labels)
+        rows.append(
+            {
+                "family": name,
+                "labels": labels,
+                "samples": samples,
+                "target_samples": target_samples,
+                "needed_samples": needed_samples,
+                "coverage_percent": 100.0 * samples / target_samples if target_samples else 100.0,
+                "ready": needed_samples == 0,
+            }
+        )
+    rows.sort(key=lambda row: (-int(row["needed_samples"]), float(row["coverage_percent"]), str(row["family"])))
+    return rows
+
+
 def not_ready_label_list(
     counts: Counter[str],
     priority_labels: str,
@@ -527,6 +559,20 @@ def format_not_ready_queue_summary(name: str, report_section: dict[str, object])
     return f"{name} correction not_ready_queue: count={count} labels={queue}"
 
 
+def format_family_coverage_summary(name: str, report_section: dict[str, object]) -> str:
+    """Return the highest-need visual-family gaps for correction dry-runs."""
+
+    families = report_section.get("families")
+    if not isinstance(families, list) or not families:
+        return f"{name} correction families: none"
+    parts = []
+    for item in families[:4]:
+        if not isinstance(item, dict):
+            continue
+        parts.append(f"{item.get('family')}:{item.get('needed_samples')}")
+    return f"{name} correction families: {', '.join(parts) if parts else 'none'}"
+
+
 def dry_run_report(
     character_counts: Counter[str],
     folded_counts: Counter[str],
@@ -612,6 +658,7 @@ def dry_run_report(
             "not_ready_label_count": len(character_not_ready_labels),
             "not_ready_label_list": character_not_ready_labels,
             "next_needed": character_next_needed,
+            "families": family_coverage(character_counts, character_priority_labels),
             **character_recommendation,
         },
         "folded_alnum": {
@@ -621,6 +668,7 @@ def dry_run_report(
             "not_ready_label_count": len(folded_not_ready_labels),
             "not_ready_label_list": folded_not_ready_labels,
             "next_needed": folded_next_needed,
+            "families": family_coverage(folded_counts, folded_priority_labels),
             **folded_recommendation,
         },
         "mixedcase": {
@@ -630,6 +678,7 @@ def dry_run_report(
             "not_ready_label_count": len(mixed_not_ready_labels),
             "not_ready_label_list": mixed_not_ready_labels,
             "next_needed": mixed_next_needed,
+            "families": family_coverage(mixed_counts, mixed_priority_labels),
             **mixed_recommendation,
         },
     }
@@ -656,6 +705,7 @@ def print_text_dry_run_report(report: dict[str, object]) -> None:
     print(format_recommendation_summary("Character", character))
     print(format_not_ready_queue_summary("Character", character))
     print(format_next_needed_summary("Character", character))
+    print(format_family_coverage_summary("Character", character))
     print(
         "Folded alnum priority coverage: "
         f"{format_priority_coverage(Counter(folded['coverage']), ''.join(folded['priority_labels']))}"
@@ -664,6 +714,7 @@ def print_text_dry_run_report(report: dict[str, object]) -> None:
     print(format_recommendation_summary("Folded alnum", folded))
     print(format_not_ready_queue_summary("Folded alnum", folded))
     print(format_next_needed_summary("Folded alnum", folded))
+    print(format_family_coverage_summary("Folded alnum", folded))
     print(
         "Mixed-case priority coverage: "
         f"{format_priority_coverage(Counter(mixed['coverage']), ''.join(mixed['priority_labels']))}"
@@ -672,6 +723,7 @@ def print_text_dry_run_report(report: dict[str, object]) -> None:
     print(format_recommendation_summary("Mixed-case", mixed))
     print(format_not_ready_queue_summary("Mixed-case", mixed))
     print(format_next_needed_summary("Mixed-case", mixed))
+    print(format_family_coverage_summary("Mixed-case", mixed))
 
 
 def correction_item_label_counts(
