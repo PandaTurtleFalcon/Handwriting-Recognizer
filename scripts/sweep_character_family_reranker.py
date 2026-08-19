@@ -77,12 +77,15 @@ def run_sweep(
     hidden_units: list[int],
     families: tuple[str, ...],
     source_group_sets: list[tuple[str, ...] | None],
+    probe_confidences: list[float],
+    probe_margins: list[float],
     calibration_ratio: float,
     confirmation_ratio: float,
     min_family_delta: float,
     seed: int,
     train_only_extra_roots: tuple[Path, ...] = (),
     include_pixel_features: bool = False,
+    include_embedding_features: bool = False,
     max_runs: int | None = None,
 ) -> dict[str, object]:
     """Run bounded character-family reranker probes and summarize results."""
@@ -94,15 +97,19 @@ def run_sweep(
             learning_rates,
             hidden_units,
             source_group_sets,
+            probe_confidences,
+            probe_margins,
         )
     )
     selected_runs = all_runs[:max_runs] if max_runs is not None else all_runs
-    for epoch_count, learning_rate, hidden_count, source_groups in selected_runs:
+    for epoch_count, learning_rate, hidden_count, source_groups, probe_confidence, probe_margin in selected_runs:
         parameters = {
             "epochs": epoch_count,
             "learning_rate": learning_rate,
             "hidden_units": hidden_count,
             "source_groups": list(source_groups) if source_groups is not None else None,
+            "probe_confidence": probe_confidence,
+            "probe_margin": probe_margin,
         }
         report = run_probe(
             batch_size=batch_size,
@@ -117,6 +124,9 @@ def run_sweep(
             source_groups=source_groups,
             train_only_extra_roots=train_only_extra_roots,
             include_pixel_features=include_pixel_features,
+            include_embedding_features=include_embedding_features,
+            probe_confidence=probe_confidence,
+            probe_margin=probe_margin,
         )
         rows.append(compact_probe_report(report, parameters))
     best = best_sweep_row(rows)
@@ -131,6 +141,7 @@ def run_sweep(
         "seed": seed,
         "train_only_extra_roots": [str(root) for root in train_only_extra_roots],
         "include_pixel_features": include_pixel_features,
+        "include_embedding_features": include_embedding_features,
         "planned_runs": len(all_runs),
         "completed_runs": len(rows),
         "truncated": max_runs is not None and len(all_runs) > max_runs,
@@ -147,6 +158,8 @@ def main() -> None:
     parser.add_argument("--hidden-units", default="0,32,64")
     parser.add_argument("--families", default="1Ili|!/")
     parser.add_argument("--source-groups", default="letter;punctuation;letter,punctuation;all")
+    parser.add_argument("--probe-confidences", default="0.0,0.5")
+    parser.add_argument("--probe-margins", default="0.0,0.05")
     parser.add_argument("--calibration-ratio", type=float, default=0.2)
     parser.add_argument("--confirmation-ratio", type=float, default=0.5)
     parser.add_argument("--min-family-delta", type=float, default=0.0)
@@ -158,6 +171,7 @@ def main() -> None:
         help="Extra ASCII folder or .pt tensor cache used only for fitting rerankers.",
     )
     parser.add_argument("--include-pixel-features", action="store_true")
+    parser.add_argument("--include-embedding-features", action="store_true")
     parser.add_argument("--max-runs", type=int, default=None)
     args = parser.parse_args()
     print(
@@ -169,12 +183,15 @@ def main() -> None:
                 hidden_units=parse_int_values(args.hidden_units),
                 families=parse_families(args.families),
                 source_group_sets=parse_source_group_sets(args.source_groups),
+                probe_confidences=parse_float_values(args.probe_confidences),
+                probe_margins=parse_float_values(args.probe_margins),
                 calibration_ratio=args.calibration_ratio,
                 confirmation_ratio=args.confirmation_ratio,
                 min_family_delta=args.min_family_delta,
                 seed=args.seed,
                 train_only_extra_roots=tuple(Path(root) for root in args.train_only_extra_root),
                 include_pixel_features=args.include_pixel_features,
+                include_embedding_features=args.include_embedding_features,
                 max_runs=args.max_runs,
             ),
             indent=2,

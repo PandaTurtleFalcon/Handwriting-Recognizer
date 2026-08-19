@@ -101,6 +101,43 @@ def _model_outputs(
     return torch.cat(outputs)
 
 
+def _embedding_extractor(model: nn.Module) -> nn.Module | None:
+    """Return a module that emits penultimate activations for known architectures."""
+
+    network = getattr(model, "network", None)
+    if isinstance(network, nn.Sequential) and len(network) >= 2:
+        modules = list(network.children())
+        if isinstance(modules[-1], nn.Linear):
+            return nn.Sequential(*modules[:-1]).eval()
+    features = getattr(model, "features", None)
+    classifier = getattr(model, "classifier", None)
+    if isinstance(features, nn.Sequential) and isinstance(classifier, nn.Sequential) and len(classifier) >= 2:
+        classifier_modules = list(classifier.children())
+        if isinstance(classifier_modules[-1], nn.Linear):
+            return nn.Sequential(features, *classifier_modules[:-1]).eval()
+    return None
+
+
+def _model_embeddings(
+    model: nn.Module,
+    images: torch.Tensor,
+    batch_size: int,
+    device: torch.device,
+) -> torch.Tensor:
+    """Run the model body over a tensor batch and normalize its activations."""
+
+    extractor = _embedding_extractor(model)
+    if extractor is None:
+        raise RuntimeError("The character checkpoint does not expose an embeddable architecture.")
+    extractor.to(device)
+    loader = DataLoader(TensorDataset(images), batch_size=batch_size, shuffle=False)
+    embeddings = []
+    with torch.no_grad():
+        for (batch_images,) in loader:
+            embeddings.append(extractor(batch_images.to(device)).flatten(start_dim=1).cpu())
+    return torch.nn.functional.normalize(torch.cat(embeddings).float(), dim=1)
+
+
 def geometry_features(images: torch.Tensor) -> torch.Tensor:
     """Extract size-independent shape features from normalized character tensors."""
 
@@ -194,6 +231,7 @@ def family_features(
     outputs: torch.Tensor,
     indices: tuple[int, ...],
     include_pixel_features: bool = False,
+    embedding_outputs: torch.Tensor | None = None,
 ) -> torch.Tensor:
     """Build reranker inputs for one character family."""
 
@@ -204,6 +242,8 @@ def family_features(
     parts = [family_logits, family_probs, global_features, geometry_features(images)]
     if include_pixel_features:
         parts.append(pixel_features(images))
+    if embedding_outputs is not None:
+        parts.append(embedding_outputs.float())
     return torch.cat(parts, dim=1).float()
 
 
@@ -253,6 +293,9 @@ def apply_family_probe(
     labels: list[str],
     source_groups: tuple[str, ...] | None = None,
     include_pixel_features: bool = False,
+    embedding_outputs: torch.Tensor | None = None,
+    probe_confidence: float = 0.0,
+    probe_margin: float = 0.0,
 ) -> torch.Tensor:
     """Replace predictions only when the current label is inside the family."""
 
@@ -267,12 +310,29 @@ def apply_family_probe(
         current_in_family &= allowed_source[predictions]
     if not bool(current_in_family.any()):
         return predictions
-    features = family_features(images, outputs, probe.indices, include_pixel_features)
+    features = family_features(
+        images,
+        outputs,
+        probe.indices,
+        include_pixel_features=include_pixel_features,
+        embedding_outputs=embedding_outputs,
+    )
     with torch.no_grad():
-        local_predictions = probe.model(features[current_in_family]).argmax(dim=1)
+        logits = probe.model(features[current_in_family])
+        probabilities = logits.softmax(dim=1)
+        top2 = probabilities.topk(min(2, probabilities.shape[1]), dim=1)
+        local_predictions = top2.indices[:, 0]
+        confidence = top2.values[:, 0]
+        margin = (
+            top2.values[:, 0] - top2.values[:, 1]
+            if top2.values.shape[1] > 1
+            else torch.ones_like(top2.values[:, 0])
+        )
+        replace_mask = (confidence >= probe_confidence) & (margin >= probe_margin)
     replacements = torch.tensor([probe.indices[int(index)] for index in local_predictions.tolist()], dtype=torch.long)
+    candidate_indices = torch.where(current_in_family)[0]
     next_predictions = predictions.clone()
-    next_predictions[current_in_family] = replacements
+    next_predictions[candidate_indices[replace_mask]] = replacements[replace_mask]
     return next_predictions
 
 
@@ -365,6 +425,9 @@ def run_probe(
     source_groups: tuple[str, ...] | None = None,
     train_only_extra_roots: tuple[Path, ...] = (),
     include_pixel_features: bool = False,
+    include_embedding_features: bool = False,
+    probe_confidence: float = 0.0,
+    probe_margin: float = 0.0,
 ) -> dict[str, object]:
     """Train confirmed family rerankers and evaluate them on validation."""
 
@@ -415,6 +478,18 @@ def run_probe(
         else torch.empty((0, len(labels)))
     )
     validation_outputs = _model_outputs(model, validation_images, batch_size, device)
+    fit_embeddings = _model_embeddings(model, fit_images, batch_size, device) if include_embedding_features else None
+    selection_embeddings = (
+        _model_embeddings(model, selection_images, batch_size, device) if include_embedding_features else None
+    )
+    confirmation_embeddings = (
+        _model_embeddings(model, confirmation_images, batch_size, device)
+        if include_embedding_features and int(confirmation_targets.numel()) > 0
+        else None
+    )
+    validation_embeddings = (
+        _model_embeddings(model, validation_images, batch_size, device) if include_embedding_features else None
+    )
     selection_predictions = selection_outputs.argmax(dim=1)
     confirmation_predictions = (
         confirmation_outputs.argmax(dim=1)
@@ -431,7 +506,13 @@ def run_probe(
         if len(indices_tuple) < 2:
             skipped.append(family)
             continue
-        train_features = family_features(fit_images, fit_outputs, indices_tuple, include_pixel_features)
+        train_features = family_features(
+            fit_images,
+            fit_outputs,
+            indices_tuple,
+            include_pixel_features=include_pixel_features,
+            embedding_outputs=fit_embeddings,
+        )
         probe = train_family_probe(
             train_features,
             fit_targets,
@@ -451,7 +532,10 @@ def run_probe(
             probe,
             labels,
             source_groups,
-            include_pixel_features,
+            include_pixel_features=include_pixel_features,
+            embedding_outputs=selection_embeddings,
+            probe_confidence=probe_confidence,
+            probe_margin=probe_margin,
         )
         selection_before = _metrics(selection_predictions, selection_targets, labels)
         selection_after = _metrics(selection_candidate, selection_targets, labels)
@@ -471,7 +555,10 @@ def run_probe(
                 probe,
                 labels,
                 source_groups,
-                include_pixel_features,
+                include_pixel_features=include_pixel_features,
+                embedding_outputs=confirmation_embeddings,
+                probe_confidence=probe_confidence,
+                probe_margin=probe_margin,
             )
             confirmation_before = _metrics(confirmation_predictions, confirmation_targets, labels)
             confirmation_after = _metrics(confirmation_candidate, confirmation_targets, labels)
@@ -510,7 +597,10 @@ def run_probe(
             probe,
             labels,
             source_groups,
-            include_pixel_features,
+            include_pixel_features=include_pixel_features,
+            embedding_outputs=validation_embeddings,
+            probe_confidence=probe_confidence,
+            probe_margin=probe_margin,
         )
         after = _metrics(candidate_predictions, validation_targets, labels)
         test_passed, test_reason, test_delta = _gate_metrics(before, after, min_family_delta)
@@ -563,6 +653,11 @@ def run_probe(
         "confirmation_ratio": confirmation_ratio,
         "source_groups": list(source_groups) if source_groups is not None else None,
         "include_pixel_features": include_pixel_features,
+        "include_embedding_features": include_embedding_features,
+        "probe_thresholds": {
+            "confidence": probe_confidence,
+            "margin": probe_margin,
+        },
     }
 
 
@@ -581,6 +676,9 @@ def main() -> None:
     parser.add_argument("--hidden-units", type=int, default=32)
     parser.add_argument("--source-groups", default="")
     parser.add_argument("--include-pixel-features", action="store_true")
+    parser.add_argument("--include-embedding-features", action="store_true")
+    parser.add_argument("--probe-confidence", type=float, default=0.0)
+    parser.add_argument("--probe-margin", type=float, default=0.0)
     parser.add_argument(
         "--train-only-extra-root",
         action="append",
@@ -603,6 +701,9 @@ def main() -> None:
                 source_groups=parse_label_groups(args.source_groups),
                 train_only_extra_roots=tuple(Path(root) for root in args.train_only_extra_root),
                 include_pixel_features=args.include_pixel_features,
+                include_embedding_features=args.include_embedding_features,
+                probe_confidence=args.probe_confidence,
+                probe_margin=args.probe_margin,
             ),
             indent=2,
         )

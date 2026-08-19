@@ -50,6 +50,19 @@ class CharacterFamilyRerankerTests(unittest.TestCase):
         self.assertEqual(enriched.shape[0], base.shape[0])
         self.assertEqual(enriched.shape[1], base.shape[1] + 144)
 
+    def test_family_features_can_include_learned_embeddings(self) -> None:
+        """Model embeddings should be optional reranker evidence."""
+
+        images = torch.zeros((2, 1, 32, 32), dtype=torch.float32)
+        outputs = torch.zeros((2, 4), dtype=torch.float32)
+        embeddings = torch.ones((2, 5), dtype=torch.float32)
+
+        base = family_features(images, outputs, (0, 1))
+        enriched = family_features(images, outputs, (0, 1), embedding_outputs=embeddings)
+
+        self.assertEqual(enriched.shape[0], base.shape[0])
+        self.assertEqual(enriched.shape[1], base.shape[1] + 5)
+
     def test_parse_families_uses_defaults_for_blank(self) -> None:
         self.assertIn("1Ili|!/", parse_families(""))
         self.assertEqual(parse_families("1Ili,0Oo"), ("1Ili", "0Oo"))
@@ -81,6 +94,38 @@ class CharacterFamilyRerankerTests(unittest.TestCase):
         )
 
         self.assertEqual(reranked.tolist(), [0, 2])
+
+    def test_apply_family_probe_respects_confidence_gate(self) -> None:
+        """A low-confidence family probe should keep the original prediction."""
+
+        labels = ["1", "I"]
+        predictions = torch.tensor([0], dtype=torch.long)
+        images = torch.zeros((1, 1, 32, 32), dtype=torch.float32)
+        outputs = torch.zeros((1, 2), dtype=torch.float32)
+        model = torch.nn.Linear(28, 2)
+        with torch.no_grad():
+            model.weight.zero_()
+            model.bias[:] = torch.tensor([0.0, 0.1])
+
+        kept = apply_family_probe(
+            predictions,
+            images,
+            outputs,
+            CharacterFamilyProbe("1I", (0, 1), model),
+            labels,
+            probe_confidence=0.9,
+        )
+        changed = apply_family_probe(
+            predictions,
+            images,
+            outputs,
+            CharacterFamilyProbe("1I", (0, 1), model),
+            labels,
+            probe_confidence=0.0,
+        )
+
+        self.assertEqual(kept.tolist(), [0])
+        self.assertEqual(changed.tolist(), [1])
 
     def test_split_calibration_reserves_confirmation_holdout(self) -> None:
         fit, selection, confirmation = _split_calibration(

@@ -52,25 +52,32 @@ class SweepCharacterFamilyRerankerTests(unittest.TestCase):
                 hidden_units=[0, 4],
                 families=("1Ili|!/",),
                 source_group_sets=[("letter",), None],
+                probe_confidences=[0.0],
+                probe_margins=[0.0, 0.1],
                 calibration_ratio=0.2,
                 confirmation_ratio=0.5,
                 min_family_delta=0.0,
                 seed=7,
                 train_only_extra_roots=(Path("cvl.pt"),),
                 include_pixel_features=True,
+                include_embedding_features=True,
                 max_runs=3,
             )
         finally:
             run_sweep.__globals__["run_probe"] = original
 
         self.assertEqual(len(calls), 3)
-        self.assertEqual(report["planned_runs"], 8)
+        self.assertEqual(report["planned_runs"], 16)
         self.assertEqual(report["completed_runs"], 3)
         self.assertTrue(report["truncated"])
         self.assertEqual(calls[0]["train_only_extra_roots"], (Path("cvl.pt"),))
         self.assertTrue(calls[0]["include_pixel_features"])
+        self.assertTrue(calls[0]["include_embedding_features"])
+        self.assertEqual(calls[0]["probe_confidence"], 0.0)
+        self.assertEqual(calls[0]["probe_margin"], 0.0)
         self.assertEqual(report["train_only_extra_roots"], ["cvl.pt"])
         self.assertTrue(report["include_pixel_features"])
+        self.assertTrue(report["include_embedding_features"])
 
 
 if __name__ == "__main__":
