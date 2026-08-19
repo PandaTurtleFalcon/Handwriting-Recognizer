@@ -195,6 +195,13 @@ def calibrate_character_pair_rules(
     min_digit = _floor_or_baseline(min_digit, base_breakdown, "digit_validation_accuracy")
     min_letter = _floor_or_baseline(min_letter, base_breakdown, "letter_validation_accuracy")
     min_punctuation = _floor_or_baseline(min_punctuation, base_breakdown, "punctuation_validation_accuracy")
+    minimum_gates = {
+        "validation_accuracy": min_validation,
+        "ambiguity_aware_validation_accuracy": min_ambiguity,
+        "digit_validation_accuracy": min_digit,
+        "letter_validation_accuracy": min_letter,
+        "punctuation_validation_accuracy": min_punctuation,
+    }
     best_predictions = starting_predictions.clone()
     best_breakdown = base_breakdown
     label_to_index = {label: index for index, label in enumerate(labels)}
@@ -296,6 +303,7 @@ def calibrate_character_pair_rules(
         "steps": steps,
         "new_steps": new_steps,
         "includes_existing_rules": include_existing_rules,
+        "minimum_gates": minimum_gates,
         "wrote": bool(write and improved),
         "output_path": str(output_path),
     }
