@@ -49,6 +49,30 @@ class CharacterFamilyProbe:
     model: nn.Module
 
 
+@dataclass(frozen=True)
+class CharacterProbeData:
+    """Precomputed tensors shared by character-family probe settings."""
+
+    labels: list[str]
+    fit_images: torch.Tensor
+    fit_targets: torch.Tensor
+    fit_outputs: torch.Tensor
+    fit_embeddings: torch.Tensor | None
+    selection_images: torch.Tensor
+    selection_targets: torch.Tensor
+    selection_outputs: torch.Tensor
+    selection_embeddings: torch.Tensor | None
+    confirmation_images: torch.Tensor
+    confirmation_targets: torch.Tensor
+    confirmation_outputs: torch.Tensor
+    confirmation_embeddings: torch.Tensor | None
+    validation_images: torch.Tensor
+    validation_targets: torch.Tensor
+    validation_outputs: torch.Tensor
+    validation_embeddings: torch.Tensor | None
+    train_only_count: int
+
+
 def parse_families(value: str) -> tuple[str, ...]:
     """Parse comma-separated character-family labels."""
 
@@ -412,26 +436,16 @@ def _character_tensors() -> tuple[torch.Tensor, torch.Tensor, list[str]]:
     return build_or_load_combined_cache(DATASET_ROOT, _metric_extra_roots())
 
 
-def run_probe(
+def prepare_probe_data(
     batch_size: int,
-    epochs: int,
-    learning_rate: float,
-    families: tuple[str, ...],
     calibration_ratio: float,
     confirmation_ratio: float,
-    min_family_delta: float,
     seed: int,
-    hidden_units: int,
-    source_groups: tuple[str, ...] | None = None,
     train_only_extra_roots: tuple[Path, ...] = (),
-    include_pixel_features: bool = False,
     include_embedding_features: bool = False,
-    probe_confidence: float = 0.0,
-    probe_margin: float = 0.0,
-) -> dict[str, object]:
-    """Train confirmed family rerankers and evaluate them on validation."""
+) -> CharacterProbeData:
+    """Precompute fixed tensors and model outputs for character-family probes."""
 
-    torch.manual_seed(seed)
     device = get_device()
     model, labels = load_character_model(device=device)
     images, targets, cache_labels = _character_tensors()
@@ -490,6 +504,75 @@ def run_probe(
     validation_embeddings = (
         _model_embeddings(model, validation_images, batch_size, device) if include_embedding_features else None
     )
+
+    return CharacterProbeData(
+        labels=labels,
+        fit_images=fit_images,
+        fit_targets=fit_targets,
+        fit_outputs=fit_outputs,
+        fit_embeddings=fit_embeddings,
+        selection_images=selection_images,
+        selection_targets=selection_targets,
+        selection_outputs=selection_outputs,
+        selection_embeddings=selection_embeddings,
+        confirmation_images=confirmation_images,
+        confirmation_targets=confirmation_targets,
+        confirmation_outputs=confirmation_outputs,
+        confirmation_embeddings=confirmation_embeddings,
+        validation_images=validation_images,
+        validation_targets=validation_targets,
+        validation_outputs=validation_outputs,
+        validation_embeddings=validation_embeddings,
+        train_only_count=train_only_count,
+    )
+
+
+def run_probe(
+    batch_size: int,
+    epochs: int,
+    learning_rate: float,
+    families: tuple[str, ...],
+    calibration_ratio: float,
+    confirmation_ratio: float,
+    min_family_delta: float,
+    seed: int,
+    hidden_units: int,
+    source_groups: tuple[str, ...] | None = None,
+    train_only_extra_roots: tuple[Path, ...] = (),
+    include_pixel_features: bool = False,
+    include_embedding_features: bool = False,
+    probe_confidence: float = 0.0,
+    probe_margin: float = 0.0,
+    probe_data: CharacterProbeData | None = None,
+) -> dict[str, object]:
+    """Train confirmed family rerankers and evaluate them on validation."""
+
+    torch.manual_seed(seed)
+    data = probe_data or prepare_probe_data(
+        batch_size=batch_size,
+        calibration_ratio=calibration_ratio,
+        confirmation_ratio=confirmation_ratio,
+        seed=seed,
+        train_only_extra_roots=train_only_extra_roots,
+        include_embedding_features=include_embedding_features,
+    )
+    labels = data.labels
+    fit_images = data.fit_images
+    fit_targets = data.fit_targets
+    fit_outputs = data.fit_outputs
+    fit_embeddings = data.fit_embeddings
+    selection_images = data.selection_images
+    selection_targets = data.selection_targets
+    selection_outputs = data.selection_outputs
+    selection_embeddings = data.selection_embeddings
+    confirmation_images = data.confirmation_images
+    confirmation_targets = data.confirmation_targets
+    confirmation_outputs = data.confirmation_outputs
+    confirmation_embeddings = data.confirmation_embeddings
+    validation_images = data.validation_images
+    validation_targets = data.validation_targets
+    validation_outputs = data.validation_outputs
+    validation_embeddings = data.validation_embeddings
     selection_predictions = selection_outputs.argmax(dim=1)
     confirmation_predictions = (
         confirmation_outputs.argmax(dim=1)
@@ -645,7 +728,7 @@ def run_probe(
         "validation_delta": reranked_metrics["validation_accuracy"] - base_metrics["validation_accuracy"],
         "promotable": promotable,
         "fit_samples": int(fit_targets.numel()),
-        "train_only_extra_samples": train_only_count,
+        "train_only_extra_samples": data.train_only_count,
         "selection_samples": int(selection_targets.numel()),
         "confirmation_samples": int(confirmation_targets.numel()),
         "validation_samples": int(validation_targets.numel()),

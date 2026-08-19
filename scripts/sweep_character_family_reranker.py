@@ -12,7 +12,12 @@ PROJECT_DIR = Path(__file__).resolve().parents[1]
 if str(PROJECT_DIR) not in sys.path:
     sys.path.insert(0, str(PROJECT_DIR))
 
-from scripts.probe_character_family_reranker import parse_families, parse_label_groups, run_probe  # noqa: E402
+from scripts.probe_character_family_reranker import (  # noqa: E402
+    parse_families,
+    parse_label_groups,
+    prepare_probe_data,
+    run_probe,
+)
 
 
 def parse_int_values(raw: str) -> list[int]:
@@ -91,6 +96,14 @@ def run_sweep(
     """Run bounded character-family reranker probes and summarize results."""
 
     rows: list[dict[str, object]] = []
+    probe_data = prepare_probe_data(
+        batch_size=batch_size,
+        calibration_ratio=calibration_ratio,
+        confirmation_ratio=confirmation_ratio,
+        seed=seed,
+        train_only_extra_roots=train_only_extra_roots,
+        include_embedding_features=include_embedding_features,
+    )
     all_runs = list(
         product(
             epochs,
@@ -127,6 +140,7 @@ def run_sweep(
             include_embedding_features=include_embedding_features,
             probe_confidence=probe_confidence,
             probe_margin=probe_margin,
+            probe_data=probe_data,
         )
         rows.append(compact_probe_report(report, parameters))
     best = best_sweep_row(rows)

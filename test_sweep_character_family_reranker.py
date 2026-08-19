@@ -37,13 +37,16 @@ class SweepCharacterFamilyRerankerTests(unittest.TestCase):
 
     def test_run_sweep_can_limit_planned_grid(self) -> None:
         calls = []
+        prepared = object()
 
         def fake_run_probe(**kwargs):
             calls.append(kwargs)
             return {"promotable": False, "validation_delta": 0.0, "base": {}, "reranked": {}}
 
         original = run_sweep.__globals__["run_probe"]
+        original_prepare = run_sweep.__globals__["prepare_probe_data"]
         run_sweep.__globals__["run_probe"] = fake_run_probe
+        run_sweep.__globals__["prepare_probe_data"] = lambda **_kwargs: prepared
         try:
             report = run_sweep(
                 batch_size=4,
@@ -65,6 +68,7 @@ class SweepCharacterFamilyRerankerTests(unittest.TestCase):
             )
         finally:
             run_sweep.__globals__["run_probe"] = original
+            run_sweep.__globals__["prepare_probe_data"] = original_prepare
 
         self.assertEqual(len(calls), 3)
         self.assertEqual(report["planned_runs"], 16)
@@ -75,6 +79,7 @@ class SweepCharacterFamilyRerankerTests(unittest.TestCase):
         self.assertTrue(calls[0]["include_embedding_features"])
         self.assertEqual(calls[0]["probe_confidence"], 0.0)
         self.assertEqual(calls[0]["probe_margin"], 0.0)
+        self.assertIs(calls[0]["probe_data"], prepared)
         self.assertEqual(report["train_only_extra_roots"], ["cvl.pt"])
         self.assertTrue(report["include_pixel_features"])
         self.assertTrue(report["include_embedding_features"])
