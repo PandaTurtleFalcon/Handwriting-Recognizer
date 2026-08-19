@@ -57,6 +57,7 @@ class SweepCharacterFamilyRerankerTests(unittest.TestCase):
                 min_family_delta=0.0,
                 seed=7,
                 train_only_extra_roots=(Path("cvl.pt"),),
+                include_pixel_features=True,
                 max_runs=3,
             )
         finally:
@@ -67,7 +68,9 @@ class SweepCharacterFamilyRerankerTests(unittest.TestCase):
         self.assertEqual(report["completed_runs"], 3)
         self.assertTrue(report["truncated"])
         self.assertEqual(calls[0]["train_only_extra_roots"], (Path("cvl.pt"),))
+        self.assertTrue(calls[0]["include_pixel_features"])
         self.assertEqual(report["train_only_extra_roots"], ["cvl.pt"])
+        self.assertTrue(report["include_pixel_features"])
 
 
 if __name__ == "__main__":

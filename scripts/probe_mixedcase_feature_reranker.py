@@ -320,12 +320,26 @@ def geometry_features(images: torch.Tensor) -> torch.Tensor:
     )
 
 
+def pixel_features(images: torch.Tensor, size: int = 12) -> torch.Tensor:
+    """Return a compact foreground-pixel sketch for reranker features."""
+
+    foreground = (images * EMNIST_STD + EMNIST_MEAN).clamp(0.0, 1.0)
+    resized = torch.nn.functional.interpolate(
+        foreground,
+        size=(size, size),
+        mode="bilinear",
+        align_corners=False,
+    )
+    return resized.flatten(start_dim=1).float()
+
+
 def family_features(
     images: torch.Tensor,
     mixed_outputs: torch.Tensor,
     folded_outputs: torch.Tensor,
     family_indices: tuple[int, ...],
     digit_outputs: torch.Tensor | None = None,
+    include_pixel_features: bool = False,
 ) -> torch.Tensor:
     """Build reranker features for one visual family."""
 
@@ -342,6 +356,8 @@ def family_features(
             folded_parts.append(torch.zeros((folded_outputs.shape[0], 1), dtype=folded_outputs.dtype))
     folded_logits = torch.cat(folded_parts, dim=1)
     parts = [family_logits, family_probs, folded_logits, geometry_features(images)]
+    if include_pixel_features:
+        parts.append(pixel_features(images))
     if digit_outputs is not None:
         digit_probs = digit_outputs.softmax(dim=1)
         digit_top2 = digit_probs.topk(2, dim=1).values
@@ -402,6 +418,7 @@ def apply_family_probe(
     digit_outputs: torch.Tensor | None = None,
     probe_confidence: float = 0.0,
     probe_margin: float = 0.0,
+    include_pixel_features: bool = False,
 ) -> torch.Tensor:
     """Return predictions after one family probe replaces in-family guesses."""
 
@@ -411,7 +428,14 @@ def apply_family_probe(
     current_in_family &= source_group_mask(predictions, source_groups)
     if not bool(current_in_family.any()):
         return predictions
-    features = family_features(images, mixed_outputs, folded_outputs, probe.family_indices, digit_outputs)
+    features = family_features(
+        images,
+        mixed_outputs,
+        folded_outputs,
+        probe.family_indices,
+        digit_outputs,
+        include_pixel_features,
+    )
     with torch.no_grad():
         logits = probe.model(features[current_in_family])
         probabilities = logits.softmax(dim=1)
@@ -531,6 +555,7 @@ def run_probe(
     family_names: tuple[str, ...] | None = None,
     source_groups: tuple[str, ...] = ("digit", "upper", "lower"),
     include_digit_features: bool = False,
+    include_pixel_features: bool = False,
     min_digit: float | None = None,
     min_upper: float | None = None,
     min_lower: float | None = None,
@@ -596,7 +621,14 @@ def run_probe(
     family_reports = []
     accepted_probe_artifacts: list[dict[str, object]] = []
     for family_indices in selected_families(family_limit, family_names):
-        train_features = family_features(fit_images, fit_mixed, fit_folded, family_indices, fit_digit)
+        train_features = family_features(
+            fit_images,
+            fit_mixed,
+            fit_folded,
+            family_indices,
+            fit_digit,
+            include_pixel_features,
+        )
         probe = train_family_probe(train_features, fit_targets, family_indices, epochs, learning_rate, hidden_units)
         if probe is None:
             continue
@@ -610,6 +642,7 @@ def run_probe(
             selection_digit,
             probe_confidence,
             probe_margin,
+            include_pixel_features,
         )
         selection_before = _metrics(selection_predictions, selection_targets)
         selection_after = _metrics(selection_candidate, selection_targets)
@@ -626,6 +659,7 @@ def run_probe(
                 confirmation_digit,
                 probe_confidence,
                 probe_margin,
+                include_pixel_features,
             )
             confirmation_before = _metrics(confirmation_predictions, confirmation_targets)
             confirmation_after = _metrics(confirmation_candidate, confirmation_targets)
@@ -663,6 +697,7 @@ def run_probe(
             test_digit,
             probe_confidence,
             probe_margin,
+            include_pixel_features,
         )
         after = _metrics(candidate_predictions, test_targets)
         final_rejection = _final_gate_rejection(
@@ -714,6 +749,7 @@ def run_probe(
                 "probe_confidence": probe_confidence,
                 "probe_margin": probe_margin,
                 "include_digit_features": include_digit_features,
+                "include_pixel_features": include_pixel_features,
             }
         )
         probe_predictions = candidate_predictions
@@ -766,6 +802,7 @@ def run_probe(
         "family_names": list(family_names or []),
         "source_groups": list(source_groups),
         "include_digit_features": include_digit_features,
+        "include_pixel_features": include_pixel_features,
         "minimum_gates": {
             "case_or_ambiguity_aware_test_accuracy": min_case_or_visual,
             "digit_test_accuracy": min_digit,
@@ -813,6 +850,11 @@ def main() -> None:
         action="store_true",
         help="Append MNIST digit-specialist logits/probabilities to reranker features.",
     )
+    parser.add_argument(
+        "--include-pixel-features",
+        action="store_true",
+        help="Append a compact downsampled foreground-pixel sketch to reranker features.",
+    )
     parser.add_argument("--min-digit", type=float, default=None)
     parser.add_argument("--min-upper", type=float, default=None)
     parser.add_argument("--min-lower", type=float, default=None)
@@ -840,6 +882,7 @@ def main() -> None:
                 family_names=parse_family_names(args.families),
                 source_groups=parse_source_groups(args.source_groups),
                 include_digit_features=args.include_digit_features,
+                include_pixel_features=args.include_pixel_features,
                 min_digit=args.min_digit,
                 min_upper=args.min_upper,
                 min_lower=args.min_lower,

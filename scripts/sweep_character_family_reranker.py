@@ -82,6 +82,7 @@ def run_sweep(
     min_family_delta: float,
     seed: int,
     train_only_extra_roots: tuple[Path, ...] = (),
+    include_pixel_features: bool = False,
     max_runs: int | None = None,
 ) -> dict[str, object]:
     """Run bounded character-family reranker probes and summarize results."""
@@ -115,6 +116,7 @@ def run_sweep(
             hidden_units=hidden_count,
             source_groups=source_groups,
             train_only_extra_roots=train_only_extra_roots,
+            include_pixel_features=include_pixel_features,
         )
         rows.append(compact_probe_report(report, parameters))
     best = best_sweep_row(rows)
@@ -128,6 +130,7 @@ def run_sweep(
         "min_family_delta": min_family_delta,
         "seed": seed,
         "train_only_extra_roots": [str(root) for root in train_only_extra_roots],
+        "include_pixel_features": include_pixel_features,
         "planned_runs": len(all_runs),
         "completed_runs": len(rows),
         "truncated": max_runs is not None and len(all_runs) > max_runs,
@@ -154,6 +157,7 @@ def main() -> None:
         default=[],
         help="Extra ASCII folder or .pt tensor cache used only for fitting rerankers.",
     )
+    parser.add_argument("--include-pixel-features", action="store_true")
     parser.add_argument("--max-runs", type=int, default=None)
     args = parser.parse_args()
     print(
@@ -170,6 +174,7 @@ def main() -> None:
                 min_family_delta=args.min_family_delta,
                 seed=args.seed,
                 train_only_extra_roots=tuple(Path(root) for root in args.train_only_extra_root),
+                include_pixel_features=args.include_pixel_features,
                 max_runs=args.max_runs,
             ),
             indent=2,

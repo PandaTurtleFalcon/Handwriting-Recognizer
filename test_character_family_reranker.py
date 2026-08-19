@@ -9,10 +9,12 @@ from scripts.probe_character_family_reranker import (
     _gate_metrics,
     _split_calibration,
     apply_family_probe,
+    family_features,
     family_indices,
     geometry_features,
     parse_label_groups,
     parse_families,
+    pixel_features,
     run_probe,
 )
 
@@ -33,6 +35,20 @@ class CharacterFamilyRerankerTests(unittest.TestCase):
         labels = ["!", "1", "I", "l", "i", "|", "/", "O"]
 
         self.assertEqual(family_indices("1Ili|!/", labels), (1, 2, 3, 4, 5, 0, 6))
+
+    def test_family_features_can_include_pixel_sketch(self) -> None:
+        """Small pixel sketches should be optional shape evidence for rerankers."""
+
+        images = torch.zeros((2, 1, 32, 32), dtype=torch.float32)
+        outputs = torch.zeros((2, 4), dtype=torch.float32)
+
+        pixels = pixel_features(images, size=12)
+        base = family_features(images, outputs, (0, 1))
+        enriched = family_features(images, outputs, (0, 1), include_pixel_features=True)
+
+        self.assertEqual(tuple(pixels.shape), (2, 144))
+        self.assertEqual(enriched.shape[0], base.shape[0])
+        self.assertEqual(enriched.shape[1], base.shape[1] + 144)
 
     def test_parse_families_uses_defaults_for_blank(self) -> None:
         self.assertIn("1Ili|!/", parse_families(""))
@@ -244,9 +260,11 @@ class CharacterFamilyRerankerTests(unittest.TestCase):
                 hidden_units=4,
                 source_groups=None,
                 train_only_extra_roots=(Path("extra.pt"),),
+                include_pixel_features=True,
             )
 
         self.assertEqual(report["train_only_extra_samples"], 2)
+        self.assertTrue(report["include_pixel_features"])
         self.assertEqual(report["fit_samples"], 6)
         self.assertEqual(report["selection_samples"], 2)
         self.assertEqual(report["validation_samples"], 4)

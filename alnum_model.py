@@ -1739,6 +1739,7 @@ def _mixedcase_family_features(
     folded_outputs: torch.Tensor,
     family_indices: tuple[int, ...],
     digit_outputs: torch.Tensor | None = None,
+    include_pixel_features: bool = False,
 ) -> torch.Tensor:
     """Build feature-reranker inputs for one visual family."""
 
@@ -1754,6 +1755,14 @@ def _mixedcase_family_features(
         else:
             folded_parts.append(torch.zeros((folded_outputs.shape[0], 1), dtype=folded_outputs.dtype, device=folded_outputs.device))
     parts = [family_logits, family_probs, torch.cat(folded_parts, dim=1), _mixedcase_geometry_features(inputs)]
+    if include_pixel_features:
+        pixels = torch.nn.functional.interpolate(
+            (inputs * EMNIST_STD + EMNIST_MEAN).clamp(0.0, 1.0),
+            size=(12, 12),
+            mode="bilinear",
+            align_corners=False,
+        )
+        parts.append(pixels.flatten(start_dim=1).float())
     if digit_outputs is not None:
         digit_probs = digit_outputs.softmax(dim=1)
         digit_top2 = digit_probs.topk(2, dim=1).values
@@ -1804,6 +1813,7 @@ class FamilyRerankedMixedcaseModel(nn.Module):
                     "probe_confidence": float(probe.get("probe_confidence", 0.0)),
                     "probe_margin": float(probe.get("probe_margin", 0.0)),
                     "include_digit_features": bool(probe.get("include_digit_features", False)),
+                    "include_pixel_features": bool(probe.get("include_pixel_features", False)),
                 }
             )
 
@@ -1832,6 +1842,7 @@ class FamilyRerankedMixedcaseModel(nn.Module):
                 folded_outputs,
                 family_indices,
                 digit_outputs if config["include_digit_features"] else None,
+                config["include_pixel_features"],
             )
             logits = module(features[current_in_family])
             probabilities = logits.softmax(dim=1)

@@ -1385,3 +1385,10 @@ restored, so future improvement loops do not repeat known-bad blends.
   - Probe C: hidden-unit `0Oo` and `5Ss` rerankers with CVL/T-H-E extras capped at `60/class`, source groups `digit,upper,lower`, confidence `0.5`, and margin `0.0`. Result: rejected; `0Oo` selection delta `-0.1600`, `5Ss` selection delta `-0.0533`.
   - Verification: `test_sweep_mixedcase_feature_reranker.py test_mixedcase_feature_reranker.py` passed (`23` tests), the new sweep CLI smoke completed, and no production model artifacts changed.
   - Takeaway: the current mixed-case feature reranker and hybrid threshold surfaces remain flat under strict preservation gates. The next path should change representation quality or collect more real correction crops, not continue small threshold/reranker sweeps over the same logits.
+
+- Rejected pixel-feature resolver probes:
+  - Code path: added optional `--include-pixel-features` support to character and mixed-case feature-reranker probes. The feature block appends a 12x12 downsampled foreground sketch to existing logit, probability, folded, digit, and geometry features; deployed mixed-case artifact loading now reads matching `include_pixel_features` metadata if a future probe is safely promoted.
+  - Mixed-case probe: `0Oo` with CVL/T-H-E extras capped at `80/class`, digit features, pixel features, hidden units `64`, source groups `digit,upper`, confidence `0.55`, and margin `0.05`. Result: rejected; selection delta `-0.1333`, confirmation delta `-0.0267`.
+  - Character probe: `!/1Iil|` with CVL twin train-only cache, pixel features, four bounded settings over hidden units `64/128` and source groups `letter/letter,punctuation`. Result: rejected; best row still had selection delta below floor (`-0.0400`).
+  - Verification: feature tests passed before the probes. No production model artifacts changed.
+  - Takeaway: simple low-resolution pixels do not solve the family resolver generalization gap. The next representation change should reuse learned CNN embeddings or train a dedicated family specialist with a true validation holdout, not just append hand-built features.

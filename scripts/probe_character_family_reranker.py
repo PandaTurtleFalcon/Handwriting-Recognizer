@@ -176,14 +176,35 @@ def geometry_features(images: torch.Tensor) -> torch.Tensor:
     )
 
 
-def family_features(images: torch.Tensor, outputs: torch.Tensor, indices: tuple[int, ...]) -> torch.Tensor:
+def pixel_features(images: torch.Tensor, size: int = 12) -> torch.Tensor:
+    """Return a compact foreground-pixel sketch for reranker features."""
+
+    foreground = (images * CHAR_STD + CHAR_MEAN).clamp(0.0, 1.0)
+    resized = torch.nn.functional.interpolate(
+        foreground,
+        size=(size, size),
+        mode="bilinear",
+        align_corners=False,
+    )
+    return resized.flatten(start_dim=1).float()
+
+
+def family_features(
+    images: torch.Tensor,
+    outputs: torch.Tensor,
+    indices: tuple[int, ...],
+    include_pixel_features: bool = False,
+) -> torch.Tensor:
     """Build reranker inputs for one character family."""
 
     family_logits = outputs[:, list(indices)]
     family_probs = family_logits.softmax(dim=1)
     top2 = outputs.topk(2, dim=1).values
     global_features = torch.stack((outputs.max(dim=1).values, top2[:, 0] - top2[:, 1]), dim=1)
-    return torch.cat((family_logits, family_probs, global_features, geometry_features(images)), dim=1).float()
+    parts = [family_logits, family_probs, global_features, geometry_features(images)]
+    if include_pixel_features:
+        parts.append(pixel_features(images))
+    return torch.cat(parts, dim=1).float()
 
 
 def train_family_probe(
@@ -231,6 +252,7 @@ def apply_family_probe(
     probe: CharacterFamilyProbe,
     labels: list[str],
     source_groups: tuple[str, ...] | None = None,
+    include_pixel_features: bool = False,
 ) -> torch.Tensor:
     """Replace predictions only when the current label is inside the family."""
 
@@ -245,7 +267,7 @@ def apply_family_probe(
         current_in_family &= allowed_source[predictions]
     if not bool(current_in_family.any()):
         return predictions
-    features = family_features(images, outputs, probe.indices)
+    features = family_features(images, outputs, probe.indices, include_pixel_features)
     with torch.no_grad():
         local_predictions = probe.model(features[current_in_family]).argmax(dim=1)
     replacements = torch.tensor([probe.indices[int(index)] for index in local_predictions.tolist()], dtype=torch.long)
@@ -342,6 +364,7 @@ def run_probe(
     hidden_units: int,
     source_groups: tuple[str, ...] | None = None,
     train_only_extra_roots: tuple[Path, ...] = (),
+    include_pixel_features: bool = False,
 ) -> dict[str, object]:
     """Train confirmed family rerankers and evaluate them on validation."""
 
@@ -408,7 +431,7 @@ def run_probe(
         if len(indices_tuple) < 2:
             skipped.append(family)
             continue
-        train_features = family_features(fit_images, fit_outputs, indices_tuple)
+        train_features = family_features(fit_images, fit_outputs, indices_tuple, include_pixel_features)
         probe = train_family_probe(
             train_features,
             fit_targets,
@@ -428,6 +451,7 @@ def run_probe(
             probe,
             labels,
             source_groups,
+            include_pixel_features,
         )
         selection_before = _metrics(selection_predictions, selection_targets, labels)
         selection_after = _metrics(selection_candidate, selection_targets, labels)
@@ -447,6 +471,7 @@ def run_probe(
                 probe,
                 labels,
                 source_groups,
+                include_pixel_features,
             )
             confirmation_before = _metrics(confirmation_predictions, confirmation_targets, labels)
             confirmation_after = _metrics(confirmation_candidate, confirmation_targets, labels)
@@ -485,6 +510,7 @@ def run_probe(
             probe,
             labels,
             source_groups,
+            include_pixel_features,
         )
         after = _metrics(candidate_predictions, validation_targets, labels)
         test_passed, test_reason, test_delta = _gate_metrics(before, after, min_family_delta)
@@ -536,6 +562,7 @@ def run_probe(
         "hidden_units": hidden_units,
         "confirmation_ratio": confirmation_ratio,
         "source_groups": list(source_groups) if source_groups is not None else None,
+        "include_pixel_features": include_pixel_features,
     }
 
 
@@ -553,6 +580,7 @@ def main() -> None:
     parser.add_argument("--seed", type=int, default=20260818)
     parser.add_argument("--hidden-units", type=int, default=32)
     parser.add_argument("--source-groups", default="")
+    parser.add_argument("--include-pixel-features", action="store_true")
     parser.add_argument(
         "--train-only-extra-root",
         action="append",
@@ -574,6 +602,7 @@ def main() -> None:
                 hidden_units=args.hidden_units,
                 source_groups=parse_label_groups(args.source_groups),
                 train_only_extra_roots=tuple(Path(root) for root in args.train_only_extra_root),
+                include_pixel_features=args.include_pixel_features,
             ),
             indent=2,
         )

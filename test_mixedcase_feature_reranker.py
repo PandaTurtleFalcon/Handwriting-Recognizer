@@ -13,6 +13,7 @@ from scripts.probe_mixedcase_feature_reranker import geometry_features
 from scripts.probe_mixedcase_feature_reranker import family_features
 from scripts.probe_mixedcase_feature_reranker import parse_family_names
 from scripts.probe_mixedcase_feature_reranker import parse_source_groups
+from scripts.probe_mixedcase_feature_reranker import pixel_features
 from scripts.probe_mixedcase_feature_reranker import selected_families
 from scripts.probe_mixedcase_feature_reranker import source_group_mask
 from scripts.probe_mixedcase_feature_reranker import train_family_probe
@@ -82,6 +83,21 @@ class MixedcaseFeatureRerankerTests(unittest.TestCase):
 
         self.assertEqual(enriched.shape[0], base.shape[0])
         self.assertEqual(enriched.shape[1], base.shape[1] + 22)
+
+    def test_family_features_can_include_pixel_sketch(self) -> None:
+        """Small pixel sketches should be optional shape evidence for rerankers."""
+
+        images = torch.zeros((2, 1, 28, 28), dtype=torch.float32)
+        mixed = torch.zeros((2, 62), dtype=torch.float32)
+        folded = torch.zeros((2, 36), dtype=torch.float32)
+
+        pixels = pixel_features(images, size=12)
+        base = family_features(images, mixed, folded, (10, 36))
+        enriched = family_features(images, mixed, folded, (10, 36), include_pixel_features=True)
+
+        self.assertEqual(tuple(pixels.shape), (2, 144))
+        self.assertEqual(enriched.shape[0], base.shape[0])
+        self.assertEqual(enriched.shape[1], base.shape[1] + 144)
 
     def test_apply_family_probe_respects_probe_confidence_gate(self) -> None:
         """Low-confidence family probe predictions should abstain."""
