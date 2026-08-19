@@ -207,6 +207,17 @@ class WebAppRenderingTests(unittest.TestCase):
 
         self.assertIn("payload.revision", script)
         self.assertIn("live @", script)
+        self.assertIn("payload.started_at", script)
+
+    def test_static_ui_bypasses_fetch_cache_for_live_api_calls(self) -> None:
+        """Browser requests should not reuse stale prediction or health responses."""
+
+        script = Path("web/app.js").read_text(encoding="utf-8")
+
+        self.assertIn('fetch("/api/predict", {method: "POST", cache: "no-store"', script)
+        self.assertIn('fetch("/health", {cache: "no-store"})', script)
+        self.assertIn('fetch("/api/correction-readiness", {cache: "no-store"})', script)
+        self.assertIn('cache: "no-store"', script)
 
     def test_server_cli_accepts_host_and_port(self) -> None:
         """The website command should be able to bind an alternate local port."""

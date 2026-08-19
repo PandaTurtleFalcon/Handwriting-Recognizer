@@ -103,6 +103,7 @@ async function postCorrection(form, statusTarget) {
   try {
     const response = await fetch("/api/correct", {
       method: "POST",
+      cache: "no-store",
       headers: {"Content-Type": "application/x-www-form-urlencoded;charset=UTF-8"},
       body: new URLSearchParams(new FormData(form)),
     });
@@ -450,7 +451,9 @@ async function refreshPracticeCoverage(selectNext = false) {
     return null;
   }
   try {
-    const response = await fetch(`${correctionCoverageUrl}?mode=${encodeURIComponent(practiceCoverageMode)}`);
+    const response = await fetch(`${correctionCoverageUrl}?mode=${encodeURIComponent(practiceCoverageMode)}`, {
+      cache: "no-store",
+    });
     const payload = await response.json();
     if (!response.ok || !payload.ok) {
       throw new Error("coverage unavailable");
@@ -539,7 +542,7 @@ async function refreshCorrectionReadiness() {
     return;
   }
   try {
-    const response = await fetch("/api/correction-readiness");
+    const response = await fetch("/api/correction-readiness", {cache: "no-store"});
     const payload = await response.json();
     if (!response.ok || !payload.ok) {
       throw new Error("readiness unavailable");
@@ -642,6 +645,7 @@ async function submitPracticeSample() {
   try {
     const response = await fetch("/api/correct", {
       method: "POST",
+      cache: "no-store",
       headers: {"Content-Type": "application/x-www-form-urlencoded;charset=UTF-8"},
       body: payload,
     });
@@ -950,7 +954,7 @@ uploadForm.addEventListener("submit", async (event) => {
   setStatus(`Recognizing ${imageInput.files.length} file${imageInput.files.length === 1 ? "" : "s"}...`);
   try {
     const formData = new FormData(uploadForm);
-    const response = await fetch("/api/predict", {method: "POST", body: formData});
+    const response = await fetch("/api/predict", {method: "POST", cache: "no-store", body: formData});
     const payload = await response.json();
     if (!response.ok || !payload.ok) {
       throw new Error(payload.error || "Prediction failed.");
@@ -966,7 +970,7 @@ uploadForm.addEventListener("submit", async (event) => {
 
 async function checkHealth() {
   try {
-    const response = await fetch("/health");
+    const response = await fetch("/health", {cache: "no-store"});
     const payload = await response.json();
     if (!response.ok || !payload.ok) {
       throw new Error("offline");
@@ -975,6 +979,7 @@ async function checkHealth() {
     serverPill.textContent = revision
       ? `${payload.recognizer || "model"} live @ ${revision}`
       : `${payload.recognizer || "model"} live`;
+    serverPill.title = payload.started_at ? `Server started ${text(payload.started_at)}` : "";
     serverPill.classList.add("live");
     modelNote.textContent = "Upload handwriting images and correct any result for retraining.";
   } catch {
