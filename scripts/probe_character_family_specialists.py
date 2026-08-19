@@ -247,18 +247,41 @@ def train_specialist(
     return Specialist(family=family, indices=indices, model=model)
 
 
-def deployed_predictions(images: torch.Tensor, batch_size: int, device: torch.device) -> tuple[torch.Tensor, list[str]]:
-    """Return current deployed character predictions."""
+def deployed_predictions_with_stats(
+    images: torch.Tensor,
+    batch_size: int,
+    device: torch.device,
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, list[str]]:
+    """Return deployed predictions, confidence, margin, and labels."""
 
     model, labels = load_character_model(device=device)
     if not int(images.shape[0]):
-        return torch.empty((0,), dtype=torch.long), labels
+        empty_float = torch.empty((0,), dtype=torch.float32)
+        return torch.empty((0,), dtype=torch.long), empty_float, empty_float, labels
     loader = DataLoader(TensorDataset(images), batch_size=batch_size)
-    parts: list[torch.Tensor] = []
+    prediction_parts: list[torch.Tensor] = []
+    confidence_parts: list[torch.Tensor] = []
+    margin_parts: list[torch.Tensor] = []
     with torch.no_grad():
         for (batch_images,) in loader:
-            parts.append(model(batch_images.to(device)).argmax(dim=1).cpu())
-    return torch.cat(parts), labels
+            outputs = model(batch_images.to(device)).cpu()
+            probabilities = outputs.softmax(dim=1)
+            top2 = probabilities.topk(min(2, probabilities.shape[1]), dim=1)
+            prediction_parts.append(outputs.argmax(dim=1))
+            confidence_parts.append(top2.values[:, 0])
+            margin_parts.append(
+                top2.values[:, 0] - top2.values[:, 1]
+                if top2.values.shape[1] > 1
+                else torch.ones_like(top2.values[:, 0])
+            )
+    return torch.cat(prediction_parts), torch.cat(confidence_parts), torch.cat(margin_parts), labels
+
+
+def deployed_predictions(images: torch.Tensor, batch_size: int, device: torch.device) -> tuple[torch.Tensor, list[str]]:
+    """Return current deployed character predictions."""
+
+    predictions, _confidence, _margin, labels = deployed_predictions_with_stats(images, batch_size, device)
+    return predictions, labels
 
 
 def metrics(predictions: torch.Tensor, targets: torch.Tensor, labels: list[str]) -> dict[str, float]:
@@ -295,11 +318,19 @@ def apply_specialists(
     confidence_threshold: float,
     margin_threshold: float,
     source_groups: tuple[str, ...],
+    base_confidences: torch.Tensor | None = None,
+    base_margins: torch.Tensor | None = None,
+    base_confidence_threshold: float = float("inf"),
+    base_margin_threshold: float = float("inf"),
 ) -> tuple[torch.Tensor, list[dict[str, object]]]:
     """Apply family predictions only to eligible current predictions."""
 
     predictions = base_predictions.clone()
     allowed_sources = source_group_mask(predictions, labels, source_groups)
+    if base_confidences is not None:
+        allowed_sources &= base_confidences <= base_confidence_threshold
+    if base_margins is not None:
+        allowed_sources &= base_margins <= base_margin_threshold
     reports: list[dict[str, object]] = []
     for specialist in specialists:
         family_mask = torch.zeros_like(predictions, dtype=torch.bool)
@@ -350,6 +381,10 @@ def family_validation_diagnostics(
     confidence_threshold: float,
     margin_threshold: float,
     source_groups: tuple[str, ...],
+    base_confidences: torch.Tensor | None = None,
+    base_margins: torch.Tensor | None = None,
+    base_confidence_threshold: float = float("inf"),
+    base_margin_threshold: float = float("inf"),
 ) -> list[dict[str, object]]:
     """Evaluate each trained specialist by itself on the validation split."""
 
@@ -366,6 +401,10 @@ def family_validation_diagnostics(
             confidence_threshold,
             margin_threshold,
             source_groups,
+            base_confidences,
+            base_margins,
+            base_confidence_threshold,
+            base_margin_threshold,
         )
         candidate_metrics = metrics(candidate_predictions, targets, labels)
         rows.append(
@@ -411,6 +450,10 @@ def choose_thresholds(
     confidence_grid: tuple[float, ...],
     margin_grid: tuple[float, ...],
     source_groups: tuple[str, ...],
+    base_confidences: torch.Tensor | None = None,
+    base_margins: torch.Tensor | None = None,
+    base_confidence_grid: tuple[float, ...] = (float("inf"),),
+    base_margin_grid: tuple[float, ...] = (float("inf"),),
 ) -> dict[str, object]:
     """Choose thresholds that improve exact accuracy while preserving splits."""
 
@@ -418,6 +461,8 @@ def choose_thresholds(
     best: dict[str, object] = {
         "confidence": None,
         "margin": None,
+        "base_confidence": None,
+        "base_margin": None,
         "base": base_metrics,
         "candidate": base_metrics,
         "replacement_report": {"changed": 0, "fixed": 0, "broken": 0},
@@ -428,55 +473,67 @@ def choose_thresholds(
     best_rejected_gain = float("-inf")
     for confidence in confidence_grid:
         for margin in margin_grid:
-            candidate_predictions, _ = apply_specialists(
-                base_predictions,
-                images,
-                specialists,
-                labels,
-                batch_size,
-                device,
-                confidence,
-                margin,
-                source_groups,
-            )
-            candidate_metrics = metrics(candidate_predictions, targets, labels)
-            gain = candidate_metrics["validation_accuracy"] - base_metrics["validation_accuracy"]
-            failures = protected_failures(candidate_metrics, base_metrics)
-            replacement_report = threshold_report(base_predictions, candidate_predictions, targets)
-            threshold_row = {
-                "confidence": confidence,
-                "margin": margin,
-                "gain": gain,
-                "candidate": candidate_metrics,
-                "replacement_report": replacement_report,
-                "protected_failures": failures,
-                "accepted": False,
-            }
-            evaluated_thresholds = list(best["evaluated_thresholds"])
-            evaluated_thresholds.append(threshold_row)
-            best["evaluated_thresholds"] = evaluated_thresholds
-            if gain > best_rejected_gain:
-                best_rejected_gain = gain
-                best["best_rejected"] = {
-                    "confidence": confidence,
-                    "margin": margin,
-                    "gain": gain,
-                    "candidate": candidate_metrics,
-                    "replacement_report": replacement_report,
-                    "protected_failures": failures,
-                }
-            if gain > best_gain and protected_ok(candidate_metrics, base_metrics):
-                best_gain = gain
-                threshold_row["accepted"] = True
-                best = {
-                    "confidence": confidence,
-                    "margin": margin,
-                    "base": base_metrics,
-                    "candidate": candidate_metrics,
-                    "replacement_report": replacement_report,
-                    "best_rejected": best["best_rejected"],
-                    "evaluated_thresholds": evaluated_thresholds,
-                }
+            for base_confidence in base_confidence_grid:
+                for base_margin in base_margin_grid:
+                    candidate_predictions, _ = apply_specialists(
+                        base_predictions,
+                        images,
+                        specialists,
+                        labels,
+                        batch_size,
+                        device,
+                        confidence,
+                        margin,
+                        source_groups,
+                        base_confidences,
+                        base_margins,
+                        base_confidence,
+                        base_margin,
+                    )
+                    candidate_metrics = metrics(candidate_predictions, targets, labels)
+                    gain = candidate_metrics["validation_accuracy"] - base_metrics["validation_accuracy"]
+                    failures = protected_failures(candidate_metrics, base_metrics)
+                    replacement_report = threshold_report(base_predictions, candidate_predictions, targets)
+                    threshold_row = {
+                        "confidence": confidence,
+                        "margin": margin,
+                        "base_confidence": base_confidence,
+                        "base_margin": base_margin,
+                        "gain": gain,
+                        "candidate": candidate_metrics,
+                        "replacement_report": replacement_report,
+                        "protected_failures": failures,
+                        "accepted": False,
+                    }
+                    evaluated_thresholds = list(best["evaluated_thresholds"])
+                    evaluated_thresholds.append(threshold_row)
+                    best["evaluated_thresholds"] = evaluated_thresholds
+                    if gain > best_rejected_gain:
+                        best_rejected_gain = gain
+                        best["best_rejected"] = {
+                            "confidence": confidence,
+                            "margin": margin,
+                            "base_confidence": base_confidence,
+                            "base_margin": base_margin,
+                            "gain": gain,
+                            "candidate": candidate_metrics,
+                            "replacement_report": replacement_report,
+                            "protected_failures": failures,
+                        }
+                    if gain > best_gain and protected_ok(candidate_metrics, base_metrics):
+                        best_gain = gain
+                        threshold_row["accepted"] = True
+                        best = {
+                            "confidence": confidence,
+                            "margin": margin,
+                            "base_confidence": base_confidence,
+                            "base_margin": base_margin,
+                            "base": base_metrics,
+                            "candidate": candidate_metrics,
+                            "replacement_report": replacement_report,
+                            "best_rejected": best["best_rejected"],
+                            "evaluated_thresholds": evaluated_thresholds,
+                        }
     return best
 
 
@@ -489,6 +546,8 @@ def probe_family_specialists(
     extra_roots: list[Path],
     confidence_grid: tuple[float, ...],
     margin_grid: tuple[float, ...],
+    base_confidence_grid: tuple[float, ...],
+    base_margin_grid: tuple[float, ...],
     validation_ratio: float,
     confirmation_ratio: float,
     source_groups: tuple[str, ...],
@@ -499,7 +558,12 @@ def probe_family_specialists(
     torch.manual_seed(seed)
     device = get_device()
     validation_images, validation_targets, labels = validation_tensors()
-    base_validation_predictions, labels = deployed_predictions(validation_images, batch_size, device)
+    (
+        base_validation_predictions,
+        base_validation_confidences,
+        base_validation_margins,
+        labels,
+    ) = deployed_predictions_with_stats(validation_images, batch_size, device)
     train_images, train_targets = train_tensors()
     fit_images, fit_targets, holdout_images, holdout_targets = split_holdout(
         train_images,
@@ -538,7 +602,11 @@ def probe_family_specialists(
         else:
             specialists.append(specialist)
     if int(selection_targets.numel()):
-        selection_predictions, _ = deployed_predictions(selection_images, batch_size, device)
+        selection_predictions, selection_confidences, selection_margins, _ = deployed_predictions_with_stats(
+            selection_images,
+            batch_size,
+            device,
+        )
         selected = choose_thresholds(
             selection_predictions,
             selection_images,
@@ -550,11 +618,17 @@ def probe_family_specialists(
             confidence_grid,
             margin_grid,
             source_groups,
+            selection_confidences,
+            selection_margins,
+            base_confidence_grid,
+            base_margin_grid,
         )
     else:
         selected = {
             "confidence": confidence_grid[0] if confidence_grid else None,
             "margin": margin_grid[0] if margin_grid else None,
+            "base_confidence": base_confidence_grid[0] if base_confidence_grid else None,
+            "base_margin": base_margin_grid[0] if base_margin_grid else None,
             "base": {},
             "candidate": {},
             "replacement_report": {"changed": 0, "fixed": 0, "broken": 0},
@@ -562,9 +636,21 @@ def probe_family_specialists(
         }
     confidence = selected.get("confidence")
     margin = selected.get("margin")
+    base_confidence = selected.get("base_confidence")
+    base_margin = selected.get("base_margin")
     confirmation: dict[str, object] | None = None
-    if confidence is not None and margin is not None and int(confirmation_targets.numel()):
-        confirmation_predictions, _ = deployed_predictions(confirmation_images, batch_size, device)
+    if (
+        confidence is not None
+        and margin is not None
+        and base_confidence is not None
+        and base_margin is not None
+        and int(confirmation_targets.numel())
+    ):
+        confirmation_predictions, confirmation_confidences, confirmation_margins, _ = deployed_predictions_with_stats(
+            confirmation_images,
+            batch_size,
+            device,
+        )
         confirmation_candidate, _ = apply_specialists(
             confirmation_predictions,
             confirmation_images,
@@ -575,6 +661,10 @@ def probe_family_specialists(
             float(confidence),
             float(margin),
             source_groups,
+            confirmation_confidences,
+            confirmation_margins,
+            float(base_confidence),
+            float(base_margin),
         )
         before = metrics(confirmation_predictions, confirmation_targets, labels)
         after = metrics(confirmation_candidate, confirmation_targets, labels)
@@ -592,11 +682,15 @@ def probe_family_specialists(
         if not bool(confirmation["confirmed"]):
             confidence = None
             margin = None
-    if confidence is None or margin is None:
+            base_confidence = None
+            base_margin = None
+    if confidence is None or margin is None or base_confidence is None or base_margin is None:
         candidate_predictions = base_validation_predictions.clone()
         family_reports = [{"family": specialist.family, "eligible": 0, "changed": 0} for specialist in specialists]
         diagnostic_confidence = confidence_grid[0] if confidence_grid else float("inf")
         diagnostic_margin = margin_grid[0] if margin_grid else float("inf")
+        diagnostic_base_confidence = base_confidence_grid[0] if base_confidence_grid else float("inf")
+        diagnostic_base_margin = base_margin_grid[0] if base_margin_grid else float("inf")
     else:
         candidate_predictions, family_reports = apply_specialists(
             base_validation_predictions,
@@ -608,15 +702,26 @@ def probe_family_specialists(
             float(confidence),
             float(margin),
             source_groups,
+            base_validation_confidences,
+            base_validation_margins,
+            float(base_confidence),
+            float(base_margin),
         )
         diagnostic_confidence = float(confidence)
         diagnostic_margin = float(margin)
+        diagnostic_base_confidence = float(base_confidence)
+        diagnostic_base_margin = float(base_margin)
     base_metrics = metrics(base_validation_predictions, validation_targets, labels)
     candidate_metrics = metrics(candidate_predictions, validation_targets, labels)
     return {
         "families": [specialist.family for specialist in specialists],
         "skipped_families": skipped,
-        "thresholds": {"confidence": confidence, "margin": margin},
+        "thresholds": {
+            "confidence": confidence,
+            "margin": margin,
+            "base_confidence": base_confidence,
+            "base_margin": base_margin,
+        },
         "threshold_selection": selected,
         "confirmation": confirmation,
         "base": base_metrics,
@@ -634,6 +739,10 @@ def probe_family_specialists(
             diagnostic_confidence,
             diagnostic_margin,
             source_groups,
+            base_validation_confidences,
+            base_validation_margins,
+            diagnostic_base_confidence,
+            diagnostic_base_margin,
         ),
         "selection_samples": int(selection_targets.numel()),
         "confirmation_samples": int(confirmation_targets.numel()),
@@ -663,6 +772,8 @@ def main() -> None:
     parser.add_argument("--extra-root", action="append", type=Path, default=[])
     parser.add_argument("--confidence-grid", default="0.5,0.65,0.8,0.9,0.95")
     parser.add_argument("--margin-grid", default="0.0,0.1,0.2,0.35,0.5")
+    parser.add_argument("--base-confidence-grid", default="1.0")
+    parser.add_argument("--base-margin-grid", default="1.0")
     parser.add_argument("--validation-ratio", type=float, default=0.15)
     parser.add_argument("--confirmation-ratio", type=float, default=0.5)
     parser.add_argument("--source-groups", default="digit,letter,punctuation")
@@ -677,6 +788,8 @@ def main() -> None:
         extra_roots=args.extra_root,
         confidence_grid=parse_float_grid(args.confidence_grid),
         margin_grid=parse_float_grid(args.margin_grid),
+        base_confidence_grid=parse_float_grid(args.base_confidence_grid),
+        base_margin_grid=parse_float_grid(args.base_margin_grid),
         validation_ratio=args.validation_ratio,
         confirmation_ratio=args.confirmation_ratio,
         source_groups=parse_source_groups(args.source_groups),

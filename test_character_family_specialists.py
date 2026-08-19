@@ -89,6 +89,31 @@ class CharacterFamilySpecialistTests(unittest.TestCase):
         self.assertEqual(predictions.tolist(), [1, 1, 2])
         self.assertEqual(reports, [{"family": "0O", "eligible": 1, "changed": 1}])
 
+    def test_apply_specialists_respects_base_uncertainty_gate(self) -> None:
+        class FixedSpecialist(torch.nn.Module):
+            def forward(self, images: torch.Tensor) -> torch.Tensor:
+                return torch.tensor([[0.0, 3.0]], dtype=torch.float32).repeat(images.size(0), 1)
+
+        labels = ["0", "O"]
+        predictions, reports = apply_specialists(
+            torch.tensor([0, 0], dtype=torch.long),
+            torch.zeros((2, 1, 32, 32), dtype=torch.float32),
+            [Specialist("0O", (0, 1), FixedSpecialist())],
+            labels,
+            batch_size=8,
+            device=torch.device("cpu"),
+            confidence_threshold=0.0,
+            margin_threshold=0.0,
+            source_groups=("digit", "letter", "punctuation"),
+            base_confidences=torch.tensor([0.99, 0.55], dtype=torch.float32),
+            base_margins=torch.tensor([0.8, 0.1], dtype=torch.float32),
+            base_confidence_threshold=0.8,
+            base_margin_threshold=0.3,
+        )
+
+        self.assertEqual(predictions.tolist(), [0, 1])
+        self.assertEqual(reports, [{"family": "0O", "eligible": 1, "changed": 1}])
+
     def test_choose_thresholds_keeps_base_when_candidate_breaks_metric(self) -> None:
         class BadSpecialist(torch.nn.Module):
             def forward(self, images: torch.Tensor) -> torch.Tensor:
