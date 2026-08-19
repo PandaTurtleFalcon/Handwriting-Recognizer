@@ -116,6 +116,14 @@ class ContextRulesTests(unittest.TestCase):
         self.assertEqual(cleanup.display, "Hi!")
         self.assertIn("Hi", cleanup.notes[0])
 
+    def test_punctuation_spacing_cleanup_removes_space_before_mark(self) -> None:
+        """A segmented punctuation mark in the same row should still read naturally."""
+
+        cleanup = cleanup_context("Hi !")
+
+        self.assertEqual(cleanup.display, "Hi!")
+        self.assertIn("space before punctuation", cleanup.notes[0])
+
     def test_conservative_hi_cleanup_rejects_word_tail(self) -> None:
         """HL5 should not become Hi5 because that changes real content."""
 

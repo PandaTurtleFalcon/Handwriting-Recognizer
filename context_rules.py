@@ -92,6 +92,8 @@ def _clean_one_row(text: str) -> tuple[str, list[str]]:
     notes.extend(common_word_notes)
     cleaned, token_notes = _clean_common_word_tokens(cleaned)
     notes.extend(token_notes)
+    cleaned, punctuation_spacing_notes = _clean_space_before_punctuation(cleaned)
+    notes.extend(punctuation_spacing_notes)
     cleaned, spacing_notes = _clean_intraword_spaces(cleaned)
     notes.extend(spacing_notes)
     cleaned, test_notes = _clean_test_word(cleaned)
@@ -235,6 +237,17 @@ def _clean_common_word_tokens(text: str) -> tuple[str, list[str]]:
     if cleaned_tokens == tokens:
         return text, []
     return " ".join(cleaned_tokens), ["Read spaced common-word tokens using known visual lookalikes."]
+
+
+def _clean_space_before_punctuation(text: str) -> tuple[str, list[str]]:
+    """Remove accidental intra-row spaces before punctuation marks."""
+
+    cleaned = text
+    for punctuation in ("!", ".", ",", "?", ":", ";"):
+        cleaned = cleaned.replace(f" {punctuation}", punctuation)
+    if cleaned == text:
+        return text, []
+    return cleaned, ["Removed accidental space before punctuation."]
 
 
 def _clean_intraword_spaces(text: str) -> tuple[str, list[str]]:

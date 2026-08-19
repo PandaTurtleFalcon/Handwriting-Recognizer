@@ -1776,3 +1776,9 @@ restored, so future improvement loops do not repeat known-bad blends.
   - Result: `tmp/mixedcase_factorization_learned_gate_20260819T195442.json` found one confirmed promotable threshold (`0.8`), but it changed only `1` sample, fixed `1`, and broke `0`. Exact moved from `87.7797%` to `87.7805%`; digit stayed `95.0175%`, upper moved from `84.7062%` to `84.7094%`, lower stayed `73.1734%`, and case/visual moved from `98.0487%` to `98.0494%`.
   - Verification: `test_mixedcase_factorization.py` passed (`7` tests), `scripts/analyze_mixedcase_factorization.py` compiled, and benchmark summary still fails the mixed-case/letter targets because no serving artifact was promoted.
   - Takeaway: learned gating confirms the factorized path is not the route to 95%+. It can identify isolated safe fixes, but the remaining failure is representation/data quality for visual-family identity and exact lowercase, not threshold selection.
+
+- App-level punctuation spacing cleanup:
+  - Issue: generated script hardcases had one remaining display miss where `Hi!` was segmented as `Hi !`, leaving the app-level script suite at `89/90` exact (`98.8889%`).
+  - Change: `context_rules.cleanup_context` now removes accidental spaces before same-row punctuation marks (`! . , ? : ;`) after known token cleanup and before intraword compaction.
+  - Result: `tmp/hardcases_script_after_punct_spacing_20260819T195854.json` reached `90/90` display exact (`100.0%`) and `100.0%` ambiguity-aware on script hardcases. The broad benchmark summary is unchanged because this is a display/context rule, not a model-weight promotion.
+  - Verification: `test_context_rules.py` passed (`45` tests), `context_rules.py` compiled, and `scripts/summarize_benchmarks.py --target 95` still accurately reports the remaining mixed-case and character exact failures.
