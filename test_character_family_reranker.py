@@ -16,6 +16,7 @@ from scripts.probe_character_family_reranker import (
     parse_families,
     pixel_features,
     run_probe,
+    train_family_probe,
 )
 
 
@@ -154,6 +155,46 @@ class CharacterFamilyRerankerTests(unittest.TestCase):
         self.assertFalse(passed)
         self.assertEqual(reason, "letter_validation_accuracy_regressed")
         self.assertGreater(delta, 0)
+
+    def test_family_probe_can_cap_and_minibatch_training_samples(self) -> None:
+        features = torch.randn((90, 6), dtype=torch.float32)
+        targets = torch.tensor([0, 1, 2] * 30, dtype=torch.long)
+        labels = ["!", "1", "I"]
+
+        probe = train_family_probe(
+            features,
+            targets,
+            (0, 1, 2),
+            labels,
+            epochs=2,
+            learning_rate=0.01,
+            hidden_units=5,
+            max_train_samples=30,
+            mini_batch_size=6,
+            seed=99,
+        )
+
+        self.assertIsNotNone(probe)
+
+    def test_family_probe_rejects_caps_below_minimum_family_coverage(self) -> None:
+        features = torch.randn((90, 6), dtype=torch.float32)
+        targets = torch.tensor([0, 1, 2] * 30, dtype=torch.long)
+        labels = ["!", "1", "I"]
+
+        probe = train_family_probe(
+            features,
+            targets,
+            (0, 1, 2),
+            labels,
+            epochs=1,
+            learning_rate=0.01,
+            hidden_units=0,
+            max_train_samples=23,
+            mini_batch_size=6,
+            seed=99,
+        )
+
+        self.assertIsNone(probe)
 
     def test_run_probe_rejects_family_without_confirmation_gain(self) -> None:
         labels = ["!", "1"]
@@ -306,10 +347,14 @@ class CharacterFamilyRerankerTests(unittest.TestCase):
                 source_groups=None,
                 train_only_extra_roots=(Path("extra.pt"),),
                 include_pixel_features=True,
+                max_probe_train_samples=128,
+                mini_batch_size=32,
             )
 
         self.assertEqual(report["train_only_extra_samples"], 2)
         self.assertTrue(report["include_pixel_features"])
+        self.assertEqual(report["max_probe_train_samples"], 128)
+        self.assertEqual(report["mini_batch_size"], 32)
         self.assertEqual(report["fit_samples"], 6)
         self.assertEqual(report["selection_samples"], 2)
         self.assertEqual(report["validation_samples"], 4)

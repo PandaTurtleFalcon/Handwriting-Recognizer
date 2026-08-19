@@ -279,6 +279,9 @@ def train_family_probe(
     epochs: int,
     learning_rate: float,
     hidden_units: int,
+    max_train_samples: int | None = None,
+    mini_batch_size: int | None = None,
+    seed: int = 20260819,
 ) -> CharacterFamilyProbe | None:
     """Train one small classifier over samples whose true label is in the family."""
 
@@ -286,9 +289,28 @@ def train_family_probe(
     mask = torch.zeros_like(targets, dtype=torch.bool)
     for target in indices:
         mask |= targets == target
-    if int(mask.sum().item()) < len(indices) * 8:
+    selected_indices = torch.where(mask)[0]
+    if max_train_samples is not None and int(selected_indices.numel()) > max_train_samples:
+        generator = torch.Generator().manual_seed(seed)
+        capped_parts = []
+        per_label = max(1, max_train_samples // max(len(indices), 1))
+        for target in indices:
+            target_indices = selected_indices[targets[selected_indices] == target]
+            if int(target_indices.numel()) == 0:
+                continue
+            order = torch.randperm(int(target_indices.numel()), generator=generator)
+            capped_parts.append(target_indices[order[:per_label]])
+        if capped_parts:
+            selected_indices = torch.cat(capped_parts)
+        if int(selected_indices.numel()) > max_train_samples:
+            order = torch.randperm(int(selected_indices.numel()), generator=generator)
+            selected_indices = selected_indices[order[:max_train_samples]]
+    if int(selected_indices.numel()) < len(indices) * 8:
         return None
-    local_targets = torch.tensor([target_to_local[int(target)] for target in targets[mask].tolist()], dtype=torch.long)
+    local_targets = torch.tensor(
+        [target_to_local[int(target)] for target in targets[selected_indices].tolist()],
+        dtype=torch.long,
+    )
     if hidden_units > 0:
         model = nn.Sequential(
             nn.Linear(features.shape[1], hidden_units),
@@ -299,12 +321,21 @@ def train_family_probe(
         model = nn.Linear(features.shape[1], len(indices))
     optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate, weight_decay=0.001)
     criterion = nn.CrossEntropyLoss()
-    train_features = features[mask]
+    train_features = features[selected_indices]
+    effective_batch_size = (
+        int(train_features.shape[0])
+        if mini_batch_size is None or mini_batch_size <= 0
+        else min(int(mini_batch_size), int(train_features.shape[0]))
+    )
+    generator = torch.Generator().manual_seed(seed)
     for _epoch in range(max(1, epochs)):
-        optimizer.zero_grad(set_to_none=True)
-        loss = criterion(model(train_features), local_targets)
-        loss.backward()
-        optimizer.step()
+        order = torch.randperm(int(train_features.shape[0]), generator=generator)
+        for start in range(0, int(train_features.shape[0]), effective_batch_size):
+            batch_indices = order[start : start + effective_batch_size]
+            optimizer.zero_grad(set_to_none=True)
+            loss = criterion(model(train_features[batch_indices]), local_targets[batch_indices])
+            loss.backward()
+            optimizer.step()
     name = "".join(labels[index] for index in indices)
     return CharacterFamilyProbe(name=name, indices=indices, model=model.eval())
 
@@ -543,6 +574,8 @@ def run_probe(
     include_embedding_features: bool = False,
     probe_confidence: float = 0.0,
     probe_margin: float = 0.0,
+    max_probe_train_samples: int | None = None,
+    mini_batch_size: int | None = None,
     probe_data: CharacterProbeData | None = None,
 ) -> dict[str, object]:
     """Train confirmed family rerankers and evaluate them on validation."""
@@ -604,6 +637,9 @@ def run_probe(
             epochs,
             learning_rate,
             hidden_units,
+            max_train_samples=max_probe_train_samples,
+            mini_batch_size=mini_batch_size,
+            seed=seed,
         )
         if probe is None:
             skipped.append(family)
@@ -737,6 +773,8 @@ def run_probe(
         "source_groups": list(source_groups) if source_groups is not None else None,
         "include_pixel_features": include_pixel_features,
         "include_embedding_features": include_embedding_features,
+        "max_probe_train_samples": max_probe_train_samples,
+        "mini_batch_size": mini_batch_size,
         "probe_thresholds": {
             "confidence": probe_confidence,
             "margin": probe_margin,
@@ -763,6 +801,18 @@ def main() -> None:
     parser.add_argument("--probe-confidence", type=float, default=0.0)
     parser.add_argument("--probe-margin", type=float, default=0.0)
     parser.add_argument(
+        "--max-probe-train-samples",
+        type=int,
+        default=None,
+        help="Cap each family probe's balanced training samples for faster bounded sweeps.",
+    )
+    parser.add_argument(
+        "--mini-batch-size",
+        type=int,
+        default=None,
+        help="Train each family probe with mini-batches instead of one full batch.",
+    )
+    parser.add_argument(
         "--train-only-extra-root",
         action="append",
         default=[],
@@ -787,6 +837,8 @@ def main() -> None:
                 include_embedding_features=args.include_embedding_features,
                 probe_confidence=args.probe_confidence,
                 probe_margin=args.probe_margin,
+                max_probe_train_samples=args.max_probe_train_samples,
+                mini_batch_size=args.mini_batch_size,
             ),
             indent=2,
         )

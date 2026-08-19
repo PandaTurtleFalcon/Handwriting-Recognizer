@@ -91,6 +91,8 @@ def run_sweep(
     train_only_extra_roots: tuple[Path, ...] = (),
     include_pixel_features: bool = False,
     include_embedding_features: bool = False,
+    max_probe_train_samples: int | None = None,
+    mini_batch_size: int | None = None,
     max_runs: int | None = None,
 ) -> dict[str, object]:
     """Run bounded character-family reranker probes and summarize results."""
@@ -140,6 +142,8 @@ def run_sweep(
             include_embedding_features=include_embedding_features,
             probe_confidence=probe_confidence,
             probe_margin=probe_margin,
+            max_probe_train_samples=max_probe_train_samples,
+            mini_batch_size=mini_batch_size,
             probe_data=probe_data,
         )
         rows.append(compact_probe_report(report, parameters))
@@ -156,6 +160,8 @@ def run_sweep(
         "train_only_extra_roots": [str(root) for root in train_only_extra_roots],
         "include_pixel_features": include_pixel_features,
         "include_embedding_features": include_embedding_features,
+        "max_probe_train_samples": max_probe_train_samples,
+        "mini_batch_size": mini_batch_size,
         "planned_runs": len(all_runs),
         "completed_runs": len(rows),
         "truncated": max_runs is not None and len(all_runs) > max_runs,
@@ -186,6 +192,8 @@ def main() -> None:
     )
     parser.add_argument("--include-pixel-features", action="store_true")
     parser.add_argument("--include-embedding-features", action="store_true")
+    parser.add_argument("--max-probe-train-samples", type=int, default=None)
+    parser.add_argument("--mini-batch-size", type=int, default=None)
     parser.add_argument("--max-runs", type=int, default=None)
     args = parser.parse_args()
     print(
@@ -206,6 +214,8 @@ def main() -> None:
                 train_only_extra_roots=tuple(Path(root) for root in args.train_only_extra_root),
                 include_pixel_features=args.include_pixel_features,
                 include_embedding_features=args.include_embedding_features,
+                max_probe_train_samples=args.max_probe_train_samples,
+                mini_batch_size=args.mini_batch_size,
                 max_runs=args.max_runs,
             ),
             indent=2,

@@ -64,6 +64,8 @@ class SweepCharacterFamilyRerankerTests(unittest.TestCase):
                 train_only_extra_roots=(Path("cvl.pt"),),
                 include_pixel_features=True,
                 include_embedding_features=True,
+                max_probe_train_samples=128,
+                mini_batch_size=32,
                 max_runs=3,
             )
         finally:
@@ -77,12 +79,16 @@ class SweepCharacterFamilyRerankerTests(unittest.TestCase):
         self.assertEqual(calls[0]["train_only_extra_roots"], (Path("cvl.pt"),))
         self.assertTrue(calls[0]["include_pixel_features"])
         self.assertTrue(calls[0]["include_embedding_features"])
+        self.assertEqual(calls[0]["max_probe_train_samples"], 128)
+        self.assertEqual(calls[0]["mini_batch_size"], 32)
         self.assertEqual(calls[0]["probe_confidence"], 0.0)
         self.assertEqual(calls[0]["probe_margin"], 0.0)
         self.assertIs(calls[0]["probe_data"], prepared)
         self.assertEqual(report["train_only_extra_roots"], ["cvl.pt"])
         self.assertTrue(report["include_pixel_features"])
         self.assertTrue(report["include_embedding_features"])
+        self.assertEqual(report["max_probe_train_samples"], 128)
+        self.assertEqual(report["mini_batch_size"], 32)
 
 
 if __name__ == "__main__":
