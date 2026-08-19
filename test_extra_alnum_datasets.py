@@ -503,6 +503,25 @@ class ExtraAlnumDatasetTests(unittest.TestCase):
         self.assertEqual(kwargs["output_weights_path"], Path(directory) / "candidate.pt")
         self.assertEqual(kwargs["output_metrics_path"], Path(directory) / "candidate_metrics.json")
 
+    def test_mixedcase_cli_can_require_trained_candidate_checkpoint(self) -> None:
+        """Candidate loops can reject plain warm-start copies."""
+
+        with (
+            patch(
+                "sys.argv",
+                [
+                    "alnum_model.py",
+                    "--mixed-case",
+                    "--mixedcase-require-trained-checkpoint",
+                ],
+            ),
+            patch("alnum_model.train_mixedcase") as train,
+        ):
+            alnum_model.main()
+
+        _, kwargs = train.call_args
+        self.assertTrue(kwargs["require_trained_checkpoint"])
+
     def test_mixedcase_cli_rejects_candidate_outputs_with_deployed_gates(self) -> None:
         """Deployed benchmark gates should not be used to approve candidate files."""
 
@@ -611,6 +630,77 @@ class ExtraAlnumDatasetTests(unittest.TestCase):
                         output_weights_path=Path(directory) / "candidate.pt",
                         output_metrics_path=Path(directory) / "candidate_metrics.json",
                     )
+
+    def test_train_mixedcase_can_reject_warm_start_only_candidate(self) -> None:
+        """Candidate runs should not save a copied warm start when asked for a real epoch."""
+
+        with tempfile.TemporaryDirectory() as directory:
+            warm_start_path = Path(directory) / "warm_start.pt"
+            weights_path = Path(directory) / "candidate.pt"
+            metrics_path = Path(directory) / "candidate_metrics.json"
+            with (
+                patch("alnum_model.get_device", return_value=torch.device("cpu")),
+                patch("alnum_model.make_mixedcase_loaders") as loaders,
+                patch("alnum_model.MIXEDCASE_WEIGHTS_PATH", warm_start_path),
+                patch(
+                    "torch.load",
+                    return_value={
+                        "model_state_dict": MODEL_CLASSES["cnn"](len(MIXEDCASE_LABELS)).state_dict(),
+                        "labels": list(MIXEDCASE_LABELS),
+                        "model_type": "cnn",
+                    },
+                ),
+                patch("alnum_model.evaluate", return_value=(0.0, 80.0)),
+                patch(
+                    "alnum_model.evaluate_mixedcase_breakdown",
+                    return_value={
+                        "test_accuracy": 80.0,
+                        "case_or_ambiguity_aware_test_accuracy": 97.0,
+                        "casefold_test_accuracy": 87.0,
+                        "ambiguity_aware_test_accuracy": 90.0,
+                        "digit_test_accuracy": 83.0,
+                        "upper_test_accuracy": 72.0,
+                        "lower_test_accuracy": 84.0,
+                    },
+                ),
+                patch("alnum_model.evaluate_per_class", return_value={}),
+            ):
+                weights_path.write_bytes(b"warm-start")
+                loaders.return_value = (
+                    DataLoader(TensorDataset(torch.zeros((1, 1, 28, 28)), torch.zeros(1, dtype=torch.long))),
+                    DataLoader(TensorDataset(torch.zeros((1, 1, 28, 28)), torch.zeros(1, dtype=torch.long))),
+                    DataLoader(TensorDataset(torch.zeros((1, 1, 28, 28)), torch.zeros(1, dtype=torch.long))),
+                    DataLoader(TensorDataset(torch.zeros((1, 1, 28, 28)), torch.zeros(1, dtype=torch.long))),
+                    DataLoader(TensorDataset(torch.zeros((1, 1, 28, 28)), torch.zeros(1, dtype=torch.long))),
+                    np.ones(len(MIXEDCASE_LABELS), dtype=np.int64),
+                )
+
+                warm_start_path.write_bytes(b"warm-start")
+                with self.assertRaisesRegex(RuntimeError, "warm start"):
+                    alnum_model.train_mixedcase(
+                        epochs=1,
+                        batch_size=1,
+                        min_accuracy=0.0,
+                        learning_rate=0.001,
+                        seed=123,
+                        model_type="cnn",
+                        samples_per_class=1,
+                        device_name="auto",
+                        warm_start=True,
+                        min_checkpoint_case_or_visual=95.0,
+                        min_checkpoint_digit=80.0,
+                        min_checkpoint_upper=70.0,
+                        min_checkpoint_lower=80.0,
+                        output_weights_path=weights_path,
+                        output_metrics_path=metrics_path,
+                        require_trained_checkpoint=True,
+                    )
+
+            metrics = json.loads(metrics_path.read_text(encoding="utf-8"))
+
+        self.assertFalse(metrics["wrote_weights"])
+        self.assertEqual(metrics["best_checkpoint"]["source"], "warm_start_seed")
+        self.assertFalse(weights_path.exists())
 
     def test_mixedcase_cli_restores_artifacts_when_benchmark_gate_regresses(self) -> None:
         """Protected mixed-case training should restore artifacts after regression."""

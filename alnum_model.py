@@ -2400,6 +2400,7 @@ def train_mixedcase(
     min_checkpoint_lower: float = 0.0,
     output_weights_path: Path = MIXEDCASE_WEIGHTS_PATH,
     output_metrics_path: Path = MIXEDCASE_METRICS_PATH,
+    require_trained_checkpoint: bool = False,
 ) -> list[dict[str, float | int]]:
     """Train a 62-class recognizer that distinguishes uppercase and lowercase."""
 
@@ -2596,9 +2597,13 @@ def train_mixedcase(
             }
         elif floor_failures:
             last_checkpoint_floor_failures = floor_failures
+        checkpoint_source = str((best_metrics or {}).get("source", ""))
+        state_to_write = best_state
+        if require_trained_checkpoint and checkpoint_source.startswith("warm_start"):
+            state_to_write = None
         wrote_weights = save_mixedcase_checkpoint(
             history,
-            best_state,
+            state_to_write,
             best_accuracy,
             best_metrics,
             model_type,
@@ -2655,6 +2660,8 @@ def train_mixedcase(
         raise RuntimeError(f"Best mixed-case test accuracy was {best_accuracy:.2f}%, below {min_accuracy:.2f}%.")
     if not wrote_weights:
         details = "; ".join(last_checkpoint_floor_failures) if last_checkpoint_floor_failures else "no accepted checkpoint"
+        if require_trained_checkpoint and str((best_metrics or {}).get("source", "")).startswith("warm_start"):
+            details = "best checkpoint was still the warm start; no trained epoch improved the selected objective"
         raise RuntimeError(
             "No mixed-case checkpoint met the configured checkpoint floors; "
             f"latest floor misses: {details}; metrics were written to {output_metrics_path}, "
@@ -2994,6 +3001,11 @@ def main() -> None:
         help="Where mixed-case training writes its metrics JSON.",
     )
     parser.add_argument(
+        "--mixedcase-require-trained-checkpoint",
+        action="store_true",
+        help="Reject candidate runs when the selected checkpoint is still the warm-start weights.",
+    )
+    parser.add_argument(
         "--mixedcase-require-benchmark-gates",
         action="store_true",
         help="After mixed-case training, reject and restore artifacts if saved benchmark gates regress.",
@@ -3081,6 +3093,7 @@ def main() -> None:
                 min_checkpoint_lower=args.mixedcase_min_checkpoint_lower,
                 output_weights_path=args.mixedcase_output_weights_path,
                 output_metrics_path=args.mixedcase_output_metrics_path,
+                require_trained_checkpoint=args.mixedcase_require_trained_checkpoint,
             )
         except Exception:
             if mixedcase_baseline_gates is not None:
