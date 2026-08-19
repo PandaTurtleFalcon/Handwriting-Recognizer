@@ -15,6 +15,7 @@ if str(PROJECT_DIR) not in sys.path:
     sys.path.insert(0, str(PROJECT_DIR))
 
 from alnum_model import LABELS, MIXEDCASE_LABELS, load_mixedcase_extra_cache, limit_mixedcase_extra_cache  # noqa: E402
+from character_model import stratified_split_indices  # noqa: E402
 from scripts.calibrate_mixedcase_hybrid import hybrid_predictions  # noqa: E402
 from scripts.probe_mixedcase_feature_reranker import (  # noqa: E402
     _load_hybrid_artifact,
@@ -260,6 +261,88 @@ def _append_extra_tensors(
     return torch.cat(image_parts), torch.cat(target_parts)
 
 
+def _split_fit_selection_confirmation(
+    targets: torch.Tensor,
+    calibration_ratio: float,
+    confirmation_ratio: float,
+    seed: int,
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    """Split training tensors into fit, threshold-selection, and confirmation indices."""
+
+    if not 0.0 < calibration_ratio < 1.0:
+        raise ValueError("calibration_ratio must be between 0 and 1.")
+    if not 0.0 < confirmation_ratio < 1.0:
+        raise ValueError("confirmation_ratio must be between 0 and 1.")
+    indices = list(range(int(targets.numel())))
+    fit_indices, calibration_indices = stratified_split_indices(
+        indices,
+        test_size=calibration_ratio,
+        random_state=seed,
+        stratify=targets.numpy(),
+    )
+    calibration_targets = targets[torch.tensor(calibration_indices, dtype=torch.long)]
+    selection_indices, confirmation_indices = stratified_split_indices(
+        list(range(len(calibration_indices))),
+        test_size=confirmation_ratio,
+        random_state=seed + 1,
+        stratify=calibration_targets.numpy(),
+    )
+    calibration_tensor = torch.tensor(calibration_indices, dtype=torch.long)
+    return (
+        torch.tensor(fit_indices, dtype=torch.long),
+        calibration_tensor[torch.tensor(selection_indices, dtype=torch.long)],
+        calibration_tensor[torch.tensor(confirmation_indices, dtype=torch.long)],
+    )
+
+
+def select_confirm_case_resolver_thresholds(
+    selection_predictions: torch.Tensor,
+    selection_targets: torch.Tensor,
+    selection_features: torch.Tensor,
+    selection_folded_predictions: torch.Tensor,
+    confirmation_predictions: torch.Tensor,
+    confirmation_targets: torch.Tensor,
+    confirmation_features: torch.Tensor,
+    confirmation_folded_predictions: torch.Tensor,
+    model: nn.Module | None,
+    confidence_thresholds: list[float],
+    margin_thresholds: list[float],
+) -> tuple[dict[str, object] | None, dict[str, object] | None, list[dict[str, object]]]:
+    """Pick resolver gates on selection data and require confirmation before test use."""
+
+    _, _, selection_rows = sweep_case_resolver_thresholds(
+        selection_predictions,
+        selection_targets,
+        selection_features,
+        selection_folded_predictions,
+        model,
+        confidence_thresholds,
+        margin_thresholds,
+    )
+    safe_rows = [row for row in selection_rows if bool(row.get("safe"))]
+    selected = max(safe_rows, key=lambda row: float(row["metrics"]["test_accuracy"]), default=None)
+    if selected is None or model is None:
+        return None, None, selection_rows
+    candidate_predictions = apply_case_resolver(
+        confirmation_predictions,
+        confirmation_features,
+        confirmation_folded_predictions,
+        model,
+        float(selected["confidence_threshold"]),
+        float(selected["margin_threshold"]),
+    )
+    base_confirmation = _metrics(confirmation_predictions, confirmation_targets)
+    confirmation_metrics = _metrics(candidate_predictions, confirmation_targets)
+    confirmation = {
+        "safe": _resolver_candidate_is_safe(base_confirmation, confirmation_metrics),
+        "metrics": confirmation_metrics,
+        "test_delta": confirmation_metrics["test_accuracy"] - base_confirmation["test_accuracy"],
+    }
+    if not bool(confirmation["safe"]):
+        return None, confirmation, selection_rows
+    return selected, confirmation, selection_rows
+
+
 def run_probe(
     batch_size: int,
     train_sample_limit: int | None,
@@ -273,39 +356,82 @@ def run_probe(
     margin_thresholds: list[float] | None = None,
     extra_roots: list[Path] | None = None,
     extra_samples_per_class: int | None = None,
+    calibration_ratio: float = 0.2,
+    confirmation_ratio: float = 0.5,
 ) -> dict[str, object]:
     """Train and evaluate a case-resolver probe without writing artifacts."""
 
     torch.manual_seed(seed)
     train_images, train_targets = _split_tensors(train=True, sample_limit=train_sample_limit)
-    train_images, train_targets = _append_extra_tensors(
-        train_images,
+    fit_indices, selection_indices, confirmation_indices = _split_fit_selection_confirmation(
         train_targets,
+        calibration_ratio,
+        confirmation_ratio,
+        seed,
+    )
+    fit_images = train_images[fit_indices]
+    fit_targets = train_targets[fit_indices]
+    fit_images, fit_targets = _append_extra_tensors(
+        fit_images,
+        fit_targets,
         extra_roots or [],
         extra_samples_per_class,
         seed,
     )
+    selection_images = train_images[selection_indices]
+    selection_targets = train_targets[selection_indices]
+    confirmation_images = train_images[confirmation_indices]
+    confirmation_targets = train_targets[confirmation_indices]
     test_images, test_targets = _split_tensors(train=False, sample_limit=None)
-    train_mixed, train_folded = _model_outputs(train_images, batch_size)
+    train_mixed, train_folded = _model_outputs(fit_images, batch_size)
+    selection_mixed, selection_folded = _model_outputs(selection_images, batch_size)
+    confirmation_mixed, confirmation_folded = _model_outputs(confirmation_images, batch_size)
     test_mixed, test_folded = _model_outputs(test_images, batch_size)
-    train_features, train_folded_predictions = case_resolver_features(train_images, train_mixed, train_folded)
+    train_features, train_folded_predictions = case_resolver_features(fit_images, train_mixed, train_folded)
+    selection_features, selection_folded_predictions = case_resolver_features(
+        selection_images,
+        selection_mixed,
+        selection_folded,
+    )
+    confirmation_features, confirmation_folded_predictions = case_resolver_features(
+        confirmation_images,
+        confirmation_mixed,
+        confirmation_folded,
+    )
     test_features, test_folded_predictions = case_resolver_features(test_images, test_mixed, test_folded)
     resolver = train_case_resolver(
         train_features,
-        train_targets,
+        fit_targets,
         train_folded_predictions,
         hidden_units,
         epochs,
         learning_rate,
     )
     artifact = _load_hybrid_artifact()
+    selection_predictions = hybrid_predictions(selection_mixed, selection_folded, artifact)
+    confirmation_predictions = hybrid_predictions(confirmation_mixed, confirmation_folded, artifact)
     base_predictions = hybrid_predictions(test_mixed, test_folded, artifact)
     oracle_predictions = oracle_case_predictions(base_predictions, test_folded, test_targets)
     target_identity = _letter_identity_index(test_targets)
     folded_identity = test_folded_predictions - 10
     letter_mask = target_identity >= 0
     folded_identity_accuracy = 100.0 * float((folded_identity[letter_mask] == target_identity[letter_mask]).float().mean())
-    if resolver is None:
+    confidence_values = confidence_thresholds or [confidence_threshold]
+    margin_values = margin_thresholds or [margin_threshold]
+    selected_thresholds, confirmation, selection_rows = select_confirm_case_resolver_thresholds(
+        selection_predictions,
+        selection_targets,
+        selection_features,
+        selection_folded_predictions,
+        confirmation_predictions,
+        confirmation_targets,
+        confirmation_features,
+        confirmation_folded_predictions,
+        resolver,
+        confidence_values,
+        margin_values,
+    )
+    if resolver is None or selected_thresholds is None:
         resolved_predictions = base_predictions
         sweep_rows = []
         resolved_metrics = _metrics(resolved_predictions, test_targets)
@@ -316,8 +442,8 @@ def run_probe(
             test_features,
             test_folded_predictions,
             resolver,
-            confidence_thresholds or [confidence_threshold],
-            margin_thresholds or [margin_threshold],
+            [float(selected_thresholds["confidence_threshold"])],
+            [float(selected_thresholds["margin_threshold"])],
         )
     base_metrics = _metrics(base_predictions, test_targets)
     oracle_metrics = _metrics(oracle_predictions, test_targets)
@@ -340,16 +466,25 @@ def run_probe(
             )
         ),
         "resolver_trained": resolver is not None,
-        "train_samples": int(train_targets.numel()),
+        "fit_samples": int(fit_targets.numel()),
+        "selection_samples": int(selection_targets.numel()),
+        "confirmation_samples": int(confirmation_targets.numel()),
         "test_samples": int(test_targets.numel()),
         "hidden_units": hidden_units,
         "confidence_threshold": confidence_threshold,
         "margin_threshold": margin_threshold,
+        "selected_thresholds": selected_thresholds,
+        "confirmation": confirmation,
+        "selection_sweep_count": len(selection_rows),
+        "selection_safe_sweep_count": sum(1 for row in selection_rows if bool(row.get("safe"))),
         "safe_sweep_count": sum(1 for row in sweep_rows if bool(row.get("safe"))),
         "best_sweep_row": best_sweep_row,
+        "selection_sweep_rows": selection_rows,
         "sweep_rows": sweep_rows,
         "extra_roots": [str(path) for path in (extra_roots or [])],
         "extra_samples_per_class": extra_samples_per_class,
+        "calibration_ratio": calibration_ratio,
+        "confirmation_ratio": confirmation_ratio,
     }
 
 
@@ -369,6 +504,8 @@ def main() -> None:
     parser.add_argument("--seed", type=int, default=20260818)
     parser.add_argument("--extra-root", action="append", type=Path, default=[])
     parser.add_argument("--extra-samples-per-class", type=int, default=None)
+    parser.add_argument("--calibration-ratio", type=float, default=0.2)
+    parser.add_argument("--confirmation-ratio", type=float, default=0.5)
     args = parser.parse_args()
     print(
         json.dumps(
@@ -393,6 +530,8 @@ def main() -> None:
                 ),
                 extra_roots=args.extra_root,
                 extra_samples_per_class=args.extra_samples_per_class,
+                calibration_ratio=args.calibration_ratio,
+                confirmation_ratio=args.confirmation_ratio,
             ),
             indent=2,
         )

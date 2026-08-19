@@ -8,6 +8,7 @@ from scripts.probe_mixedcase_case_resolver import (
     case_resolver_features,
     oracle_case_predictions,
     parse_threshold_values,
+    select_confirm_case_resolver_thresholds,
     sweep_case_resolver_thresholds,
     train_case_resolver,
 )
@@ -136,6 +137,47 @@ class MixedcaseCaseResolverTests(unittest.TestCase):
                 learning_rate=0.01,
             )
         )
+
+    def test_select_confirm_case_resolver_rejects_confirmation_regression(self) -> None:
+        """Selection wins should not be used on test when confirmation disagrees."""
+
+        model = torch.nn.Linear(3, 2)
+        with torch.no_grad():
+            model.weight[:] = torch.tensor([[0.0, 0.0, 0.0], [5.0, 0.0, 0.0]])
+            model.bias.zero_()
+        selection_predictions = torch.tensor([10, 10, 36, 0], dtype=torch.long)
+        selection_targets = torch.tensor([10, 36, 36, 0], dtype=torch.long)
+        confirmation_predictions = torch.tensor([10, 10, 36, 0], dtype=torch.long)
+        confirmation_targets = torch.tensor([10, 10, 36, 0], dtype=torch.long)
+        folded_predictions = torch.tensor([10, 10, 10, 10], dtype=torch.long)
+        features = torch.tensor(
+            [
+                [-1.0, 0.0, 0.0],
+                [1.0, 0.0, 0.0],
+                [1.0, 0.0, 0.0],
+                [1.0, 0.0, 0.0],
+            ],
+            dtype=torch.float32,
+        )
+
+        selected, confirmation, rows = select_confirm_case_resolver_thresholds(
+            selection_predictions,
+            selection_targets,
+            features,
+            folded_predictions,
+            confirmation_predictions,
+            confirmation_targets,
+            features,
+            folded_predictions,
+            model,
+            confidence_thresholds=[0.0],
+            margin_thresholds=[0.0],
+        )
+
+        self.assertIsNone(selected)
+        self.assertIsNotNone(confirmation)
+        self.assertFalse(confirmation["safe"])
+        self.assertEqual(len(rows), 1)
 
 
 if __name__ == "__main__":
