@@ -34,6 +34,20 @@ class SummarizeMixedcaseProbeTests(unittest.TestCase):
                             "parameters": {"epochs": 80},
                             "base": {"test_accuracy": 87.0},
                             "reranked": {"test_accuracy": 87.2},
+                            "families": [
+                                {
+                                    "family": "flat",
+                                    "accepted": False,
+                                    "delta": 0.0,
+                                    "rejection_reason": "final_delta_below_floor",
+                                },
+                                {
+                                    "family": "near",
+                                    "accepted": False,
+                                    "delta": 0.3,
+                                    "rejection_reason": "final_digit_test_accuracy_regressed",
+                                },
+                            ],
                         },
                         "promotable_count": 1,
                         "completed_runs": 2,
@@ -89,6 +103,11 @@ class SummarizeMixedcaseProbeTests(unittest.TestCase):
         self.assertEqual(summary["accepted_count"], 2)
         self.assertEqual(summary["summaries"][0]["kind"], "sweep")
         self.assertEqual(summary["summaries"][0]["best_parameters"], {"epochs": 80})
+        self.assertEqual(summary["summaries"][0]["top_family_rows"][0]["family"], "near")
+        self.assertEqual(
+            summary["summaries"][0]["top_family_rows"][0]["rejection_reason"],
+            "final_digit_test_accuracy_regressed",
+        )
         self.assertEqual(summary["summaries"][1]["accepted_clusters"], ["9gq"])
         self.assertAlmostEqual(summary["summaries"][2]["best_test_delta"], 0.3)
 

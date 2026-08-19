@@ -30,6 +30,37 @@ def _metric_delta(after: object, before: object, key: str) -> float | None:
     return float(after_metrics[key]) - float(before_metrics[key])
 
 
+def _family_delta(row: dict[str, Any]) -> float:
+    """Return the final-test exact delta for one family row."""
+
+    if isinstance(row.get("delta"), (int, float)):
+        return float(row["delta"])
+    return _metric_delta(row.get("after_metrics"), row.get("before_metrics"), "test_accuracy") or 0.0
+
+
+def _compact_family_row(row: dict[str, Any]) -> dict[str, object]:
+    """Return the decision fields needed to compare one family row."""
+
+    return {
+        "family": row.get("family"),
+        "accepted": bool(row.get("accepted")),
+        "selection_delta": row.get("selection_delta"),
+        "confirmation_delta": row.get("confirmation_delta"),
+        "delta": row.get("delta"),
+        "rejection_reason": row.get("rejection_reason"),
+        "before_metrics": row.get("before_metrics"),
+        "after_metrics": row.get("after_metrics"),
+    }
+
+
+def top_family_rows(families: object, limit: int = 5) -> list[dict[str, object]]:
+    """Return family rows with the largest final exact deltas."""
+
+    rows = [_as_dict(row) for row in _as_list(families)]
+    ranked = sorted(rows, key=_family_delta, reverse=True)
+    return [_compact_family_row(row) for row in ranked[:limit]]
+
+
 def summarize_sweep(report: dict[str, Any]) -> dict[str, object]:
     """Return the compact fields for a mixed-case sweep report."""
 
@@ -46,6 +77,7 @@ def summarize_sweep(report: dict[str, Any]) -> dict[str, object]:
         "best_parameters": best.get("parameters"),
         "best_base": best.get("base"),
         "best_reranked": best.get("reranked"),
+        "top_family_rows": top_family_rows(best.get("families")),
     }
 
 
