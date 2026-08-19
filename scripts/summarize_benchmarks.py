@@ -386,6 +386,20 @@ def summarize_app_hardcases(
             report.get("ambiguity_aware_correct", 0),
             report.get("total", 0),
         ),
+        _counted_gate(
+            f"{prefix}_raw_exact",
+            _float_or_none(report.get("raw_exact_accuracy")),
+            target,
+            report.get("raw_exact_correct", 0),
+            report.get("total", 0),
+        ),
+        _counted_gate(
+            f"{prefix}_raw_ambiguity",
+            _float_or_none(report.get("raw_ambiguity_aware_accuracy")),
+            target,
+            report.get("raw_ambiguity_aware_correct", 0),
+            report.get("total", 0),
+        ),
     ]
 
 

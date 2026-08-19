@@ -145,6 +145,32 @@ def font_label(font: ImageFont.FreeTypeFont | ImageFont.ImageFont, fallback_inde
     return f"default-{fallback_index}"
 
 
+def hardcase_result_from_classified(target: str, classified: dict[str, object], font: str) -> HardCaseResult:
+    """Build display and pristine-raw hardcase scores from one classifier result."""
+
+    prediction = str(classified.get("sequence", ""))
+    raw_rows = classified.get("raw_row_sequences", [])
+    raw_prediction = (
+        "\n".join(str(row) for row in raw_rows)
+        if isinstance(raw_rows, list) and raw_rows
+        else str(classified.get("raw_sequence", prediction))
+    )
+    prediction_items = classified.get("predictions", [])
+    prediction_count = len(prediction_items) if isinstance(prediction_items, list) else None
+    return HardCaseResult(
+        target=target,
+        prediction=prediction,
+        exact=display_matches(target, prediction),
+        ambiguity_aware=sequence_matches_with_ambiguity(target, prediction),
+        font=font,
+        raw_prediction=raw_prediction,
+        raw_rows=[str(row) for row in raw_rows] if isinstance(raw_rows, list) else None,
+        prediction_count=prediction_count,
+        raw_exact=display_matches(target, raw_prediction),
+        raw_ambiguity_aware=sequence_matches_with_ambiguity(target, raw_prediction),
+    )
+
+
 def iter_fonts(size: int) -> list[tuple[str, ImageFont.FreeTypeFont | ImageFont.ImageFont]]:
     """Load available handwriting-ish system fonts for evaluator coverage."""
 
@@ -504,43 +530,33 @@ def evaluate_cases(cases: list[str] | None = None, all_fonts: bool = False, scri
         for target in selected_cases:
             payload = render_case(target, font)
             classified = main.classify_files([(f"{target}-{font_name}.png", payload)], model, device, save_sources=False)[0]
-            prediction = str(classified.get("sequence", ""))
-            results.append(
-                HardCaseResult(
-                    target=target,
-                    prediction=prediction,
-                    exact=display_matches(target, prediction),
-                    ambiguity_aware=sequence_matches_with_ambiguity(target, prediction),
-                    font=font_name,
-                )
-            )
+            results.append(hardcase_result_from_classified(target, classified, font_name))
     if script_cases:
         for index, target in enumerate(selected_cases):
             payload = render_script_case(target, seed=1000 + index)
             classified = main.classify_files([(f"{target}-script.png", payload)], model, device, save_sources=False)[0]
-            prediction = str(classified.get("sequence", ""))
-            results.append(
-                HardCaseResult(
-                    target=target,
-                    prediction=prediction,
-                    exact=display_matches(target, prediction),
-                    ambiguity_aware=sequence_matches_with_ambiguity(target, prediction),
-                    font="script",
-                )
-            )
+            results.append(hardcase_result_from_classified(target, classified, "script"))
     exact = sum(result.exact for result in results)
     ambiguity = sum(result.ambiguity_aware for result in results)
+    raw_exact = sum(bool(result.raw_exact) for result in results)
+    raw_ambiguity = sum(bool(result.raw_ambiguity_aware) for result in results)
     per_font: dict[str, dict[str, object]] = {}
     for font_name, _ in fonts:
         font_results = [result for result in results if result.font == font_name]
         font_exact = sum(result.exact for result in font_results)
         font_ambiguity = sum(result.ambiguity_aware for result in font_results)
+        font_raw_exact = sum(bool(result.raw_exact) for result in font_results)
+        font_raw_ambiguity = sum(bool(result.raw_ambiguity_aware) for result in font_results)
         per_font[font_name] = {
             "total": len(font_results),
             "exact_correct": font_exact,
             "exact_accuracy": 100.0 * font_exact / max(len(font_results), 1),
             "ambiguity_aware_correct": font_ambiguity,
             "ambiguity_aware_accuracy": 100.0 * font_ambiguity / max(len(font_results), 1),
+            "raw_exact_correct": font_raw_exact,
+            "raw_exact_accuracy": 100.0 * font_raw_exact / max(len(font_results), 1),
+            "raw_ambiguity_aware_correct": font_raw_ambiguity,
+            "raw_ambiguity_aware_accuracy": 100.0 * font_raw_ambiguity / max(len(font_results), 1),
         }
     return {
         "total": len(results),
@@ -548,6 +564,10 @@ def evaluate_cases(cases: list[str] | None = None, all_fonts: bool = False, scri
         "exact_accuracy": 100.0 * exact / max(len(results), 1),
         "ambiguity_aware_correct": ambiguity,
         "ambiguity_aware_accuracy": 100.0 * ambiguity / max(len(results), 1),
+        "raw_exact_correct": raw_exact,
+        "raw_exact_accuracy": 100.0 * raw_exact / max(len(results), 1),
+        "raw_ambiguity_aware_correct": raw_ambiguity,
+        "raw_ambiguity_aware_accuracy": 100.0 * raw_ambiguity / max(len(results), 1),
         "per_font": per_font,
         "results": [result.__dict__ for result in results],
     }
@@ -565,29 +585,7 @@ def evaluate_uploaded_fixtures(fixtures: list[dict[str, object]] | None = None) 
         if not path.exists() or not target:
             continue
         classified = main.classify_files([(path.name, path.read_bytes())], model, device, save_sources=False)[0]
-        prediction = str(classified.get("sequence", ""))
-        raw_rows = classified.get("raw_row_sequences", [])
-        raw_prediction = (
-            "\n".join(str(row) for row in raw_rows)
-            if isinstance(raw_rows, list) and raw_rows
-            else str(classified.get("raw_sequence", prediction))
-        )
-        prediction_items = classified.get("predictions", [])
-        prediction_count = len(prediction_items) if isinstance(prediction_items, list) else None
-        results.append(
-            HardCaseResult(
-                target=target,
-                prediction=prediction,
-                exact=display_matches(target, prediction),
-                ambiguity_aware=sequence_matches_with_ambiguity(target, prediction),
-                font="uploaded",
-                raw_prediction=raw_prediction,
-                raw_rows=[str(row) for row in raw_rows] if isinstance(raw_rows, list) else None,
-                prediction_count=prediction_count,
-                raw_exact=display_matches(target, raw_prediction),
-                raw_ambiguity_aware=sequence_matches_with_ambiguity(target, raw_prediction),
-            )
-        )
+        results.append(hardcase_result_from_classified(target, classified, "uploaded"))
     exact = sum(result.exact for result in results)
     ambiguity = sum(result.ambiguity_aware for result in results)
     raw_exact = sum(bool(result.raw_exact) for result in results)

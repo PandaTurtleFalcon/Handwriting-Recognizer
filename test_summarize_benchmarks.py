@@ -779,6 +779,10 @@ class BenchmarkSummaryTests(unittest.TestCase):
                 "exact_correct": 176,
                 "ambiguity_aware_accuracy": 100.0,
                 "ambiguity_aware_correct": 176,
+                "raw_exact_accuracy": 50.0,
+                "raw_exact_correct": 88,
+                "raw_ambiguity_aware_accuracy": 75.0,
+                "raw_ambiguity_aware_correct": 132,
                 "total": 176,
             },
         ) as evaluate:
@@ -790,6 +794,9 @@ class BenchmarkSummaryTests(unittest.TestCase):
         self.assertTrue(by_name["app_hardcase_ambiguity"]["passed"])
         self.assertEqual(by_name["app_hardcase_exact"]["correct"], 176)
         self.assertEqual(by_name["app_hardcase_exact"]["total"], 176)
+        self.assertFalse(by_name["app_hardcase_raw_exact"]["passed"])
+        self.assertFalse(by_name["app_hardcase_raw_ambiguity"]["passed"])
+        self.assertEqual(by_name["app_hardcase_raw_exact"]["correct"], 88)
 
     def test_summarizes_script_hardcase_gates_on_demand(self) -> None:
         with patch(
@@ -799,6 +806,10 @@ class BenchmarkSummaryTests(unittest.TestCase):
                 "exact_correct": 1,
                 "ambiguity_aware_accuracy": 100.0,
                 "ambiguity_aware_correct": 2,
+                "raw_exact_accuracy": 50.0,
+                "raw_exact_correct": 1,
+                "raw_ambiguity_aware_accuracy": 50.0,
+                "raw_ambiguity_aware_correct": 1,
                 "total": 2,
             },
         ) as evaluate:
@@ -808,6 +819,8 @@ class BenchmarkSummaryTests(unittest.TestCase):
         by_name = {str(item["name"]): item for item in report}
         self.assertFalse(by_name["app_script_hardcase_exact"]["passed"])
         self.assertTrue(by_name["app_script_hardcase_ambiguity"]["passed"])
+        self.assertFalse(by_name["app_script_hardcase_raw_exact"]["passed"])
+        self.assertFalse(by_name["app_script_hardcase_raw_ambiguity"]["passed"])
         self.assertEqual(by_name["app_script_hardcase_exact"]["correct"], 1)
 
     def test_summarizes_uploaded_hardcase_gates_on_demand(self) -> None:

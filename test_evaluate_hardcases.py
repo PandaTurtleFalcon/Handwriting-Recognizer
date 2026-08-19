@@ -8,6 +8,7 @@ from scripts.evaluate_hardcases import (
     display_matches,
     evaluate_cases,
     evaluate_uploaded_fixtures,
+    hardcase_result_from_classified,
     render_script_case,
     sequence_matches_with_ambiguity,
 )
@@ -34,13 +35,16 @@ class HardCaseEvaluationTests(unittest.TestCase):
         with patch("scripts.evaluate_hardcases.load_web_models", return_value=(object(), object())):
             with patch("scripts.evaluate_hardcases.iter_fonts", return_value=[("font-a", ImageFont.load_default())]):
                 with patch("scripts.evaluate_hardcases.main.classify_files") as classifier:
-                    classifier.return_value = [{"sequence": "Hi"}]
+                    classifier.return_value = [{"sequence": "Hi", "raw_sequence": "HL", "raw_row_sequences": ["HL"]}]
 
                     report = evaluate_cases(["Hi"], all_fonts=True)
 
         self.assertEqual(report["exact_accuracy"], 100.0)
+        self.assertEqual(report["raw_exact_accuracy"], 0.0)
         self.assertEqual(report["per_font"]["font-a"]["exact_accuracy"], 100.0)
+        self.assertEqual(report["per_font"]["font-a"]["raw_exact_accuracy"], 0.0)
         self.assertEqual(report["results"][0]["font"], "font-a")
+        self.assertEqual(report["results"][0]["raw_prediction"], "HL")
 
     def test_evaluate_cases_can_include_script_cases(self) -> None:
         """Script mode should add deterministic rough handwriting cases."""
@@ -48,13 +52,32 @@ class HardCaseEvaluationTests(unittest.TestCase):
         with patch("scripts.evaluate_hardcases.load_web_models", return_value=(object(), object())):
             with patch("scripts.evaluate_hardcases.iter_fonts", return_value=[("font-a", ImageFont.load_default())]):
                 with patch("scripts.evaluate_hardcases.main.classify_files") as classifier:
-                    classifier.return_value = [{"sequence": "Oo0"}]
+                    classifier.return_value = [{"sequence": "Oo0", "raw_sequence": "Oo0", "raw_row_sequences": ["Oo0"]}]
 
                     report = evaluate_cases(["Oo0"], all_fonts=False, script_cases=True)
 
         self.assertEqual(report["total"], 2)
         self.assertEqual(classifier.call_count, 2)
         self.assertEqual(report["results"][1]["font"], "script")
+
+    def test_hardcase_result_from_classified_scores_pristine_raw_text(self) -> None:
+        """Display cleanup can pass while pristine raw scoring still fails."""
+
+        result = hardcase_result_from_classified(
+            "look behind you",
+            {
+                "sequence": "look behind\nyou",
+                "raw_sequence": "xOO11ehind7o4",
+                "raw_row_sequences": ["xOO11ehind", "7o4"],
+                "predictions": [{"label": "x"}, {"label": "O"}],
+            },
+            "mock-font",
+        )
+
+        self.assertTrue(result.exact)
+        self.assertFalse(result.raw_exact)
+        self.assertEqual(result.raw_prediction, "xOO11ehind\n7o4")
+        self.assertEqual(result.prediction_count, 2)
 
     def test_evaluate_uploaded_fixtures_reports_real_upload_results(self) -> None:
         """Saved upload fixtures should use the same classifier path as the site."""
