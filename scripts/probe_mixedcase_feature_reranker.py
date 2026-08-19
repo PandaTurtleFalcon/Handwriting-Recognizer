@@ -562,6 +562,7 @@ def apply_family_probe(
     probe_margin: float = 0.0,
     base_confidence_max: float | None = None,
     base_margin_max: float | None = None,
+    digit_protect_confidence: float | None = None,
     include_pixel_features: bool = False,
     embedding_outputs: torch.Tensor | None = None,
 ) -> torch.Tensor:
@@ -605,6 +606,15 @@ def apply_family_probe(
         dtype=torch.long,
     )
     candidate_indices = torch.where(current_in_family)[0]
+    if digit_outputs is not None and digit_protect_confidence is not None:
+        current_labels = predictions[candidate_indices]
+        current_digits = current_labels < 10
+        if bool(current_digits.any()):
+            digit_probabilities = digit_outputs.softmax(dim=1)
+            digit_confidence = digit_probabilities[candidate_indices[current_digits], current_labels[current_digits]]
+            protected = digit_confidence >= digit_protect_confidence
+            digit_positions = torch.where(current_digits)[0]
+            replace_mask[digit_positions[protected]] = False
     next_predictions = predictions.clone()
     next_predictions[candidate_indices[replace_mask]] = replacements[replace_mask]
     return next_predictions
@@ -831,6 +841,7 @@ def run_probe_from_data(
     probe_margin: float = 0.0,
     base_confidence_max: float | None = None,
     base_margin_max: float | None = None,
+    digit_protect_confidence: float | None = None,
     max_probe_train_samples: int | None = None,
     mini_batch_size: int | None = None,
     output_path: Path = MIXEDCASE_FAMILY_RERANKER_PATH,
@@ -876,6 +887,7 @@ def run_probe_from_data(
             probe_margin,
             base_confidence_max,
             base_margin_max,
+            digit_protect_confidence,
             include_pixel_features,
             data.selection_embedding,
         )
@@ -896,6 +908,7 @@ def run_probe_from_data(
                 probe_margin,
                 base_confidence_max,
                 base_margin_max,
+                digit_protect_confidence,
                 include_pixel_features,
                 data.confirmation_embedding,
             )
@@ -937,6 +950,7 @@ def run_probe_from_data(
             probe_margin,
             base_confidence_max,
             base_margin_max,
+            digit_protect_confidence,
             include_pixel_features,
             data.test_embedding,
         )
@@ -991,6 +1005,7 @@ def run_probe_from_data(
                 "probe_margin": probe_margin,
                 "base_confidence_max": base_confidence_max,
                 "base_margin_max": base_margin_max,
+                "digit_protect_confidence": digit_protect_confidence,
                 "include_digit_features": data.fit_digit is not None,
                 "include_pixel_features": include_pixel_features,
                 "include_embedding_features": data.fit_embedding is not None,
@@ -1063,6 +1078,7 @@ def run_probe_from_data(
             "margin": probe_margin,
             "base_confidence_max": base_confidence_max,
             "base_margin_max": base_margin_max,
+            "digit_protect_confidence": digit_protect_confidence,
         },
         "wrote": wrote,
         "output_path": str(output_path),
@@ -1096,6 +1112,7 @@ def run_probe(
     probe_margin: float = 0.0,
     base_confidence_max: float | None = None,
     base_margin_max: float | None = None,
+    digit_protect_confidence: float | None = None,
     max_probe_train_samples: int | None = None,
     mini_batch_size: int | None = None,
     output_path: Path = MIXEDCASE_FAMILY_RERANKER_PATH,
@@ -1207,6 +1224,7 @@ def run_probe(
             probe_margin,
             base_confidence_max,
             base_margin_max,
+            digit_protect_confidence,
             include_pixel_features,
             selection_embedding,
         )
@@ -1227,6 +1245,7 @@ def run_probe(
                 probe_margin,
                 base_confidence_max,
                 base_margin_max,
+                digit_protect_confidence,
                 include_pixel_features,
                 confirmation_embedding,
             )
@@ -1268,6 +1287,7 @@ def run_probe(
             probe_margin,
             base_confidence_max,
             base_margin_max,
+            digit_protect_confidence,
             include_pixel_features,
             test_embedding,
         )
@@ -1322,6 +1342,7 @@ def run_probe(
                 "probe_margin": probe_margin,
                 "base_confidence_max": base_confidence_max,
                 "base_margin_max": base_margin_max,
+                "digit_protect_confidence": digit_protect_confidence,
                 "include_digit_features": include_digit_features,
                 "include_pixel_features": include_pixel_features,
                 "include_embedding_features": include_embedding_features,
@@ -1395,6 +1416,7 @@ def run_probe(
             "margin": probe_margin,
             "base_confidence_max": base_confidence_max,
             "base_margin_max": base_margin_max,
+            "digit_protect_confidence": digit_protect_confidence,
         },
         "wrote": wrote,
         "output_path": str(output_path),
@@ -1452,6 +1474,7 @@ def main() -> None:
     parser.add_argument("--probe-margin", type=float, default=0.0)
     parser.add_argument("--base-confidence-max", type=float, default=None)
     parser.add_argument("--base-margin-max", type=float, default=None)
+    parser.add_argument("--digit-protect-confidence", type=float, default=None)
     parser.add_argument(
         "--max-probe-train-samples",
         type=int,
@@ -1496,6 +1519,7 @@ def main() -> None:
                 probe_margin=args.probe_margin,
                 base_confidence_max=args.base_confidence_max,
                 base_margin_max=args.base_margin_max,
+                digit_protect_confidence=args.digit_protect_confidence,
                 max_probe_train_samples=args.max_probe_train_samples,
                 mini_batch_size=args.mini_batch_size,
                 output_path=args.output_path,

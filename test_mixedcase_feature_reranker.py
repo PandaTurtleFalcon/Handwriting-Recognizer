@@ -205,6 +205,34 @@ class MixedcaseFeatureRerankerTests(unittest.TestCase):
 
         self.assertEqual(gated.tolist(), [10, 11])
 
+    def test_apply_family_probe_can_protect_digit_specialist_agreement(self) -> None:
+        """Digit-like predictions should survive when the digit specialist is confident."""
+
+        model = torch.nn.Linear(50, 2)
+        with torch.no_grad():
+            model.weight.zero_()
+            model.bias[:] = torch.tensor([0.0, 5.0])
+        probe = FamilyProbe("0O", (0, 24), model)
+        predictions = torch.tensor([0, 0], dtype=torch.long)
+        images = torch.zeros((2, 1, 28, 28), dtype=torch.float32)
+        mixed = torch.zeros((2, 62), dtype=torch.float32)
+        folded = torch.zeros((2, 36), dtype=torch.float32)
+        digit_outputs = torch.zeros((2, 10), dtype=torch.float32)
+        digit_outputs[0, 0] = 8.0
+        digit_outputs[1, 0] = 0.1
+
+        protected = apply_family_probe(
+            predictions,
+            images,
+            mixed,
+            folded,
+            probe,
+            digit_outputs=digit_outputs,
+            digit_protect_confidence=0.9,
+        )
+
+        self.assertEqual(protected.tolist(), [0, 24])
+
     def test_fit_tensors_appends_capped_extra_roots(self) -> None:
         """Optional adviser data should be capped before joining fit tensors."""
 
@@ -391,7 +419,13 @@ class MixedcaseFeatureRerankerTests(unittest.TestCase):
         )
         self.assertEqual(
             report["probe_thresholds"],
-            {"confidence": 0.0, "margin": 0.0, "base_confidence_max": None, "base_margin_max": None},
+            {
+                "confidence": 0.0,
+                "margin": 0.0,
+                "base_confidence_max": None,
+                "base_margin_max": None,
+                "digit_protect_confidence": None,
+            },
         )
         self.assertEqual(report["selection_samples"], 1)
         self.assertEqual(report["confirmation_samples"], 2)

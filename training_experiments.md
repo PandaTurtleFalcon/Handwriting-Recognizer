@@ -1660,3 +1660,10 @@ restored, so future improvement loops do not repeat known-bad blends.
   - Margin-cap sweep: base-margin caps `0.02`, `0.05`, `0.10`, and `0.20` all regressed digit accuracy, with exact deltas from `-0.0182` to `-0.1259`; no candidate was promotable.
   - Verification: `test_mixedcase_feature_reranker.py` passed (`26` tests), and the modified reranker script compiled.
   - Takeaway: base confidence is a useful safety lever, but it is not enough by itself to harvest the `0Oo` rough signal. Future searches should combine confidence caps with family-specific source groups or digit-specialist agreement rather than relying on the mixed-case head alone.
+
+- Rejected digit-specialist protected `0Oo` reranker sweeps:
+  - Tooling: `scripts/probe_mixedcase_feature_reranker.py` now has optional `--digit-protect-confidence`, which blocks reranker changes away from a current digit when the MNIST digit specialist is confident in that same digit. This directly targets the prior `0Oo` failure where rough gains damaged standard digit accuracy.
+  - Digit-protection sweep: thresholds `0.70`, `0.85`, and `0.95` preserved and even improved the digit split (`95.0249% -> 95.2737%`), but all candidates regressed uppercase (`84.7030% -> about 83.92-83.93%`) and were rejected.
+  - Combined gate sweep: adding base-confidence caps `0.20` and `0.35` on top of `--digit-protect-confidence 0.95` produced tiny exact gains (`+0.0079` and `+0.0158`) while keeping digit accuracy above baseline, but both still regressed uppercase and lower by small amounts, so no artifact was written.
+  - Verification: `test_mixedcase_feature_reranker.py` passed (`27` tests), and the modified reranker script compiled.
+  - Takeaway: digit-specialist protection successfully fixes the digit-regression failure mode, but the current `0Oo` reranker still over-edits uppercase O-like crops. The next refinement should add a symmetric upper-protection gate or require upper/lower confidence disagreement before touching current uppercase predictions.
