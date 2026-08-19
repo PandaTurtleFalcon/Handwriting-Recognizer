@@ -35,6 +35,7 @@ from alnum_model import (
     mixedcase_checkpoint_floor_failures,
     mixedcase_checkpoint_meets_floors,
     mixedcase_checkpoint_score,
+    mixedcase_distillation_loss,
     mixedcase_folded_logits,
     mixedcase_folded_targets,
     mixedcase_loss_weights,
@@ -238,6 +239,21 @@ class ExtraAlnumDatasetTests(unittest.TestCase):
 
         self.assertTrue(torch.isfinite(loss))
         self.assertIsNotNone(outputs.grad)
+
+    def test_mixedcase_distillation_loss_preserves_teacher_logits(self) -> None:
+        """Distillation should be zero for matching logits and positive for drift."""
+
+        student = torch.tensor([[2.0, 0.0], [0.2, 1.1]], dtype=torch.float32)
+        teacher = student.clone()
+        shifted = torch.tensor([[0.0, 2.0], [1.1, 0.2]], dtype=torch.float32)
+
+        self.assertEqual(float(mixedcase_distillation_loss(student, teacher, weight=0.0).item()), 0.0)
+        self.assertAlmostEqual(
+            float(mixedcase_distillation_loss(student, teacher, weight=1.0).item()),
+            0.0,
+            places=6,
+        )
+        self.assertGreater(float(mixedcase_distillation_loss(shifted, teacher, weight=1.0).item()), 0.0)
 
     def test_mixedcase_ascii_folder_loader_preserves_case(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -537,6 +553,29 @@ class ExtraAlnumDatasetTests(unittest.TestCase):
 
         _, kwargs = train.call_args
         self.assertTrue(kwargs["require_trained_checkpoint"])
+
+    def test_mixedcase_cli_passes_distillation_settings(self) -> None:
+        """Mixed-case experiments can preserve warm-start logits with distillation."""
+
+        with (
+            patch(
+                "sys.argv",
+                [
+                    "alnum_model.py",
+                    "--mixed-case",
+                    "--mixedcase-distillation-weight",
+                    "0.4",
+                    "--mixedcase-distillation-temperature",
+                    "3.5",
+                ],
+            ),
+            patch("alnum_model.train_mixedcase") as train,
+        ):
+            alnum_model.main()
+
+        _, kwargs = train.call_args
+        self.assertEqual(kwargs["distillation_weight"], 0.4)
+        self.assertEqual(kwargs["distillation_temperature"], 3.5)
 
     def test_mixedcase_cli_rejects_candidate_outputs_with_deployed_gates(self) -> None:
         """Deployed benchmark gates should not be used to approve candidate files."""

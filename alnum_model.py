@@ -25,6 +25,7 @@ import numpy as np
 import torch
 from PIL import Image, ImageOps
 from torch import nn
+from torch.nn import functional as F
 from torch.utils.data import ConcatDataset, DataLoader, TensorDataset, WeightedRandomSampler
 
 from emnist_experiment import DATA_ROOT as EMNIST_DATA_ROOT
@@ -1154,6 +1155,26 @@ def mixedcase_auxiliary_loss(
     return loss
 
 
+def mixedcase_distillation_loss(
+    student_outputs: torch.Tensor,
+    teacher_outputs: torch.Tensor,
+    weight: float = 0.0,
+    temperature: float = 2.0,
+) -> torch.Tensor:
+    """Return KL distillation loss that discourages large warm-start drift."""
+
+    if weight <= 0.0:
+        return student_outputs.new_zeros(())
+    safe_temperature = max(float(temperature), 1e-6)
+    teacher_probs = F.softmax(teacher_outputs.detach() / safe_temperature, dim=1)
+    student_log_probs = F.log_softmax(student_outputs / safe_temperature, dim=1)
+    return (
+        F.kl_div(student_log_probs, teacher_probs, reduction="batchmean")
+        * (safe_temperature * safe_temperature)
+        * float(weight)
+    )
+
+
 class FocalCrossEntropyLoss(nn.Module):
     """Cross-entropy with optional focal scaling for hard mixed-case samples."""
 
@@ -2234,6 +2255,8 @@ def save_mixedcase_checkpoint(
     type_loss_weight: float = 0.0,
     label_smoothing: float = 0.03,
     focal_gamma: float = 0.0,
+    distillation_weight: float = 0.0,
+    distillation_temperature: float = 2.0,
     transfer_from_folded: bool = False,
     class_balance_strength: float = 0.0,
     freeze_feature_layers: bool = False,
@@ -2277,6 +2300,8 @@ def save_mixedcase_checkpoint(
                 "type_loss_weight": type_loss_weight,
                 "label_smoothing": label_smoothing,
                 "focal_gamma": focal_gamma,
+                "distillation_weight": distillation_weight,
+                "distillation_temperature": distillation_temperature,
                 "transfer_from_folded": transfer_from_folded,
                 "class_balance_strength": class_balance_strength,
                 "freeze_feature_layers": freeze_feature_layers,
@@ -2316,6 +2341,8 @@ def save_mixedcase_checkpoint(
                 "type_loss_weight": type_loss_weight,
                 "label_smoothing": label_smoothing,
                 "focal_gamma": focal_gamma,
+                "distillation_weight": distillation_weight,
+                "distillation_temperature": distillation_temperature,
                 "transfer_from_folded": transfer_from_folded,
                 "class_balance_strength": class_balance_strength,
                 "freeze_feature_layers": freeze_feature_layers,
@@ -2438,6 +2465,8 @@ def train_mixedcase(
     type_loss_weight: float = 0.0,
     label_smoothing: float = 0.03,
     focal_gamma: float = 0.0,
+    distillation_weight: float = 0.0,
+    distillation_temperature: float = 2.0,
     transfer_from_folded: bool = False,
     class_balance_strength: float = 0.0,
     freeze_feature_layers_enabled: bool = False,
@@ -2507,6 +2536,15 @@ def train_mixedcase(
         checkpoint = torch.load(MIXEDCASE_WEIGHTS_PATH, map_location=device, weights_only=True)
         validate_mixedcase_warm_start_checkpoint(checkpoint, model_type)
         model.load_state_dict(checkpoint["model_state_dict"])
+    teacher_model = None
+    if warm_start and distillation_weight > 0.0 and MIXEDCASE_WEIGHTS_PATH.exists():
+        teacher_checkpoint = torch.load(MIXEDCASE_WEIGHTS_PATH, map_location=device, weights_only=True)
+        validate_mixedcase_warm_start_checkpoint(teacher_checkpoint, model_type)
+        teacher_model = MODEL_CLASSES[model_type](num_classes=len(MIXEDCASE_LABELS)).to(device)
+        teacher_model.load_state_dict(teacher_checkpoint["model_state_dict"])
+        teacher_model.eval()
+        for parameter in teacher_model.parameters():
+            parameter.requires_grad = False
     if freeze_feature_layers_enabled:
         freeze_feature_layers(model, trainable_tail_modules)
     trainable_parameters = [parameter for parameter in model.parameters() if parameter.requires_grad]
@@ -2578,6 +2616,15 @@ def train_mixedcase(
                 folded_loss_weight,
                 type_loss_weight,
             )
+            if teacher_model is not None:
+                with torch.no_grad():
+                    teacher_outputs = teacher_model(images)
+                loss = loss + mixedcase_distillation_loss(
+                    outputs,
+                    teacher_outputs,
+                    distillation_weight,
+                    distillation_temperature,
+                )
             loss.backward()
             optimizer.step()
             train_loss_total += loss.item()
@@ -2686,6 +2733,8 @@ def train_mixedcase(
             type_loss_weight,
             label_smoothing,
             focal_gamma,
+            distillation_weight,
+            distillation_temperature,
             transferred_from_folded,
             class_balance_strength,
             freeze_feature_layers_enabled,
@@ -3016,6 +3065,18 @@ def main() -> None:
         help="Optional focal-loss gamma for hard mixed-case examples.",
     )
     parser.add_argument(
+        "--mixedcase-distillation-weight",
+        type=float,
+        default=0.0,
+        help="Optional KL weight that keeps warm-start mixed-case logits close to their teacher.",
+    )
+    parser.add_argument(
+        "--mixedcase-distillation-temperature",
+        type=float,
+        default=2.0,
+        help="Softmax temperature for --mixedcase-distillation-weight.",
+    )
+    parser.add_argument(
         "--mixedcase-transfer-from-folded",
         action="store_true",
         help="Initialize a fresh mixed-case CNN from the folded alnum checkpoint before training.",
@@ -3162,6 +3223,8 @@ def main() -> None:
                 type_loss_weight=args.mixedcase_type_loss_weight,
                 label_smoothing=args.mixedcase_label_smoothing,
                 focal_gamma=args.mixedcase_focal_gamma,
+                distillation_weight=args.mixedcase_distillation_weight,
+                distillation_temperature=args.mixedcase_distillation_temperature,
                 transfer_from_folded=args.mixedcase_transfer_from_folded,
                 class_balance_strength=args.mixedcase_class_balance_strength,
                 freeze_feature_layers_enabled=args.mixedcase_freeze_feature_layers,
