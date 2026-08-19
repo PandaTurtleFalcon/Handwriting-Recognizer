@@ -21,6 +21,14 @@ restored, so future improvement loops do not repeat known-bad blends.
 
 ## Kept Experiments
 
+- Mixed-case top-six reranker speed controls and rejected capped smoke:
+  - Headroom refresh: deployed mixed-case exact remains `87.7797%`; resolving `!/1Iil|`, `0Oo`, `5Ss`, `MNmn`, `9gq`, and `Uuv` is still the smallest measured family set that oracle-crosses `95%` (`95.3247%`). Character exact remains `94.1477%`; resolving only `!/1Iil|` would oracle-cross `95.6037%`.
+  - Code path: `scripts/probe_mixedcase_feature_reranker.py` now caches loaded train/test split tensors inside the process, and family probe training supports `--max-probe-train-samples` plus `--mini-batch-size`. `scripts/sweep_mixedcase_feature_reranker.py` forwards those controls. `scripts/summarize_mixedcase_probes.py` summarizes residual-cluster, checkpoint-ensemble, and sweep JSON reports.
+  - Rejected residual probe: a direct top-six residual-cluster run over `!/1Iil|`, `0Oo`, `5Ss`, `MNmn`, `9gq`, and `Uuv` produced `0` accepted clusters. `0Oo` had positive selection (`+0.0400`) and confirmation (`+0.0800`) exact deltas but regressed the protected upper split during selection; `9gq` reached final test and then moved exact by `-0.0230`.
+  - Rejected checkpoint ensemble probe: scanning `24` candidate backup slots found `1` unique checkpoint and `42` duplicate checkpoint hashes, so no non-identical ensemble candidate existed to test.
+  - Rejected capped feature sweep: a four-row smoke with embedding, pixel, and digit-specialist features, `max_probe_train_samples=1200`, and minibatches of `256` completed with `0` promotable rows. The closest `1Iil` row improved final exact from `87.7782%` to `87.7908%` and lower from `73.1513%` to `73.2880%`, but regressed digit exact from `95.0249%` to `94.9910%`, below the deployed floor, so no artifact was written.
+  - Takeaway: the faster harness can now run bounded high-dimensional probes, and the top-six path still needs either a stricter digit-preserving objective or separate digit/letter family gates before deployment.
+
 - Mixed-case pair-rule visual-twin calibration:
   - Code path: `alnum_model.py` now loads an optional `mixedcase_pair_rules.json` artifact after the existing logit bias, `scripts/calibrate_mixedcase_logits.py --pair-rules` greedily searches ordered visual-twin flips with split floors, and `scripts/summarize_benchmarks.py` reports the pair-rule metrics when the artifact matches the label set.
   - Command shape: `python3 scripts/calibrate_mixedcase_logits.py --pair-rules --batch-size 4096 --greedy-rounds 8 --pair-thresholds=-1.75,-1.5,-1.25,-1.0,-0.85,-0.7,-0.5,-0.32,-0.18 --min-improvement 0.01 --min-test 87.4583 --min-case-or-visual 97.7770 --min-digit 94.9203 --min-upper 84.0713 --min-lower 72.6523 --write --require-app-gates`.

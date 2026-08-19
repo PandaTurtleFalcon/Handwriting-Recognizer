@@ -8,6 +8,7 @@ import json
 import pickle
 import sys
 from dataclasses import dataclass
+from functools import lru_cache
 from pathlib import Path
 
 import torch
@@ -177,6 +178,7 @@ def _load_hybrid_artifact() -> dict[str, object]:
         return {"enabled": False}
 
 
+@lru_cache(maxsize=8)
 def _split_tensors(train: bool, sample_limit: int | None = None) -> tuple[torch.Tensor, torch.Tensor]:
     """Return MNIST plus EMNIST ByClass tensors for one split."""
 
@@ -422,6 +424,9 @@ def train_family_probe(
     epochs: int,
     learning_rate: float,
     hidden_units: int = 0,
+    max_train_samples: int | None = None,
+    mini_batch_size: int | None = None,
+    seed: int = 20260819,
 ) -> FamilyProbe | None:
     """Train one small classifier for a visual family."""
 
@@ -429,9 +434,28 @@ def train_family_probe(
     mask = torch.zeros_like(targets, dtype=torch.bool)
     for target in family_indices:
         mask |= targets == target
-    if int(mask.sum().item()) < len(family_indices) * 8:
+    selected_indices = torch.where(mask)[0]
+    if max_train_samples is not None and int(selected_indices.numel()) > max_train_samples:
+        generator = torch.Generator().manual_seed(seed)
+        capped_parts = []
+        per_label = max(1, max_train_samples // max(len(family_indices), 1))
+        for target in family_indices:
+            target_indices = selected_indices[targets[selected_indices] == target]
+            if int(target_indices.numel()) == 0:
+                continue
+            order = torch.randperm(int(target_indices.numel()), generator=generator)
+            capped_parts.append(target_indices[order[:per_label]])
+        if capped_parts:
+            selected_indices = torch.cat(capped_parts)
+        if int(selected_indices.numel()) > max_train_samples:
+            order = torch.randperm(int(selected_indices.numel()), generator=generator)
+            selected_indices = selected_indices[order[:max_train_samples]]
+    if int(selected_indices.numel()) < len(family_indices) * 8:
         return None
-    local_targets = torch.tensor([target_to_local[int(target)] for target in targets[mask].tolist()], dtype=torch.long)
+    local_targets = torch.tensor(
+        [target_to_local[int(target)] for target in targets[selected_indices].tolist()],
+        dtype=torch.long,
+    )
     if hidden_units > 0:
         model = nn.Sequential(
             nn.Linear(features.shape[1], hidden_units),
@@ -442,12 +466,21 @@ def train_family_probe(
         model = nn.Linear(features.shape[1], len(family_indices))
     optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate, weight_decay=0.001)
     criterion = nn.CrossEntropyLoss()
-    train_features = features[mask]
+    train_features = features[selected_indices]
+    effective_batch_size = (
+        int(train_features.shape[0])
+        if mini_batch_size is None or mini_batch_size <= 0
+        else min(int(mini_batch_size), int(train_features.shape[0]))
+    )
+    generator = torch.Generator().manual_seed(seed)
     for _epoch in range(max(1, epochs)):
-        optimizer.zero_grad(set_to_none=True)
-        loss = criterion(model(train_features), local_targets)
-        loss.backward()
-        optimizer.step()
+        order = torch.randperm(int(train_features.shape[0]), generator=generator)
+        for start in range(0, int(train_features.shape[0]), effective_batch_size):
+            batch_indices = order[start : start + effective_batch_size]
+            optimizer.zero_grad(set_to_none=True)
+            loss = criterion(model(train_features[batch_indices]), local_targets[batch_indices])
+            loss.backward()
+            optimizer.step()
     return FamilyProbe(_family_name(family_indices), family_indices, model.eval())
 
 
@@ -608,6 +641,8 @@ def run_probe(
     min_case_or_visual: float | None = None,
     probe_confidence: float = 0.0,
     probe_margin: float = 0.0,
+    max_probe_train_samples: int | None = None,
+    mini_batch_size: int | None = None,
     output_path: Path = MIXEDCASE_FAMILY_RERANKER_PATH,
     write: bool = False,
 ) -> dict[str, object]:
@@ -688,7 +723,17 @@ def run_probe(
             include_pixel_features,
             fit_embedding,
         )
-        probe = train_family_probe(train_features, fit_targets, family_indices, epochs, learning_rate, hidden_units)
+        probe = train_family_probe(
+            train_features,
+            fit_targets,
+            family_indices,
+            epochs,
+            learning_rate,
+            hidden_units,
+            max_train_samples=max_probe_train_samples,
+            mini_batch_size=mini_batch_size,
+            seed=seed,
+        )
         if probe is None:
             continue
         selection_candidate = apply_family_probe(
@@ -813,6 +858,8 @@ def run_probe(
                 "include_digit_features": include_digit_features,
                 "include_pixel_features": include_pixel_features,
                 "include_embedding_features": include_embedding_features,
+                "max_probe_train_samples": max_probe_train_samples,
+                "mini_batch_size": mini_batch_size,
             }
         )
         probe_predictions = candidate_predictions
@@ -867,6 +914,8 @@ def run_probe(
         "include_digit_features": include_digit_features,
         "include_pixel_features": include_pixel_features,
         "include_embedding_features": include_embedding_features,
+        "max_probe_train_samples": max_probe_train_samples,
+        "mini_batch_size": mini_batch_size,
         "minimum_gates": {
             "case_or_ambiguity_aware_test_accuracy": min_case_or_visual,
             "digit_test_accuracy": min_digit,
@@ -930,6 +979,18 @@ def main() -> None:
     parser.add_argument("--min-case-or-visual", type=float, default=None)
     parser.add_argument("--probe-confidence", type=float, default=0.0)
     parser.add_argument("--probe-margin", type=float, default=0.0)
+    parser.add_argument(
+        "--max-probe-train-samples",
+        type=int,
+        default=None,
+        help="Cap each family probe's balanced training samples for faster bounded sweeps.",
+    )
+    parser.add_argument(
+        "--mini-batch-size",
+        type=int,
+        default=None,
+        help="Train each family probe with mini-batches instead of one full batch.",
+    )
     parser.add_argument("--output-path", type=Path, default=MIXEDCASE_FAMILY_RERANKER_PATH)
     parser.add_argument("--write", action="store_true")
     args = parser.parse_args()
@@ -959,6 +1020,8 @@ def main() -> None:
                 min_case_or_visual=args.min_case_or_visual,
                 probe_confidence=args.probe_confidence,
                 probe_margin=args.probe_margin,
+                max_probe_train_samples=args.max_probe_train_samples,
+                mini_batch_size=args.mini_batch_size,
                 output_path=args.output_path,
                 write=args.write,
             ),

@@ -87,6 +87,8 @@ def run_sweep(
     min_upper: float | None,
     min_lower: float | None,
     min_case_or_visual: float | None,
+    max_probe_train_samples: int | None = None,
+    mini_batch_size: int | None = None,
     max_runs: int | None = None,
 ) -> dict[str, object]:
     """Run bounded mixed-case family-reranker probes and summarize results."""
@@ -127,6 +129,8 @@ def run_sweep(
             min_case_or_visual=min_case_or_visual,
             probe_confidence=probe_confidence,
             probe_margin=probe_margin,
+            max_probe_train_samples=max_probe_train_samples,
+            mini_batch_size=mini_batch_size,
             write=False,
         )
         rows.append(compact_probe_report(report, parameters))
@@ -146,6 +150,8 @@ def run_sweep(
         "include_digit_features": include_digit_features,
         "include_pixel_features": include_pixel_features,
         "include_embedding_features": include_embedding_features,
+        "max_probe_train_samples": max_probe_train_samples,
+        "mini_batch_size": mini_batch_size,
         "minimum_gates": {
             "case_or_ambiguity_aware_test_accuracy": min_case_or_visual,
             "digit_test_accuracy": min_digit,
@@ -185,6 +191,8 @@ def main() -> None:
     parser.add_argument("--min-upper", type=float, default=None)
     parser.add_argument("--min-lower", type=float, default=None)
     parser.add_argument("--min-case-or-visual", type=float, default=None)
+    parser.add_argument("--max-probe-train-samples", type=int, default=None)
+    parser.add_argument("--mini-batch-size", type=int, default=None)
     parser.add_argument("--max-runs", type=int, default=None)
     args = parser.parse_args()
     print(
@@ -213,6 +221,8 @@ def main() -> None:
                 min_upper=args.min_upper,
                 min_lower=args.min_lower,
                 min_case_or_visual=args.min_case_or_visual,
+                max_probe_train_samples=args.max_probe_train_samples,
+                mini_batch_size=args.mini_batch_size,
                 max_runs=args.max_runs,
             ),
             indent=2,

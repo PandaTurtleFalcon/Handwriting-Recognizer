@@ -69,6 +69,8 @@ class SweepMixedcaseFeatureRerankerTests(unittest.TestCase):
                 min_upper=84.0,
                 min_lower=73.0,
                 min_case_or_visual=98.0,
+                max_probe_train_samples=128,
+                mini_batch_size=32,
                 max_runs=3,
             )
         finally:
@@ -84,9 +86,13 @@ class SweepMixedcaseFeatureRerankerTests(unittest.TestCase):
         self.assertTrue(calls[0]["include_digit_features"])
         self.assertTrue(calls[0]["include_pixel_features"])
         self.assertTrue(calls[0]["include_embedding_features"])
+        self.assertEqual(calls[0]["max_probe_train_samples"], 128)
+        self.assertEqual(calls[0]["mini_batch_size"], 32)
         self.assertEqual(report["extra_roots"], ["cvl.pt"])
         self.assertTrue(report["include_pixel_features"])
         self.assertTrue(report["include_embedding_features"])
+        self.assertEqual(report["max_probe_train_samples"], 128)
+        self.assertEqual(report["mini_batch_size"], 32)
 
 
 if __name__ == "__main__":

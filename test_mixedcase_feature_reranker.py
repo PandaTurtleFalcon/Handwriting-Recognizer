@@ -9,6 +9,7 @@ from scripts.probe_mixedcase_feature_reranker import FamilyProbe
 from scripts.probe_mixedcase_feature_reranker import _final_gate_rejection
 from scripts.probe_mixedcase_feature_reranker import _fit_tensors
 from scripts.probe_mixedcase_feature_reranker import _is_promotable
+from scripts.probe_mixedcase_feature_reranker import _split_tensors
 from scripts.probe_mixedcase_feature_reranker import geometry_features
 from scripts.probe_mixedcase_feature_reranker import family_features
 from scripts.probe_mixedcase_feature_reranker import parse_family_names
@@ -35,6 +36,35 @@ class MixedcaseFeatureRerankerTests(unittest.TestCase):
 
         self.assertEqual(tuple(features.shape), (2, 22))
         self.assertTrue(bool(torch.isfinite(features).all()))
+
+    def test_split_tensors_cache_reuses_loaded_dataset_tensors(self) -> None:
+        """Sweeps should not reload the same large train/test tensors per row."""
+
+        mnist_images = torch.zeros((2, 1, 28, 28), dtype=torch.float32)
+        mnist_targets = torch.tensor([0, 1], dtype=torch.long)
+        byclass_images = torch.ones((2, 1, 28, 28), dtype=torch.float32)
+        byclass_targets = torch.tensor([10, 11], dtype=torch.long)
+        _split_tensors.cache_clear()
+        try:
+            with (
+                patch(
+                    "scripts.probe_mixedcase_feature_reranker.build_or_load_mnist_cache",
+                    return_value=(mnist_images, mnist_targets),
+                ) as mnist_loader,
+                patch(
+                    "scripts.probe_mixedcase_feature_reranker.build_or_load_emnist_byclass_mixedcase_cache",
+                    return_value=(byclass_images, byclass_targets),
+                ) as byclass_loader,
+            ):
+                first_images, first_targets = _split_tensors(train=True, sample_limit=None)
+                second_images, second_targets = _split_tensors(train=True, sample_limit=None)
+        finally:
+            _split_tensors.cache_clear()
+
+        self.assertIs(first_images, second_images)
+        self.assertIs(first_targets, second_targets)
+        self.assertEqual(mnist_loader.call_count, 1)
+        self.assertEqual(byclass_loader.call_count, 1)
 
     def test_selected_families_returns_model_label_indices(self) -> None:
         """Family probes should only include labels that exist in the 62-class model."""
@@ -179,6 +209,44 @@ class MixedcaseFeatureRerankerTests(unittest.TestCase):
         self.assertIsInstance(probe.model[0], torch.nn.Linear)
         self.assertEqual(probe.model[0].out_features, 4)
 
+    def test_family_probe_can_cap_and_minibatch_training_samples(self) -> None:
+        """Large feature probes can run bounded minibatch training."""
+
+        features = torch.randn((80, 5), dtype=torch.float32)
+        targets = torch.tensor([10, 11] * 40, dtype=torch.long)
+
+        probe = train_family_probe(
+            features,
+            targets,
+            (10, 11),
+            epochs=2,
+            learning_rate=0.01,
+            max_train_samples=16,
+            mini_batch_size=4,
+            seed=99,
+        )
+
+        self.assertIsNotNone(probe)
+
+    def test_family_probe_rejects_caps_below_minimum_family_coverage(self) -> None:
+        """Sample caps should not train undersized family adapters."""
+
+        features = torch.randn((80, 5), dtype=torch.float32)
+        targets = torch.tensor([10, 11] * 40, dtype=torch.long)
+
+        probe = train_family_probe(
+            features,
+            targets,
+            (10, 11),
+            epochs=1,
+            learning_rate=0.01,
+            max_train_samples=15,
+            mini_batch_size=4,
+            seed=99,
+        )
+
+        self.assertIsNone(probe)
+
     def test_promotable_requires_exact_gain_without_split_regressions(self) -> None:
         """Adapter probes should not look deployable when a protected split falls."""
 
@@ -267,6 +335,8 @@ class MixedcaseFeatureRerankerTests(unittest.TestCase):
         self.assertEqual(report["family_names"], ["AB"])
         self.assertEqual(report["source_groups"], ["digit", "upper", "lower"])
         self.assertFalse(report["include_digit_features"])
+        self.assertIsNone(report["max_probe_train_samples"])
+        self.assertIsNone(report["mini_batch_size"])
         self.assertEqual(
             report["minimum_gates"],
             {
