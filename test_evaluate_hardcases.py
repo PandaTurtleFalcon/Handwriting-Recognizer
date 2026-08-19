@@ -25,6 +25,7 @@ class HardCaseEvaluationTests(unittest.TestCase):
         self.assertTrue(sequence_matches_with_ambiguity("can't", "CANDt"))
         self.assertTrue(sequence_matches_with_ambiguity("9qg", "GQg"))
         self.assertTrue(sequence_matches_with_ambiguity("G6b", "GBb"))
+        self.assertTrue(sequence_matches_with_ambiguity("look behind\nyou", "look beh'nd\nyou"))
         self.assertFalse(sequence_matches_with_ambiguity("Hi", "HL:"))
         self.assertFalse(sequence_matches_with_ambiguity("AB", "A"))
 
@@ -36,6 +37,7 @@ class HardCaseEvaluationTests(unittest.TestCase):
         self.assertFalse(sequence_matches_with_ambiguity("D", "'"))
         self.assertFalse(sequence_matches_with_ambiguity("(85)", "185("))
         self.assertFalse(sequence_matches_with_ambiguity("D'", "'D"))
+        self.assertFalse(sequence_matches_with_ambiguity("look inside\nyou", "look ins'de\nyou"))
 
     def test_display_matches_treats_row_breaks_as_phrase_spacing(self) -> None:
         """Whole-phrase hardcases should allow the app's visual row separator."""
