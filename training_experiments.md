@@ -1555,3 +1555,9 @@ restored, so future improvement loops do not repeat known-bad blends.
   - Rejected mixed-case `1Iil` upper-only reranker: the narrow embeddings-only probe was safer than broad prior runs, but final test delta was `0.0`; it changed no deployed metrics and wrote no artifact.
   - Verification: focused evaluator and summary tests passed (`19` tests), `scripts/evaluate_hardcases.py` and `scripts/summarize_benchmarks.py` compiled, and a strict summary exposed `app_hardcase_raw_label_exact=66.6667%`, `uploaded_hardcase_raw_label_exact=0.0%`, and `uploaded_hardcase_non_replayed_exact=0.0%`.
   - Takeaway: the current model stack is still not at the requested exact gates. Cleanup/replay can make the product display usable on known phrases, but future training work should target raw label recognition directly, especially mixed-case upper/lower identity and character letter exact.
+
+- Compact raw-label ambiguity split:
+  - Metric fix: hardcase evaluation now separates compact raw-label exact from compact raw-label visual ambiguity. This removes layout whitespace from the raw-label stream while still requiring either exact labels or known visual twins.
+  - Result: generated all-font hardcases remain `66.6667%` compact raw-label exact but `99.4444%` compact raw-label ambiguity. The uploaded `look behind / you` fixture remains `0.0%` compact raw-label exact but is now correctly reported as `100.0%` compact raw-label ambiguity.
+  - Verification: hardcase and summary tests passed (`44` tests), `scripts/evaluate_hardcases.py` and `scripts/summarize_benchmarks.py` compiled, and the refreshed summary exposed the new `*_raw_label_compact_*` gates.
+  - Takeaway: most app-level raw failures are visually plausible family confusions, not ordering failures. The next model work should focus on exact visual-family disambiguation (`!/1Iil|`, `0Oo`, `5Ss`) rather than phrase cleanup or spacing heuristics.

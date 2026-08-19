@@ -973,6 +973,10 @@ class BenchmarkSummaryTests(unittest.TestCase):
                 "raw_ambiguity_aware_correct": 132,
                 "raw_label_exact_accuracy": 25.0,
                 "raw_label_exact_correct": 44,
+                "raw_label_compact_exact_accuracy": 40.0,
+                "raw_label_compact_exact_correct": 70,
+                "raw_label_compact_ambiguity_aware_accuracy": 96.0,
+                "raw_label_compact_ambiguity_aware_correct": 169,
                 "non_replayed_exact_accuracy": 90.0,
                 "non_replayed_exact_correct": 90,
                 "non_replayed_total": 100,
@@ -990,9 +994,12 @@ class BenchmarkSummaryTests(unittest.TestCase):
         self.assertFalse(by_name["app_hardcase_raw_exact"]["passed"])
         self.assertFalse(by_name["app_hardcase_raw_ambiguity"]["passed"])
         self.assertFalse(by_name["app_hardcase_raw_label_exact"]["passed"])
+        self.assertFalse(by_name["app_hardcase_raw_label_compact_exact"]["passed"])
+        self.assertTrue(by_name["app_hardcase_raw_label_compact_ambiguity"]["passed"])
         self.assertFalse(by_name["app_hardcase_non_replayed_exact"]["passed"])
         self.assertEqual(by_name["app_hardcase_raw_exact"]["correct"], 88)
         self.assertEqual(by_name["app_hardcase_raw_label_exact"]["correct"], 44)
+        self.assertEqual(by_name["app_hardcase_raw_label_compact_ambiguity"]["correct"], 169)
         self.assertEqual(by_name["app_hardcase_non_replayed_exact"]["total"], 100)
 
     def test_summarizes_script_hardcase_gates_on_demand(self) -> None:
@@ -1009,6 +1016,10 @@ class BenchmarkSummaryTests(unittest.TestCase):
                 "raw_ambiguity_aware_correct": 1,
                 "raw_label_exact_accuracy": 0.0,
                 "raw_label_exact_correct": 0,
+                "raw_label_compact_exact_accuracy": 0.0,
+                "raw_label_compact_exact_correct": 0,
+                "raw_label_compact_ambiguity_aware_accuracy": 50.0,
+                "raw_label_compact_ambiguity_aware_correct": 1,
                 "non_replayed_exact_accuracy": 50.0,
                 "non_replayed_exact_correct": 1,
                 "non_replayed_total": 2,
@@ -1024,6 +1035,8 @@ class BenchmarkSummaryTests(unittest.TestCase):
         self.assertFalse(by_name["app_script_hardcase_raw_exact"]["passed"])
         self.assertFalse(by_name["app_script_hardcase_raw_ambiguity"]["passed"])
         self.assertFalse(by_name["app_script_hardcase_raw_label_exact"]["passed"])
+        self.assertFalse(by_name["app_script_hardcase_raw_label_compact_exact"]["passed"])
+        self.assertFalse(by_name["app_script_hardcase_raw_label_compact_ambiguity"]["passed"])
         self.assertFalse(by_name["app_script_hardcase_non_replayed_exact"]["passed"])
         self.assertEqual(by_name["app_script_hardcase_exact"]["correct"], 1)
 
@@ -1041,6 +1054,10 @@ class BenchmarkSummaryTests(unittest.TestCase):
                 "raw_ambiguity_aware_correct": 0,
                 "raw_label_exact_accuracy": 0.0,
                 "raw_label_exact_correct": 0,
+                "raw_label_compact_exact_accuracy": 0.0,
+                "raw_label_compact_exact_correct": 0,
+                "raw_label_compact_ambiguity_aware_accuracy": 100.0,
+                "raw_label_compact_ambiguity_aware_correct": 1,
                 "non_replayed_exact_accuracy": 0.0,
                 "non_replayed_exact_correct": 0,
                 "non_replayed_total": 0,
@@ -1058,6 +1075,8 @@ class BenchmarkSummaryTests(unittest.TestCase):
         self.assertFalse(by_name["uploaded_hardcase_raw_exact"]["passed"])
         self.assertFalse(by_name["uploaded_hardcase_raw_ambiguity"]["passed"])
         self.assertFalse(by_name["uploaded_hardcase_raw_label_exact"]["passed"])
+        self.assertFalse(by_name["uploaded_hardcase_raw_label_compact_exact"]["passed"])
+        self.assertTrue(by_name["uploaded_hardcase_raw_label_compact_ambiguity"]["passed"])
         self.assertFalse(by_name["uploaded_hardcase_non_replayed_exact"]["passed"])
         self.assertEqual(by_name["uploaded_hardcase_raw_exact"]["correct"], 0)
         self.assertEqual(by_name["uploaded_hardcase_non_replayed_exact"]["total"], 0)

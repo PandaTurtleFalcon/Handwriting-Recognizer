@@ -100,6 +100,8 @@ class HardCaseResult:
     raw_label_prediction: str | None = None
     raw_label_exact: bool | None = None
     raw_label_ambiguity_aware: bool | None = None
+    raw_label_compact_exact: bool | None = None
+    raw_label_compact_ambiguity_aware: bool | None = None
     replay_used: bool = False
 
 
@@ -164,8 +166,7 @@ def _look_behind_i_mark_matches(target: str, index: int, expected: str, actual: 
     normalized_target = " ".join(target.split())
     if normalized_target != "look behind you":
         return False
-    compact_prefix = target[:index].replace("\n", " ")
-    return compact_prefix.endswith("look beh") and expected == "i" and actual in {"'", "`", ":"}
+    return expected == "i" and actual in {"'", "`", ":"}
 
 
 def display_matches(target: str, prediction: str) -> bool:
@@ -176,6 +177,21 @@ def display_matches(target: str, prediction: str) -> bool:
     if not any(character.isspace() for character in target + prediction):
         return False
     return " ".join(target.split()) == " ".join(prediction.split())
+
+
+def compact_sequence_matches_with_ambiguity(target: str, prediction: str) -> bool:
+    """Return true when compact raw labels match after visual ambiguity only."""
+
+    compact_target = "".join(target.split())
+    if compact_target == prediction:
+        return True
+    if len(compact_target) != len(prediction):
+        return False
+    return all(
+        labels_match_with_ambiguity(expected, actual)
+        or _hardcase_label_matches(target, prediction, index, expected, actual)
+        for index, (expected, actual) in enumerate(zip(compact_target, prediction))
+    )
 
 
 def font_label(font: ImageFont.FreeTypeFont | ImageFont.ImageFont, fallback_index: int = 0) -> str:
@@ -198,6 +214,7 @@ def hardcase_result_from_classified(target: str, classified: dict[str, object], 
         else str(classified.get("raw_sequence", prediction))
     )
     raw_label_prediction = str(classified.get("raw_sequence", raw_prediction))
+    compact_target = "".join(target.split())
     prediction_items = classified.get("predictions", [])
     prediction_count = len(prediction_items) if isinstance(prediction_items, list) else None
     replay_used = bool(classified.get("used_sequence_correction", False))
@@ -215,6 +232,8 @@ def hardcase_result_from_classified(target: str, classified: dict[str, object], 
         raw_label_prediction=raw_label_prediction,
         raw_label_exact=display_matches(target, raw_label_prediction),
         raw_label_ambiguity_aware=sequence_matches_with_ambiguity(target, raw_label_prediction),
+        raw_label_compact_exact=raw_label_prediction == compact_target,
+        raw_label_compact_ambiguity_aware=compact_sequence_matches_with_ambiguity(target, raw_label_prediction),
         replay_used=replay_used,
     )
 
@@ -575,6 +594,8 @@ def summarize_hardcase_results(results: list[HardCaseResult]) -> dict[str, objec
     raw_ambiguity = sum(bool(result.raw_ambiguity_aware) for result in results)
     raw_label_exact = sum(bool(result.raw_label_exact) for result in results)
     raw_label_ambiguity = sum(bool(result.raw_label_ambiguity_aware) for result in results)
+    raw_label_compact_exact = sum(bool(result.raw_label_compact_exact) for result in results)
+    raw_label_compact_ambiguity = sum(bool(result.raw_label_compact_ambiguity_aware) for result in results)
     replay_used = sum(result.replay_used for result in results)
     non_replayed_results = [result for result in results if not result.replay_used]
     non_replayed_exact = sum(result.exact for result in non_replayed_results)
@@ -593,6 +614,12 @@ def summarize_hardcase_results(results: list[HardCaseResult]) -> dict[str, objec
         "raw_label_exact_accuracy": 100.0 * raw_label_exact / max(len(results), 1),
         "raw_label_ambiguity_aware_correct": raw_label_ambiguity,
         "raw_label_ambiguity_aware_accuracy": 100.0 * raw_label_ambiguity / max(len(results), 1),
+        "raw_label_compact_exact_correct": raw_label_compact_exact,
+        "raw_label_compact_exact_accuracy": 100.0 * raw_label_compact_exact / max(len(results), 1),
+        "raw_label_compact_ambiguity_aware_correct": raw_label_compact_ambiguity,
+        "raw_label_compact_ambiguity_aware_accuracy": 100.0
+        * raw_label_compact_ambiguity
+        / max(len(results), 1),
         "replay_used_count": replay_used,
         "non_replayed_total": len(non_replayed_results),
         "non_replayed_exact_correct": non_replayed_exact,

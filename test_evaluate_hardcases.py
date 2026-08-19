@@ -8,6 +8,7 @@ from scripts.evaluate_hardcases import (
     display_matches,
     evaluate_cases,
     evaluate_uploaded_fixtures,
+    compact_sequence_matches_with_ambiguity,
     hardcase_result_from_classified,
     render_script_case,
     sequence_matches_with_ambiguity,
@@ -28,6 +29,12 @@ class HardCaseEvaluationTests(unittest.TestCase):
         self.assertTrue(sequence_matches_with_ambiguity("look behind\nyou", "look beh'nd\nyou"))
         self.assertFalse(sequence_matches_with_ambiguity("Hi", "HL:"))
         self.assertFalse(sequence_matches_with_ambiguity("AB", "A"))
+
+    def test_compact_sequence_matches_visual_ambiguity_after_removing_layout(self) -> None:
+        """Compact raw-label checks should compare labels without row spacing."""
+
+        self.assertTrue(compact_sequence_matches_with_ambiguity("look behind\nyou", "lookbeh'ndyou"))
+        self.assertFalse(compact_sequence_matches_with_ambiguity("look behind\nyou", "xOO11eh'nd7o4"))
 
     def test_hardcase_ambiguity_keeps_global_boundaries(self) -> None:
         """Hardcase-only allowances should not loosen shared validation groups."""
@@ -96,6 +103,8 @@ class HardCaseEvaluationTests(unittest.TestCase):
         self.assertEqual(result.raw_label_prediction, "xOO11ehind7o4")
         self.assertEqual(result.prediction_count, 2)
         self.assertFalse(result.raw_label_exact)
+        self.assertFalse(result.raw_label_compact_exact)
+        self.assertFalse(result.raw_label_compact_ambiguity_aware)
         self.assertFalse(result.replay_used)
 
     def test_hardcase_result_marks_sequence_correction_replay(self) -> None:
@@ -117,6 +126,24 @@ class HardCaseEvaluationTests(unittest.TestCase):
         self.assertFalse(result.raw_exact)
         self.assertEqual(result.raw_label_prediction, "7O")
         self.assertTrue(result.replay_used)
+
+    def test_hardcase_result_scores_compact_raw_label_visual_match(self) -> None:
+        """Compact raw-label ambiguity should ignore only layout, not glyph order."""
+
+        result = hardcase_result_from_classified(
+            "look behind\nyou",
+            {
+                "sequence": "look behind\nyou",
+                "raw_sequence": "lookbeh'ndyou",
+                "raw_row_sequences": ["look beh'nd", "you"],
+                "predictions": [{"label": "l"}],
+            },
+            "mock-font",
+        )
+
+        self.assertFalse(result.raw_label_exact)
+        self.assertFalse(result.raw_label_compact_exact)
+        self.assertTrue(result.raw_label_compact_ambiguity_aware)
 
     def test_evaluate_uploaded_fixtures_reports_real_upload_results(self) -> None:
         """Saved upload fixtures should use the same classifier path as the site."""
@@ -140,6 +167,8 @@ class HardCaseEvaluationTests(unittest.TestCase):
         self.assertEqual(report["exact_accuracy"], 100.0)
         self.assertEqual(report["raw_exact_accuracy"], 0.0)
         self.assertEqual(report["raw_label_exact_accuracy"], 0.0)
+        self.assertEqual(report["raw_label_compact_exact_accuracy"], 0.0)
+        self.assertEqual(report["raw_label_compact_ambiguity_aware_accuracy"], 0.0)
         self.assertEqual(report["replay_used_count"], 0)
         self.assertEqual(report["non_replayed_exact_accuracy"], 100.0)
         self.assertEqual(report["results"][0]["font"], "uploaded")
@@ -193,6 +222,8 @@ class HardCaseEvaluationTests(unittest.TestCase):
 
         self.assertEqual(report["raw_exact_accuracy"], 100.0)
         self.assertEqual(report["raw_label_exact_accuracy"], 0.0)
+        self.assertEqual(report["raw_label_compact_exact_accuracy"], 100.0)
+        self.assertEqual(report["raw_label_compact_ambiguity_aware_accuracy"], 100.0)
         self.assertEqual(report["results"][0]["raw_prediction"], "look behind\nyou")
         self.assertEqual(report["results"][0]["raw_label_prediction"], "lookbehindyou")
         self.assertEqual(report["results"][0]["raw_rows"], ["look behind", "you"])
