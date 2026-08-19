@@ -136,8 +136,8 @@ def validation_tensors() -> tuple[torch.Tensor, torch.Tensor, list[str]]:
     return images[index_tensor], targets[index_tensor], list(labels)
 
 
-def train_tensors(labels: list[str], extra_roots: list[Path], seed: int) -> tuple[torch.Tensor, torch.Tensor]:
-    """Return train split tensors plus optional train-only extras."""
+def train_tensors() -> tuple[torch.Tensor, torch.Tensor]:
+    """Return the benchmark-style character training split tensors."""
 
     images, targets, _labels = build_or_load_combined_cache(DATASET_ROOT, _metric_extra_roots())
     train_indices, _ = stratified_split_indices(
@@ -149,6 +149,18 @@ def train_tensors(labels: list[str], extra_roots: list[Path], seed: int) -> tupl
     index_tensor = torch.tensor(train_indices, dtype=torch.long)
     train_images = images[index_tensor]
     train_targets = targets[index_tensor]
+    return train_images, train_targets
+
+
+def append_train_only_extras(
+    train_images: torch.Tensor,
+    train_targets: torch.Tensor,
+    labels: list[str],
+    extra_roots: list[Path],
+    seed: int,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """Append supplemental data to fitting tensors without entering holdouts."""
+
     extras = load_extra_character_tensors(extra_roots, labels)
     if extras is not None:
         extra_images, extra_targets = extras
@@ -427,7 +439,7 @@ def probe_family_specialists(
     device = get_device()
     validation_images, validation_targets, labels = validation_tensors()
     base_validation_predictions, labels = deployed_predictions(validation_images, batch_size, device)
-    train_images, train_targets = train_tensors(labels, extra_roots, seed)
+    train_images, train_targets = train_tensors()
     fit_images, fit_targets, holdout_images, holdout_targets = split_holdout(
         train_images,
         train_targets,
@@ -440,6 +452,7 @@ def probe_family_specialists(
         confirmation_ratio,
         seed + 2,
     )
+    fit_images, fit_targets = append_train_only_extras(fit_images, fit_targets, labels, extra_roots, seed)
     specialists: list[Specialist] = []
     skipped: list[str] = []
     for family in families:

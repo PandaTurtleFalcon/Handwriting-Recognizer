@@ -5,6 +5,7 @@ import torch
 
 from scripts.probe_character_family_specialists import (
     Specialist,
+    append_train_only_extras,
     apply_specialists,
     choose_thresholds,
     deployed_predictions,
@@ -45,6 +46,22 @@ class CharacterFamilySpecialistTests(unittest.TestCase):
         self.assertEqual(len(holdout_targets), 3)
         self.assertEqual(sorted(torch.cat([fit_targets, holdout_targets]).tolist()), list(range(10)))
         self.assertEqual(sorted(torch.cat([fit_images.flatten(), holdout_images.flatten()]).tolist()), list(range(10)))
+
+    def test_append_train_only_extras_keeps_original_samples_and_appends_extras(self) -> None:
+        train_images = torch.zeros((2, 1, 32, 32), dtype=torch.float32)
+        train_targets = torch.tensor([0, 1], dtype=torch.long)
+        extra_images = torch.ones((3, 1, 32, 32), dtype=torch.float32)
+        extra_targets = torch.tensor([1, 1, 0], dtype=torch.long)
+
+        with patch(
+            "scripts.probe_character_family_specialists.load_extra_character_tensors",
+            return_value=(extra_images, extra_targets),
+        ):
+            images, targets = append_train_only_extras(train_images, train_targets, ["A", "B"], [], seed=7)
+
+        self.assertEqual(tuple(images.shape), (5, 1, 32, 32))
+        self.assertEqual(targets[:2].tolist(), [0, 1])
+        self.assertEqual(sorted(targets[2:].tolist()), [0, 1, 1])
 
     def test_apply_specialists_respects_confidence_margin_and_groups(self) -> None:
         class FixedSpecialist(torch.nn.Module):
