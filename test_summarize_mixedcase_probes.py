@@ -19,13 +19,33 @@ class SummarizeMixedcaseProbeTests(unittest.TestCase):
                 json.dumps(
                     {
                         "rows": [
-                            {"promotable": False, "test_delta": -0.1},
+                            {
+                                "promotable": False,
+                                "test_delta": -0.1,
+                                "families": [
+                                    {
+                                        "family": "flat",
+                                        "accepted": False,
+                                        "delta": -0.1,
+                                        "rejection_reason": "selection_delta_below_floor",
+                                    }
+                                ],
+                            },
                             {
                                 "promotable": True,
                                 "test_delta": 0.2,
                                 "parameters": {"epochs": 80},
                                 "base": {"test_accuracy": 87.0},
                                 "reranked": {"test_accuracy": 87.2},
+                                "families": [
+                                    {
+                                        "family": "near",
+                                        "accepted": False,
+                                        "delta": 0.4,
+                                        "rejection_reason": "final_digit_test_accuracy_regressed",
+                                    },
+                                    {"family": "kept", "accepted": True, "delta": 0.2},
+                                ],
                             },
                         ],
                         "best": {
@@ -108,6 +128,12 @@ class SummarizeMixedcaseProbeTests(unittest.TestCase):
             summary["summaries"][0]["top_family_rows"][0]["rejection_reason"],
             "final_digit_test_accuracy_regressed",
         )
+        self.assertEqual(summary["summaries"][0]["top_family_rows_all_runs"][0]["family"], "near")
+        self.assertEqual(
+            summary["summaries"][0]["rejection_reason_counts"],
+            {"final_digit_test_accuracy_regressed": 1, "selection_delta_below_floor": 1},
+        )
+        self.assertEqual(summary["summaries"][0]["accepted_family_counts"], {"kept": 1})
         self.assertEqual(summary["summaries"][1]["accepted_clusters"], ["9gq"])
         self.assertAlmostEqual(summary["summaries"][2]["best_test_delta"], 0.3)
 

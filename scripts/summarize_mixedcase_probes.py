@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+from collections import Counter
 from pathlib import Path
 from typing import Any
 
@@ -61,11 +62,39 @@ def top_family_rows(families: object, limit: int = 5) -> list[dict[str, object]]
     return [_compact_family_row(row) for row in ranked[:limit]]
 
 
+def _all_family_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Return every family decision row from every sweep row."""
+
+    family_rows: list[dict[str, Any]] = []
+    for row in rows:
+        family_rows.extend(_as_dict(family) for family in _as_list(row.get("families")))
+    return family_rows
+
+
+def _rejection_reason_counts(families: list[dict[str, Any]]) -> dict[str, int]:
+    """Count rejection reasons across family decision rows."""
+
+    reasons = Counter(
+        str(row.get("rejection_reason"))
+        for row in families
+        if not bool(row.get("accepted")) and row.get("rejection_reason")
+    )
+    return dict(sorted(reasons.items(), key=lambda item: (-item[1], item[0])))
+
+
+def _accepted_family_counts(families: list[dict[str, Any]]) -> dict[str, int]:
+    """Count accepted family rows across a sweep."""
+
+    counts = Counter(str(row.get("family")) for row in families if bool(row.get("accepted")) and row.get("family"))
+    return dict(sorted(counts.items(), key=lambda item: (-item[1], item[0])))
+
+
 def summarize_sweep(report: dict[str, Any]) -> dict[str, object]:
     """Return the compact fields for a mixed-case sweep report."""
 
     rows = [_as_dict(row) for row in _as_list(report.get("rows"))]
     best = _as_dict(report.get("best"))
+    family_rows = _all_family_rows(rows)
     return {
         "kind": "sweep",
         "completed_runs": report.get("completed_runs", len(rows)),
@@ -78,6 +107,9 @@ def summarize_sweep(report: dict[str, Any]) -> dict[str, object]:
         "best_base": best.get("base"),
         "best_reranked": best.get("reranked"),
         "top_family_rows": top_family_rows(best.get("families")),
+        "top_family_rows_all_runs": top_family_rows(family_rows),
+        "rejection_reason_counts": _rejection_reason_counts(family_rows),
+        "accepted_family_counts": _accepted_family_counts(family_rows),
     }
 
 
