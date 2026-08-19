@@ -1674,3 +1674,9 @@ restored, so future improvement loops do not repeat known-bad blends.
   - Strict upper check: lowering `--upper-protect-confidence` to `0.10` nearly eliminated the candidate (`+0.0016` exact), but still regressed upper to `84.6934%` and lower to `73.1402%`, so it also failed.
   - Verification: `test_mixedcase_feature_reranker.py` passed (`28` tests), and the modified reranker script compiled.
   - Takeaway: direct protection gates are now expressive enough to isolate digit and uppercase damage, but the remaining `0Oo` candidate does not have enough no-regression headroom. Continue searching with a different objective, especially one that explicitly optimizes all protected splits instead of accepting tiny exact gains.
+
+- Balanced protected-score reranker diagnostics:
+  - Tooling: `scripts/probe_mixedcase_feature_reranker.py` now reports `balanced_score` and `balanced_delta`, where the score is the weakest of exact, case/visual, digit, upper, and lower accuracy. `scripts/sweep_mixedcase_feature_reranker.py` now carries these fields and ranks sweep rows by promotability, then balanced delta, then exact delta.
+  - Smoke: a one-run `0Oo` sweep with rough `80/class` extras completed with no promotable candidate and reported `balanced_score=73.1513`, matching the current lower-case bottleneck on the standard split.
+  - Verification: `test_mixedcase_feature_reranker.py` and `test_sweep_mixedcase_feature_reranker.py` passed (`34` tests), and the modified probe/sweep scripts compiled.
+  - Takeaway: future sweeps can now optimize toward the actual goal shape (`all protected splits up`) instead of chasing exact-only movement that repeatedly regresses upper or lower accuracy.

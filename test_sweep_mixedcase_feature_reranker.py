@@ -26,14 +26,15 @@ class SweepMixedcaseFeatureRerankerTests(unittest.TestCase):
     def test_parse_source_group_sets_accepts_semicolon_sets(self) -> None:
         self.assertEqual(parse_source_group_sets("digit,upper;lower"), [("digit", "upper"), ("lower",)])
 
-    def test_best_sweep_row_prefers_promotable_then_delta(self) -> None:
+    def test_best_sweep_row_prefers_promotable_then_balanced_delta(self) -> None:
         rows = [
-            {"promotable": False, "test_delta": 5.0},
-            {"promotable": True, "test_delta": 0.1},
-            {"promotable": True, "test_delta": 0.2},
+            {"promotable": False, "test_delta": 5.0, "balanced_delta": 0.0},
+            {"promotable": False, "test_delta": 0.1, "balanced_delta": 0.2},
+            {"promotable": True, "test_delta": 0.1, "balanced_delta": -1.0},
+            {"promotable": True, "test_delta": 0.2, "balanced_delta": 0.1},
         ]
 
-        self.assertIs(best_sweep_row(rows), rows[2])
+        self.assertIs(best_sweep_row(rows), rows[3])
 
     def test_run_sweep_can_limit_planned_grid(self) -> None:
         calls = []
@@ -46,7 +47,15 @@ class SweepMixedcaseFeatureRerankerTests(unittest.TestCase):
 
         def fake_run_probe_from_data(**kwargs):
             calls.append(kwargs)
-            return {"promotable": False, "test_delta": 0.0, "base": {}, "reranked": {}, "families": []}
+            return {
+                "promotable": False,
+                "test_delta": 0.0,
+                "balanced_delta": -1.0,
+                "balanced_score": 73.0,
+                "base": {},
+                "reranked": {},
+                "families": [],
+            }
 
         original_prepare = run_sweep.__globals__["prepare_feature_probe_data"]
         original_probe = run_sweep.__globals__["run_probe_from_data"]

@@ -54,6 +54,8 @@ def compact_probe_report(report: dict[str, object], parameters: dict[str, object
         "parameters": parameters,
         "promotable": bool(report.get("promotable")),
         "test_delta": float(report.get("test_delta", 0.0)),
+        "balanced_delta": float(report.get("balanced_delta", 0.0)),
+        "balanced_score": float(report.get("balanced_score", 0.0)),
         "base": report.get("base"),
         "reranked": report.get("reranked"),
         "families": report.get("families"),
@@ -61,11 +63,18 @@ def compact_probe_report(report: dict[str, object], parameters: dict[str, object
 
 
 def best_sweep_row(rows: list[dict[str, object]]) -> dict[str, object] | None:
-    """Return the best row, preferring promotable rows and then larger delta."""
+    """Return the best row, preferring promotable rows then balanced movement."""
 
     if not rows:
         return None
-    return max(rows, key=lambda row: (bool(row["promotable"]), float(row["test_delta"])))
+    return max(
+        rows,
+        key=lambda row: (
+            bool(row["promotable"]),
+            float(row.get("balanced_delta", 0.0)),
+            float(row["test_delta"]),
+        ),
+    )
 
 
 def run_sweep(

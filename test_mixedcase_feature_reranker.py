@@ -17,6 +17,7 @@ from scripts.probe_mixedcase_feature_reranker import parse_family_names
 from scripts.probe_mixedcase_feature_reranker import parse_source_groups
 from scripts.probe_mixedcase_feature_reranker import pixel_features
 from scripts.probe_mixedcase_feature_reranker import prepare_feature_probe_data
+from scripts.probe_mixedcase_feature_reranker import protected_balanced_score
 from scripts.probe_mixedcase_feature_reranker import selected_families
 from scripts.probe_mixedcase_feature_reranker import source_group_mask
 from scripts.probe_mixedcase_feature_reranker import train_family_probe
@@ -362,6 +363,19 @@ class MixedcaseFeatureRerankerTests(unittest.TestCase):
         self.assertTrue(_is_promotable(base, safe_candidate))
         self.assertTrue(_is_promotable({**base, "digit_test_accuracy": 96.0}, target_safe_candidate, min_digit=95.0))
 
+    def test_protected_balanced_score_returns_weakest_required_metric(self) -> None:
+        """Balanced ranking should follow the weakest protected split."""
+
+        metrics = {
+            "test_accuracy": 90.0,
+            "case_or_ambiguity_aware_test_accuracy": 98.0,
+            "digit_test_accuracy": 96.0,
+            "upper_test_accuracy": 88.0,
+            "lower_test_accuracy": 75.0,
+        }
+
+        self.assertEqual(protected_balanced_score(metrics), 75.0)
+
     def test_final_gate_rejects_protected_test_regression(self) -> None:
         """Family adapters should be rejected when final test split accuracy regresses."""
 
@@ -457,6 +471,8 @@ class MixedcaseFeatureRerankerTests(unittest.TestCase):
         self.assertEqual(report["selection_samples"], 1)
         self.assertEqual(report["confirmation_samples"], 2)
         self.assertEqual(report["test_delta"], 0.0)
+        self.assertEqual(report["balanced_score"], 0.0)
+        self.assertEqual(report["balanced_delta"], 0.0)
         self.assertFalse(report["promotable"])
 
     def test_prepare_data_can_use_external_test_tensor_pack(self) -> None:

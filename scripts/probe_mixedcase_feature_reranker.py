@@ -659,6 +659,18 @@ def _metrics(predictions: torch.Tensor, targets: torch.Tensor) -> dict[str, floa
     }
 
 
+def protected_balanced_score(metrics: dict[str, float]) -> float:
+    """Return the weakest protected mixed-case metric for balanced ranking."""
+
+    return min(
+        float(metrics["test_accuracy"]),
+        float(metrics["case_or_ambiguity_aware_test_accuracy"]),
+        float(metrics["digit_test_accuracy"]),
+        float(metrics["upper_test_accuracy"]),
+        float(metrics["lower_test_accuracy"]),
+    )
+
+
 def _is_promotable(
     base_metrics: dict[str, float],
     candidate_metrics: dict[str, float],
@@ -1031,6 +1043,8 @@ def run_probe_from_data(
         probe_predictions = candidate_predictions
     base_metrics = _metrics(data.base_predictions, data.test_targets)
     reranked_metrics = _metrics(probe_predictions, data.test_targets)
+    base_balanced_score = protected_balanced_score(base_metrics)
+    reranked_balanced_score = protected_balanced_score(reranked_metrics)
     promotable = _is_promotable(
         base_metrics,
         reranked_metrics,
@@ -1064,6 +1078,8 @@ def run_probe_from_data(
         "reranked": reranked_metrics,
         "promotable": promotable,
         "test_delta": reranked_metrics["test_accuracy"] - base_metrics["test_accuracy"],
+        "balanced_score": reranked_balanced_score,
+        "balanced_delta": reranked_balanced_score - base_balanced_score,
         "families": family_reports,
         "train_samples": data.train_samples,
         "fit_samples": data.fit_samples,
@@ -1374,6 +1390,8 @@ def run_probe(
         probe_predictions = candidate_predictions
     base_metrics = _metrics(base_predictions, test_targets)
     reranked_metrics = _metrics(probe_predictions, test_targets)
+    base_balanced_score = protected_balanced_score(base_metrics)
+    reranked_balanced_score = protected_balanced_score(reranked_metrics)
     promotable = _is_promotable(
         base_metrics,
         reranked_metrics,
@@ -1407,6 +1425,8 @@ def run_probe(
         "reranked": reranked_metrics,
         "promotable": promotable,
         "test_delta": reranked_metrics["test_accuracy"] - base_metrics["test_accuracy"],
+        "balanced_score": reranked_balanced_score,
+        "balanced_delta": reranked_balanced_score - base_balanced_score,
         "families": family_reports,
         "train_samples": int(train_targets.numel()),
         "fit_samples": int(fit_targets.numel()),
