@@ -33,6 +33,7 @@ from character_model import (
     benchmark_gate_failures,
     FocalCrossEntropyLoss,
     labels_match_with_ambiguity,
+    load_extra_character_cache,
     load_correction_memory_exemplars,
     make_loaders,
     parse_benchmark_gate_names,
@@ -363,6 +364,116 @@ class CharacterPostprocessingTests(unittest.TestCase):
         self.assertEqual(labels, ["A", "B"])
         self.assertEqual(train_total, 5)
         self.assertEqual(validation_total, 2)
+
+    def test_load_extra_character_cache_remaps_mixedcase_targets(self) -> None:
+        """CVL-style tensor caches should train the character model without folders."""
+
+        with tempfile.TemporaryDirectory() as directory:
+            cache_path = Path(directory) / "extra.pt"
+            source_targets = torch.tensor(
+                [
+                    MIXEDCASE_LABELS.index("0"),
+                    MIXEDCASE_LABELS.index("O"),
+                    MIXEDCASE_LABELS.index("q"),
+                ],
+                dtype=torch.long,
+            )
+            torch.save(
+                {
+                    "images": torch.ones((3, 1, 32, 32), dtype=torch.float32),
+                    "targets": source_targets,
+                },
+                cache_path,
+            )
+
+            loaded = load_extra_character_cache(cache_path, ["O", "0"])
+
+        self.assertIsNotNone(loaded)
+        images, targets = loaded
+        self.assertEqual(tuple(images.shape), (2, 1, 32, 32))
+        self.assertEqual(targets.tolist(), [1, 0])
+
+    def test_load_extra_character_cache_resizes_mixedcase_tensors(self) -> None:
+        """Mixed-case 28px caches should be converted into 32px character tensors."""
+
+        with tempfile.TemporaryDirectory() as directory:
+            cache_path = Path(directory) / "extra_28px.pt"
+            source_targets = torch.tensor(
+                [MIXEDCASE_LABELS.index("A"), MIXEDCASE_LABELS.index("z")],
+                dtype=torch.long,
+            )
+            torch.save(
+                {
+                    "images": torch.zeros((2, 1, 28, 28), dtype=torch.float32),
+                    "targets": source_targets,
+                },
+                cache_path,
+            )
+
+            loaded = load_extra_character_cache(cache_path, ["A", "z"])
+
+        self.assertIsNotNone(loaded)
+        images, targets = loaded
+        self.assertEqual(tuple(images.shape), (2, 1, 32, 32))
+        self.assertEqual(targets.tolist(), [0, 1])
+        self.assertTrue(torch.isfinite(images).all())
+
+    def test_train_only_tensor_cache_skips_validation_loader(self) -> None:
+        """Tensor cache extras should join only the training split."""
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / "base"
+            for class_code in ("48", "79"):
+                (root / class_code).mkdir(parents=True)
+            for index, image_path in enumerate(
+                [
+                    root / "48" / "zero0.png",
+                    root / "48" / "zero1.png",
+                    root / "79" / "o0.png",
+                    root / "79" / "o1.png",
+                ]
+            ):
+                image = Image.new("L", (24, 24), 255)
+                draw = ImageDraw.Draw(image)
+                draw.ellipse((4 + index % 2, 4, 20, 20), outline=0, width=2)
+                image.save(image_path)
+            cache_path = Path(directory) / "cvl.pt"
+            torch.save(
+                {
+                    "images": torch.zeros((3, 1, 32, 32), dtype=torch.float32),
+                    "targets": torch.tensor([MIXEDCASE_LABELS.index("O")] * 3, dtype=torch.long),
+                },
+                cache_path,
+            )
+
+            train_loader, validation_loader, labels = make_loaders(
+                root,
+                batch_size=16,
+                train_only_extra_roots=[cache_path],
+            )
+
+            train_total = sum(batch_targets.numel() for _batch_images, batch_targets in train_loader)
+            validation_total = sum(batch_targets.numel() for _batch_images, batch_targets in validation_loader)
+
+        self.assertEqual(labels, ["0", "O"])
+        self.assertEqual(train_total, 5)
+        self.assertEqual(validation_total, 2)
+
+    def test_load_extra_character_cache_rejects_invalid_shape(self) -> None:
+        """Malformed tensor caches should fail before training starts."""
+
+        with tempfile.TemporaryDirectory() as directory:
+            cache_path = Path(directory) / "bad.pt"
+            torch.save(
+                {
+                    "images": torch.zeros((2, 28, 28), dtype=torch.float32),
+                    "targets": torch.zeros(2, dtype=torch.long),
+                },
+                cache_path,
+            )
+
+            with self.assertRaisesRegex(RuntimeError, "images must have shape"):
+                load_extra_character_cache(cache_path, ["A"])
 
     def test_labels_match_with_visual_ambiguity_groups(self) -> None:
         """Ambiguity-aware scoring should accept known handwriting lookalikes."""

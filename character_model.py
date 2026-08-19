@@ -28,6 +28,7 @@ from torchvision import transforms
 
 from alnum_model import EMNIST_MEAN as ALNUM_MEAN
 from alnum_model import EMNIST_STD as ALNUM_STD
+from alnum_model import MIXEDCASE_LABELS
 from alnum_model import WEIGHTS_PATH as ALNUM_WEIGHTS_PATH
 from alnum_model import load_alnum_model
 from emnist_experiment import EMNIST_MEAN, EMNIST_STD, WEIGHTS_PATH as EMNIST_WEIGHTS_PATH
@@ -483,8 +484,56 @@ def build_or_load_combined_cache(root: Path, extra_roots: list[Path] | None = No
     return image_tensor, target_tensor, labels
 
 
+def load_extra_character_cache(cache_path: Path, labels: list[str]) -> tuple[torch.Tensor, torch.Tensor] | None:
+    """Load a tensor cache and remap its targets into the character labels."""
+
+    cache = torch.load(cache_path, map_location="cpu", weights_only=True)
+    if not isinstance(cache, dict):
+        raise RuntimeError(f"Extra character tensor cache is not a dictionary: {cache_path}")
+    images = cache.get("images")
+    targets = cache.get("targets")
+    if not isinstance(images, torch.Tensor) or not isinstance(targets, torch.Tensor):
+        raise RuntimeError(f"Extra character tensor cache needs images and targets tensors: {cache_path}")
+    if images.ndim != 4 or images.shape[1] != 1:
+        raise RuntimeError(f"Extra character tensor cache images must have shape N x 1 x H x W: {cache_path}")
+    if targets.ndim != 1 or targets.shape[0] != images.shape[0]:
+        raise RuntimeError(f"Extra character tensor cache targets must be one target per image: {cache_path}")
+    converted_images = images.float()
+    if float(converted_images.min()) < -0.05 or float(converted_images.max()) > 1.05:
+        converted_images = converted_images * ALNUM_STD + ALNUM_MEAN
+    converted_images = converted_images.clamp(0.0, 1.0)
+    if converted_images.shape[-2:] != (IMAGE_SIZE, IMAGE_SIZE):
+        converted_images = torch.nn.functional.interpolate(
+            converted_images,
+            size=(IMAGE_SIZE, IMAGE_SIZE),
+            mode="bilinear",
+            align_corners=False,
+        )
+    converted_images = (converted_images - CHAR_MEAN) / CHAR_STD
+    source_labels = cache.get("labels")
+    if isinstance(source_labels, list) and all(isinstance(label, str) for label in source_labels):
+        cache_labels = [str(label) for label in source_labels]
+    else:
+        cache_labels = list(MIXEDCASE_LABELS)
+    label_to_index = {label: index for index, label in enumerate(labels)}
+    remapped_targets: list[int] = []
+    selected_indices: list[int] = []
+    for index, target in enumerate(targets.tolist()):
+        if not isinstance(target, int) or target < 0 or target >= len(cache_labels):
+            raise RuntimeError(f"Extra character tensor cache has target outside label range: {cache_path}")
+        label = cache_labels[target]
+        if label not in label_to_index:
+            continue
+        selected_indices.append(index)
+        remapped_targets.append(label_to_index[label])
+    if not selected_indices:
+        return None
+    index_tensor = torch.tensor(selected_indices, dtype=torch.long)
+    return converted_images.index_select(0, index_tensor), torch.tensor(remapped_targets, dtype=torch.long)
+
+
 def load_extra_character_tensors(extra_roots: list[Path], labels: list[str]) -> tuple[torch.Tensor, torch.Tensor] | None:
-    """Load ASCII-folder character samples that should not enter validation."""
+    """Load folder or tensor-cache character samples that should not enter validation."""
 
     if not extra_roots:
         return None
@@ -493,6 +542,12 @@ def load_extra_character_tensors(extra_roots: list[Path], labels: list[str]) -> 
     extra_targets: list[torch.Tensor] = []
     unknown_folders: list[str] = []
     for extra_root in extra_roots:
+        if extra_root.is_file() and extra_root.suffix == ".pt":
+            cached = load_extra_character_cache(extra_root, labels)
+            if cached is not None:
+                extra_images.append(cached[0])
+                extra_targets.append(cached[1])
+            continue
         if not extra_root.exists() or not extra_root.is_dir():
             raise RuntimeError(f"Extra character dataset does not exist: {extra_root}")
         for class_dir in sorted(path for path in extra_root.iterdir() if path.is_dir()):
