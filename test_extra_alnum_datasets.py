@@ -32,6 +32,7 @@ from alnum_model import (
     load_mixedcase_extra_cache,
     mixedcase_auxiliary_loss,
     mixedcase_benchmark_gate_failures,
+    mixedcase_checkpoint_floor_failures,
     mixedcase_checkpoint_meets_floors,
     mixedcase_checkpoint_score,
     mixedcase_folded_logits,
@@ -393,6 +394,30 @@ class ExtraAlnumDatasetTests(unittest.TestCase):
                 min_upper=84.0,
                 min_lower=73.0,
             )
+        )
+
+    def test_mixedcase_checkpoint_floor_failures_name_missed_floors(self) -> None:
+        """Rejected candidate diagnostics should explain which gate failed."""
+
+        metrics = {
+            "case_or_ambiguity_aware_test_accuracy": 95.9,
+            "digit_test_accuracy": 96.0,
+            "upper_test_accuracy": 73.2,
+            "lower_test_accuracy": 84.2,
+        }
+
+        self.assertEqual(
+            mixedcase_checkpoint_floor_failures(
+                metrics,
+                min_case_or_visual=96.0,
+                min_digit=95.0,
+                min_upper=80.0,
+                min_lower=80.0,
+            ),
+            [
+                "case_or_visual 95.90% < floor 96.00%",
+                "upper 73.20% < floor 80.00%",
+            ],
         )
 
     def test_parse_mixedcase_benchmark_gate_names_defaults_to_mixedcase_gates(self) -> None:
