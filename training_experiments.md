@@ -1686,3 +1686,10 @@ restored, so future improvement loops do not repeat known-bad blends.
   - Smoke: a two-run `0Oo` sweep over `digit_protect_confidence=None,0.95` with `base_confidence_max=0.35` completed end to end. Both rows stayed non-promotable and reported unchanged `balanced_score=73.1513`, so no artifact was written.
   - Verification: `test_sweep_mixedcase_feature_reranker.py` and `test_mixedcase_feature_reranker.py` passed (`35` tests), and the modified sweep/probe scripts compiled.
   - Takeaway: the search harness now covers the currently useful safety dimensions. The next improvement loop can run broader balanced sweeps without hand-writing one-off shell loops.
+
+- Rejected bounded balanced `0Oo` safety-grid sweep:
+  - Sweep: `8` of `12` planned rows completed for `0Oo` with rough `80/class` extras, `base_confidence_max=None,0.20`, `digit_protect_confidence=None,0.95`, and `upper_protect_confidence=None,0.10` (`tmp/balanced_gated_sweep_0Oo_20260819T182408.json`).
+  - Result: `0` promotable rows. Final reranked metrics stayed at the base values (`87.7782%` exact, `98.0479%` case/visual, `95.0249%` digit, `84.7030%` upper, `73.1513%` lower; balanced score `73.1513`) because every proposed family edit was rejected.
+  - Failure mode: the ungated family probe would have improved some upper/lower `O/o` decisions, but it regressed digit accuracy (`95.0249% -> 93.5378%` in the first row), so the no-regression gate correctly blocked promotion.
+  - Verification: focused web/context tests passed (`7` tests), and uploaded real-fixture evaluation scored `100.0%` exact / `100.0%` raw exact on the saved `look behind you` upload with replay visible.
+  - Takeaway: the current `0Oo` reranker family is exhausted under the protected balanced gates. The next useful route is a lowercase-focused objective or new data/architecture for the lower-case bottleneck, not more broad `0Oo` gate combinations.
