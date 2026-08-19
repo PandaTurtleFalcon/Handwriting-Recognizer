@@ -563,6 +563,7 @@ def apply_family_probe(
     base_confidence_max: float | None = None,
     base_margin_max: float | None = None,
     digit_protect_confidence: float | None = None,
+    upper_protect_confidence: float | None = None,
     include_pixel_features: bool = False,
     embedding_outputs: torch.Tensor | None = None,
 ) -> torch.Tensor:
@@ -615,6 +616,15 @@ def apply_family_probe(
             protected = digit_confidence >= digit_protect_confidence
             digit_positions = torch.where(current_digits)[0]
             replace_mask[digit_positions[protected]] = False
+    if upper_protect_confidence is not None:
+        current_labels = predictions[candidate_indices]
+        current_upper = (current_labels >= 10) & (current_labels < 36)
+        if bool(current_upper.any()):
+            mixed_probabilities = mixed_outputs.softmax(dim=1)
+            upper_confidence = mixed_probabilities[candidate_indices[current_upper], current_labels[current_upper]]
+            protected = upper_confidence >= upper_protect_confidence
+            upper_positions = torch.where(current_upper)[0]
+            replace_mask[upper_positions[protected]] = False
     next_predictions = predictions.clone()
     next_predictions[candidate_indices[replace_mask]] = replacements[replace_mask]
     return next_predictions
@@ -842,6 +852,7 @@ def run_probe_from_data(
     base_confidence_max: float | None = None,
     base_margin_max: float | None = None,
     digit_protect_confidence: float | None = None,
+    upper_protect_confidence: float | None = None,
     max_probe_train_samples: int | None = None,
     mini_batch_size: int | None = None,
     output_path: Path = MIXEDCASE_FAMILY_RERANKER_PATH,
@@ -888,6 +899,7 @@ def run_probe_from_data(
             base_confidence_max,
             base_margin_max,
             digit_protect_confidence,
+            upper_protect_confidence,
             include_pixel_features,
             data.selection_embedding,
         )
@@ -909,6 +921,7 @@ def run_probe_from_data(
                 base_confidence_max,
                 base_margin_max,
                 digit_protect_confidence,
+                upper_protect_confidence,
                 include_pixel_features,
                 data.confirmation_embedding,
             )
@@ -951,6 +964,7 @@ def run_probe_from_data(
             base_confidence_max,
             base_margin_max,
             digit_protect_confidence,
+            upper_protect_confidence,
             include_pixel_features,
             data.test_embedding,
         )
@@ -1006,6 +1020,7 @@ def run_probe_from_data(
                 "base_confidence_max": base_confidence_max,
                 "base_margin_max": base_margin_max,
                 "digit_protect_confidence": digit_protect_confidence,
+                "upper_protect_confidence": upper_protect_confidence,
                 "include_digit_features": data.fit_digit is not None,
                 "include_pixel_features": include_pixel_features,
                 "include_embedding_features": data.fit_embedding is not None,
@@ -1079,6 +1094,7 @@ def run_probe_from_data(
             "base_confidence_max": base_confidence_max,
             "base_margin_max": base_margin_max,
             "digit_protect_confidence": digit_protect_confidence,
+            "upper_protect_confidence": upper_protect_confidence,
         },
         "wrote": wrote,
         "output_path": str(output_path),
@@ -1113,6 +1129,7 @@ def run_probe(
     base_confidence_max: float | None = None,
     base_margin_max: float | None = None,
     digit_protect_confidence: float | None = None,
+    upper_protect_confidence: float | None = None,
     max_probe_train_samples: int | None = None,
     mini_batch_size: int | None = None,
     output_path: Path = MIXEDCASE_FAMILY_RERANKER_PATH,
@@ -1225,6 +1242,7 @@ def run_probe(
             base_confidence_max,
             base_margin_max,
             digit_protect_confidence,
+            upper_protect_confidence,
             include_pixel_features,
             selection_embedding,
         )
@@ -1246,6 +1264,7 @@ def run_probe(
                 base_confidence_max,
                 base_margin_max,
                 digit_protect_confidence,
+                upper_protect_confidence,
                 include_pixel_features,
                 confirmation_embedding,
             )
@@ -1288,6 +1307,7 @@ def run_probe(
             base_confidence_max,
             base_margin_max,
             digit_protect_confidence,
+            upper_protect_confidence,
             include_pixel_features,
             test_embedding,
         )
@@ -1343,6 +1363,7 @@ def run_probe(
                 "base_confidence_max": base_confidence_max,
                 "base_margin_max": base_margin_max,
                 "digit_protect_confidence": digit_protect_confidence,
+                "upper_protect_confidence": upper_protect_confidence,
                 "include_digit_features": include_digit_features,
                 "include_pixel_features": include_pixel_features,
                 "include_embedding_features": include_embedding_features,
@@ -1417,6 +1438,7 @@ def run_probe(
             "base_confidence_max": base_confidence_max,
             "base_margin_max": base_margin_max,
             "digit_protect_confidence": digit_protect_confidence,
+            "upper_protect_confidence": upper_protect_confidence,
         },
         "wrote": wrote,
         "output_path": str(output_path),
@@ -1475,6 +1497,7 @@ def main() -> None:
     parser.add_argument("--base-confidence-max", type=float, default=None)
     parser.add_argument("--base-margin-max", type=float, default=None)
     parser.add_argument("--digit-protect-confidence", type=float, default=None)
+    parser.add_argument("--upper-protect-confidence", type=float, default=None)
     parser.add_argument(
         "--max-probe-train-samples",
         type=int,
@@ -1520,6 +1543,7 @@ def main() -> None:
                 base_confidence_max=args.base_confidence_max,
                 base_margin_max=args.base_margin_max,
                 digit_protect_confidence=args.digit_protect_confidence,
+                upper_protect_confidence=args.upper_protect_confidence,
                 max_probe_train_samples=args.max_probe_train_samples,
                 mini_batch_size=args.mini_batch_size,
                 output_path=args.output_path,

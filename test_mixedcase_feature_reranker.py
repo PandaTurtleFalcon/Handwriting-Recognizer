@@ -233,6 +233,32 @@ class MixedcaseFeatureRerankerTests(unittest.TestCase):
 
         self.assertEqual(protected.tolist(), [0, 24])
 
+    def test_apply_family_probe_can_protect_confident_uppercase_predictions(self) -> None:
+        """Confident current uppercase predictions should be protected when requested."""
+
+        model = torch.nn.Linear(28, 2)
+        with torch.no_grad():
+            model.weight.zero_()
+            model.bias[:] = torch.tensor([0.0, 5.0])
+        probe = FamilyProbe("Oo", (24, 50), model)
+        predictions = torch.tensor([24, 24], dtype=torch.long)
+        images = torch.zeros((2, 1, 28, 28), dtype=torch.float32)
+        mixed = torch.zeros((2, 62), dtype=torch.float32)
+        mixed[0, 24] = 8.0
+        mixed[1, 24] = 0.1
+        folded = torch.zeros((2, 36), dtype=torch.float32)
+
+        protected = apply_family_probe(
+            predictions,
+            images,
+            mixed,
+            folded,
+            probe,
+            upper_protect_confidence=0.9,
+        )
+
+        self.assertEqual(protected.tolist(), [24, 50])
+
     def test_fit_tensors_appends_capped_extra_roots(self) -> None:
         """Optional adviser data should be capped before joining fit tensors."""
 
@@ -425,6 +451,7 @@ class MixedcaseFeatureRerankerTests(unittest.TestCase):
                 "base_confidence_max": None,
                 "base_margin_max": None,
                 "digit_protect_confidence": None,
+                "upper_protect_confidence": None,
             },
         )
         self.assertEqual(report["selection_samples"], 1)

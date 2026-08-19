@@ -1667,3 +1667,10 @@ restored, so future improvement loops do not repeat known-bad blends.
   - Combined gate sweep: adding base-confidence caps `0.20` and `0.35` on top of `--digit-protect-confidence 0.95` produced tiny exact gains (`+0.0079` and `+0.0158`) while keeping digit accuracy above baseline, but both still regressed uppercase and lower by small amounts, so no artifact was written.
   - Verification: `test_mixedcase_feature_reranker.py` passed (`27` tests), and the modified reranker script compiled.
   - Takeaway: digit-specialist protection successfully fixes the digit-regression failure mode, but the current `0Oo` reranker still over-edits uppercase O-like crops. The next refinement should add a symmetric upper-protection gate or require upper/lower confidence disagreement before touching current uppercase predictions.
+
+- Rejected upper-protected `0Oo` reranker refinements:
+  - Tooling: `scripts/probe_mixedcase_feature_reranker.py` now has optional `--upper-protect-confidence`, which blocks reranker changes away from a current uppercase prediction when the deployed mixed-case head is confident in that uppercase label.
+  - Protected sweep: combining `--digit-protect-confidence 0.95`, `--base-confidence-max 0.35`, and upper-protect thresholds `0.70`, `0.85`, and `0.95` preserved the previous tiny exact movement (`+0.0158`) but still regressed uppercase from `84.7030%` to `84.6519%`; no artifact was written.
+  - Strict upper check: lowering `--upper-protect-confidence` to `0.10` nearly eliminated the candidate (`+0.0016` exact), but still regressed upper to `84.6934%` and lower to `73.1402%`, so it also failed.
+  - Verification: `test_mixedcase_feature_reranker.py` passed (`28` tests), and the modified reranker script compiled.
+  - Takeaway: direct protection gates are now expressive enough to isolate digit and uppercase damage, but the remaining `0Oo` candidate does not have enough no-regression headroom. Continue searching with a different objective, especially one that explicitly optimizes all protected splits instead of accepting tiny exact gains.
