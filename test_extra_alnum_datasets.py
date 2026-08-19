@@ -507,7 +507,7 @@ class ExtraAlnumDatasetTests(unittest.TestCase):
             weights_path = Path(directory) / "nested" / "candidate.pt"
             metrics_path = Path(directory) / "nested" / "candidate_metrics.json"
 
-            alnum_model.save_mixedcase_checkpoint(
+            wrote_weights = alnum_model.save_mixedcase_checkpoint(
                 history=[{"epoch": 1, "test_accuracy": 12.5}],
                 best_state={"classifier.weight": torch.zeros(1, 1)},
                 best_accuracy=12.5,
@@ -524,9 +524,68 @@ class ExtraAlnumDatasetTests(unittest.TestCase):
             checkpoint = torch.load(weights_path, map_location="cpu", weights_only=True)
             metrics = json.loads(metrics_path.read_text(encoding="utf-8"))
 
+        self.assertTrue(wrote_weights)
         self.assertEqual(checkpoint["test_accuracy"], 12.5)
         self.assertEqual(metrics["output_weights_path"], str(weights_path))
         self.assertEqual(metrics["output_metrics_path"], str(metrics_path))
+        self.assertTrue(metrics["wrote_weights"])
+
+    def test_save_mixedcase_checkpoint_reports_missing_weights(self) -> None:
+        """Metrics should say when no checkpoint satisfied save floors."""
+
+        with tempfile.TemporaryDirectory() as directory:
+            weights_path = Path(directory) / "candidate.pt"
+            metrics_path = Path(directory) / "candidate_metrics.json"
+
+            wrote_weights = alnum_model.save_mixedcase_checkpoint(
+                history=[{"epoch": 1, "test_accuracy": 12.5}],
+                best_state=None,
+                best_accuracy=12.5,
+                best_metrics=None,
+                model_type="cnn",
+                learning_rate=0.001,
+                seed=123,
+                device=torch.device("cpu"),
+                samples_per_class=1,
+                output_weights_path=weights_path,
+                output_metrics_path=metrics_path,
+            )
+            metrics = json.loads(metrics_path.read_text(encoding="utf-8"))
+
+        self.assertFalse(wrote_weights)
+        self.assertFalse(weights_path.exists())
+        self.assertFalse(metrics["wrote_weights"])
+
+    def test_train_mixedcase_rejects_when_no_checkpoint_is_written(self) -> None:
+        """Candidate runs should fail clearly if all checkpoints miss floors."""
+
+        with tempfile.TemporaryDirectory() as directory:
+            with (
+                patch("alnum_model.get_device", return_value=torch.device("cpu")),
+                patch("alnum_model.make_mixedcase_loaders") as loaders,
+            ):
+                loaders.return_value = (
+                    DataLoader(TensorDataset(torch.zeros((1, 1, 28, 28)), torch.zeros(1, dtype=torch.long))),
+                    DataLoader(TensorDataset(torch.zeros((1, 1, 28, 28)), torch.zeros(1, dtype=torch.long))),
+                    DataLoader(TensorDataset(torch.zeros((1, 1, 28, 28)), torch.zeros(1, dtype=torch.long))),
+                    DataLoader(TensorDataset(torch.zeros((1, 1, 28, 28)), torch.zeros(1, dtype=torch.long))),
+                    DataLoader(TensorDataset(torch.zeros((1, 1, 28, 28)), torch.zeros(1, dtype=torch.long))),
+                    np.ones(len(MIXEDCASE_LABELS), dtype=np.int64),
+                )
+
+                with self.assertRaisesRegex(RuntimeError, "no weights were saved"):
+                    alnum_model.train_mixedcase(
+                        epochs=0,
+                        batch_size=1,
+                        min_accuracy=0.0,
+                        learning_rate=0.001,
+                        seed=123,
+                        model_type="cnn",
+                        samples_per_class=1,
+                        device_name="auto",
+                        output_weights_path=Path(directory) / "candidate.pt",
+                        output_metrics_path=Path(directory) / "candidate_metrics.json",
+                    )
 
     def test_mixedcase_cli_restores_artifacts_when_benchmark_gate_regresses(self) -> None:
         """Protected mixed-case training should restore artifacts after regression."""

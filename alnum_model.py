@@ -2176,11 +2176,12 @@ def save_mixedcase_checkpoint(
     min_checkpoint_lower: float = 0.0,
     output_weights_path: Path = MIXEDCASE_WEIGHTS_PATH,
     output_metrics_path: Path = MIXEDCASE_METRICS_PATH,
-) -> None:
+) -> bool:
     """Persist the best mixed-case weights and metrics."""
 
     output_weights_path.parent.mkdir(parents=True, exist_ok=True)
     output_metrics_path.parent.mkdir(parents=True, exist_ok=True)
+    wrote_weights = best_state is not None
     if best_state is not None:
         torch.save(
             {
@@ -2257,6 +2258,7 @@ def save_mixedcase_checkpoint(
                 "output_metrics_path": str(output_metrics_path),
                 "mixedcase_extra_roots": [str(path) for path in (mixedcase_extra_roots or [])],
                 "mixedcase_extra_samples_per_class": mixedcase_extra_samples_per_class,
+                "wrote_weights": wrote_weights,
                 "per_class_accuracy": per_class_accuracy or {},
                 "best_checkpoint": best_metrics or {"test_accuracy": best_accuracy},
                 "history": history,
@@ -2265,6 +2267,7 @@ def save_mixedcase_checkpoint(
         ),
         encoding="utf-8",
     )
+    return wrote_weights
 
 
 def backup_mixedcase_artifacts(backup_dir: Path) -> dict[str, bool]:
@@ -2441,6 +2444,7 @@ def train_mixedcase(
     best_state = None
     best_per_class_accuracy: dict[str, float] = {}
     best_metrics: dict[str, float | str] | None = None
+    wrote_weights = False
     if warm_start:
         print("Evaluating warm-start mixed-case checkpoint...", flush=True)
         warm_start_metrics = evaluate_mixedcase_breakdown(
@@ -2544,7 +2548,7 @@ def train_mixedcase(
                 "source": f"epoch_{epoch}",
                 "checkpoint_objective_score": candidate_score,
             }
-        save_mixedcase_checkpoint(
+        wrote_weights = save_mixedcase_checkpoint(
             history,
             best_state,
             best_accuracy,
@@ -2598,6 +2602,11 @@ def train_mixedcase(
 
     if best_accuracy < min_accuracy:
         raise RuntimeError(f"Best mixed-case test accuracy was {best_accuracy:.2f}%, below {min_accuracy:.2f}%.")
+    if not wrote_weights:
+        raise RuntimeError(
+            "No mixed-case checkpoint met the configured checkpoint floors; "
+            f"metrics were written to {output_metrics_path}, but no weights were saved to {output_weights_path}."
+        )
     return history
 
 
