@@ -1599,3 +1599,8 @@ restored, so future improvement loops do not repeat known-bad blends.
   - Result: all-font generated app hardcase raw exact improved from `66.6667%` to `98.8889%`; raw-label compact exact improved from `66.6667%` to `98.8889%`; raw ambiguity and compact raw-label ambiguity are `100.0%`. The only compact misses left are protected `Yy -> 44` cases, which are not relabeled because plain numeric `44` must remain possible.
   - Uploaded fixture result: `data/app_hardcase_fixtures/look_behind_you_reported.png` now reports uploaded raw exact `100.0%` and compact raw-label exact `100.0%`; the replay-excluded display gate remains `0.0%` because the fixture is still marked as using saved correction memory.
   - Remaining global blockers: mixed-case exact/upper/lower and character letter exact remain below target, so the overall goal is still open.
+
+- Rejected narrow `Cc` mixed-case reranker:
+  - Probe: `scripts/probe_mixedcase_feature_reranker.py` ran a `Cc`-only, current-uppercase-only candidate with `80k` train samples, `80` epochs, learning rate `0.002`, hidden size `96`, embedding plus pixel features, calibration ratio `0.2`, confirmation ratio `0.5`, confidence `0.72`, margin `0.08`, and `1200` max probe train samples.
+  - Result: no artifact was written. The family had `selection_delta=0.0` and `confirmation_delta=-0.0125`, so it failed the confirmation floor and left test metrics unchanged at exact `87.7782%`, digit `95.0249%`, upper `84.7030%`, lower `73.1513%`, and case/visual `98.0479%`.
+  - Takeaway: even a contained lowercase-recovery family can fail to generalize. Continue avoiding promotion unless selection and confirmation both move in the same direction under protected gates.
