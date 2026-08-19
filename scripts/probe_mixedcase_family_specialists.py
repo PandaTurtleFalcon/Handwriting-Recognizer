@@ -31,6 +31,15 @@ from scripts.calibrate_mixedcase_logits import _metrics  # noqa: E402
 
 DEFAULT_FAMILIES = ("1Ili", "0Oo", "5Ss", "MNmn", "9qg", "Uuv")
 SOURCE_GROUPS = ("digit", "upper", "lower")
+METRIC_CHOICES = (
+    "test_accuracy",
+    "casefold_test_accuracy",
+    "visual_ambiguity_test_accuracy",
+    "case_or_ambiguity_aware_test_accuracy",
+    "digit_test_accuracy",
+    "upper_test_accuracy",
+    "lower_test_accuracy",
+)
 
 
 @dataclass(frozen=True)
@@ -364,6 +373,7 @@ def choose_thresholds(
     confidence_values: tuple[float, ...],
     margin_values: tuple[float, ...],
     source_groups: tuple[str, ...] = SOURCE_GROUPS,
+    objective: str = "test_accuracy",
 ) -> dict[str, object]:
     """Select confidence/margin gates on held-out train data."""
 
@@ -376,9 +386,12 @@ def choose_thresholds(
             "replacement_report": {"changed": 0, "fixed": 0, "broken": 0},
         }
     base_metrics = _metrics(validation_predictions, validation_targets, list(MIXEDCASE_LABELS))
+    if objective not in base_metrics:
+        raise ValueError(f"Unknown family-specialist objective: {objective}")
     best: dict[str, object] = {
         "confidence": None,
         "margin": None,
+        "objective": objective,
         "base": base_metrics,
         "candidate": base_metrics,
         "replacement_report": {"changed": 0, "fixed": 0, "broken": 0},
@@ -409,12 +422,13 @@ def choose_thresholds(
                 or candidate_metrics["lower_test_accuracy"] < base_metrics["lower_test_accuracy"]
             ):
                 continue
-            score = candidate_metrics["test_accuracy"] - base_metrics["test_accuracy"]
+            score = candidate_metrics[objective] - base_metrics[objective]
             if score > best_score:
                 best_score = score
                 best = {
                     "confidence": confidence,
                     "margin": margin,
+                    "objective": objective,
                     "base": base_metrics,
                     "candidate": candidate_metrics,
                     "replacement_report": replacements,
@@ -433,6 +447,7 @@ def threshold_is_confirmed(
     margin: float,
     min_gain: float = 0.0,
     source_groups: tuple[str, ...] = SOURCE_GROUPS,
+    objective: str = "test_accuracy",
 ) -> tuple[bool, dict[str, object]]:
     """Return whether a selected threshold also improves a second holdout."""
 
@@ -444,6 +459,8 @@ def threshold_is_confirmed(
             "gain": 0.0,
         }
     base_metrics = _metrics(validation_predictions, validation_targets, list(MIXEDCASE_LABELS))
+    if objective not in base_metrics:
+        raise ValueError(f"Unknown family-specialist objective: {objective}")
     candidate_predictions, _family_reports = apply_specialists(
         validation_predictions,
         validation_images,
@@ -459,7 +476,7 @@ def threshold_is_confirmed(
         candidate_predictions,
         validation_targets,
     )
-    gain = candidate_metrics["test_accuracy"] - base_metrics["test_accuracy"]
+    gain = candidate_metrics[objective] - base_metrics[objective]
     protected_ok = (
         candidate_metrics["case_or_ambiguity_aware_test_accuracy"]
         >= base_metrics["case_or_ambiguity_aware_test_accuracy"]
@@ -471,6 +488,7 @@ def threshold_is_confirmed(
         "base": base_metrics,
         "candidate": candidate_metrics,
         "replacement_report": replacements,
+        "objective": objective,
         "gain": gain,
     }
 
@@ -499,6 +517,7 @@ def probe_family_specialists(
     confidence_grid: tuple[float, ...],
     margin_grid: tuple[float, ...],
     source_groups: tuple[str, ...],
+    objective: str,
     seed: int,
 ) -> dict[str, object]:
     """Train and evaluate visual-family specialists without deploying them."""
@@ -576,6 +595,7 @@ def probe_family_specialists(
             confidence_grid,
             margin_grid,
             source_groups,
+            objective=objective,
         )
         if threshold_selection.get("confidence") is not None and threshold_selection.get("margin") is not None:
             selected_confidence = float(threshold_selection["confidence"])
@@ -585,8 +605,8 @@ def probe_family_specialists(
             selected_base = threshold_selection.get("base", {})
             min_gain = max(
                 0.0,
-                float(selected_candidate.get("test_accuracy", 0.0))
-                - float(selected_base.get("test_accuracy", 0.0)),
+                float(selected_candidate.get(objective, 0.0))
+                - float(selected_base.get(objective, 0.0)),
             )
             confirmed, confirmation_report = threshold_is_confirmed(
                 confirmation_predictions,
@@ -599,6 +619,7 @@ def probe_family_specialists(
                 selected_margin,
                 min_gain=min_gain,
                 source_groups=source_groups,
+                objective=objective,
             )
             threshold_selection["confirmation"] = confirmation_report
             threshold_selection["confirmed"] = confirmed
@@ -634,6 +655,7 @@ def probe_family_specialists(
         "skipped_families": skipped,
         "thresholds": {"confidence": reported_confidence, "margin": reported_margin},
         "threshold_selection": threshold_selection,
+        "objective": objective,
         "base": base_metrics,
         "candidate": candidate_metrics,
         "delta": {
@@ -667,7 +689,7 @@ def probe_family_specialists(
         "selection_samples": int(selection_targets.numel()),
         "confirmation_samples": int(confirmation_targets.numel()),
         "promotable": (
-            candidate_metrics["test_accuracy"] > base_metrics["test_accuracy"]
+            candidate_metrics[objective] > base_metrics[objective]
             and candidate_metrics["case_or_ambiguity_aware_test_accuracy"]
             >= base_metrics["case_or_ambiguity_aware_test_accuracy"]
             and candidate_metrics["digit_test_accuracy"] >= base_metrics["digit_test_accuracy"]
@@ -693,6 +715,12 @@ def main() -> None:
     parser.add_argument("--specialist-confidence", type=float, default=0.85)
     parser.add_argument("--specialist-margin", type=float, default=0.35)
     parser.add_argument("--auto-threshold", action="store_true")
+    parser.add_argument(
+        "--objective",
+        default="test_accuracy",
+        choices=METRIC_CHOICES,
+        help="Metric to improve when selecting/confirming automatic thresholds.",
+    )
     parser.add_argument("--validation-ratio", type=float, default=0.15)
     parser.add_argument("--confirmation-ratio", type=float, default=0.5)
     parser.add_argument("--confidence-grid", default="0.5,0.6,0.7,0.8,0.85,0.9,0.95")
@@ -722,6 +750,7 @@ def main() -> None:
         confidence_grid=parse_float_grid(args.confidence_grid),
         margin_grid=parse_float_grid(args.margin_grid),
         source_groups=parse_source_groups(args.source_groups),
+        objective=args.objective,
         seed=args.seed,
     )
     print(json.dumps(report, indent=2))

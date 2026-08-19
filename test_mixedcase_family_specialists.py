@@ -137,6 +137,28 @@ class MixedcaseFamilySpecialistTests(unittest.TestCase):
         self.assertIsNone(selected["confidence"])
         self.assertEqual(selected["replacement_report"], {"changed": 0, "fixed": 0, "broken": 0})
 
+    def test_choose_thresholds_can_optimize_lowercase_objective(self) -> None:
+        class HelpfulLowerSpecialist(torch.nn.Module):
+            def forward(self, images: torch.Tensor) -> torch.Tensor:
+                return torch.tensor([[0.0, 4.0]], dtype=torch.float32)
+
+        selected = choose_thresholds(
+            torch.tensor([36], dtype=torch.long),
+            torch.zeros((1, 1, 28, 28), dtype=torch.float32),
+            torch.tensor([37], dtype=torch.long),
+            [Specialist("ab", (36, 37), HelpfulLowerSpecialist())],
+            batch_size=8,
+            device=torch.device("cpu"),
+            confidence_values=(0.0,),
+            margin_values=(0.0,),
+            source_groups=("lower",),
+            objective="lower_test_accuracy",
+        )
+
+        self.assertEqual(selected["confidence"], 0.0)
+        self.assertEqual(selected["objective"], "lower_test_accuracy")
+        self.assertEqual(selected["replacement_report"], {"changed": 1, "fixed": 1, "broken": 0})
+
     def test_threshold_confirmation_requires_gain_on_second_holdout(self) -> None:
         class HelpfulSpecialist(torch.nn.Module):
             def forward(self, images: torch.Tensor) -> torch.Tensor:
@@ -156,6 +178,29 @@ class MixedcaseFamilySpecialistTests(unittest.TestCase):
 
         self.assertTrue(confirmed)
         self.assertEqual(report["replacement_report"], {"changed": 1, "fixed": 1, "broken": 0})
+
+    def test_threshold_confirmation_reports_objective_gain(self) -> None:
+        class HelpfulLowerSpecialist(torch.nn.Module):
+            def forward(self, images: torch.Tensor) -> torch.Tensor:
+                return torch.tensor([[0.0, 4.0]], dtype=torch.float32)
+
+        confirmed, report = threshold_is_confirmed(
+            torch.tensor([36], dtype=torch.long),
+            torch.zeros((1, 1, 28, 28), dtype=torch.float32),
+            torch.tensor([37], dtype=torch.long),
+            [Specialist("ab", (36, 37), HelpfulLowerSpecialist())],
+            batch_size=8,
+            device=torch.device("cpu"),
+            confidence=0.0,
+            margin=0.0,
+            min_gain=0.1,
+            source_groups=("lower",),
+            objective="lower_test_accuracy",
+        )
+
+        self.assertTrue(confirmed)
+        self.assertEqual(report["objective"], "lower_test_accuracy")
+        self.assertGreater(report["gain"], 0.0)
 
     def test_threshold_confirmation_rejects_flat_second_holdout(self) -> None:
         class FlatSpecialist(torch.nn.Module):
