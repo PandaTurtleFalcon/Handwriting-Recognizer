@@ -1703,3 +1703,9 @@ restored, so future improvement loops do not repeat known-bad blends.
   - Forced diagnostic: the same specialist set forced at confidence `0.5`, margin `0` changed many lowercase-family samples but regressed lower accuracy from `73.1734%` to `70.3093%` (`-2.8641`) and exact from `87.7797%` to `87.3443%`, so it is not deployable (`tmp/lower_forced_family_specialists_top6_20260819T183735.json`).
   - Verification: `test_mixedcase_family_specialists.py` passed (`14` tests), and the modified specialist probe compiled.
   - Takeaway: lowercase needs a better representation/objective, not just lower-only thresholding. The current tiny family CNNs are biased toward converting lowercase-looking samples into upper/digit family members and actively damage the lowercase split when forced.
+
+- Rejected lower-tail mixed-case checkpoint fine-tune:
+  - Candidate: warm-started the current raw mixed-case checkpoint, froze features, trained only the final classifier tail for `2` epochs with `--mixedcase-lower-loss-weight 2.0`, `--mixedcase-type-loss-weight 0.2`, `--mixedcase-checkpoint-objective lower_test_accuracy`, and strict checkpoint floors, writing only to `tmp/mixedcase_lower_tail_candidate_20260819T184358.*`.
+  - Result: no weights were saved. Epoch 2 lifted raw lowercase from the warm-start `84.1014%` to `91.2414%`, but exact collapsed to `71.9513%`, digit to `73.8125%`, upper to `51.2665%`, and case/visual to `96.8858%`, so the checkpoint floors correctly rejected it.
+  - Verification: deployed artifacts were untouched; only the candidate metrics JSON exists under `tmp/`.
+  - Takeaway: the model has capacity to push lowercase much higher, but a single-head lower-weight objective catastrophically trades away digit and uppercase decisions. The next checkpoint experiment should use a balanced/multi-objective acceptance score or a separate case head, not a pure lower-tail fine-tune.
