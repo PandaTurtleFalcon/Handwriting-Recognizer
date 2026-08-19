@@ -10,6 +10,7 @@ from scripts.probe_character_family_specialists import (
     choose_thresholds,
     deployed_predictions,
     family_indices,
+    family_validation_diagnostics,
     parse_families,
     parse_source_groups,
     source_group_mask,
@@ -168,6 +169,31 @@ class CharacterFamilySpecialistTests(unittest.TestCase):
 
         self.assertEqual(predictions.tolist(), [])
         self.assertEqual(labels, ["A"])
+
+    def test_family_validation_diagnostics_reports_fix_break_and_failures(self) -> None:
+        class HelpfulSpecialist(torch.nn.Module):
+            def forward(self, images: torch.Tensor) -> torch.Tensor:
+                return torch.tensor([[0.0, 3.0], [0.0, 3.0]], dtype=torch.float32)
+
+        labels = ["0", "O"]
+        rows = family_validation_diagnostics(
+            torch.tensor([0, 0], dtype=torch.long),
+            torch.zeros((2, 1, 32, 32), dtype=torch.float32),
+            torch.tensor([1, 0], dtype=torch.long),
+            labels,
+            [Specialist("0O", (0, 1), HelpfulSpecialist())],
+            batch_size=8,
+            device=torch.device("cpu"),
+            confidence_threshold=0.0,
+            margin_threshold=0.0,
+            source_groups=("digit", "letter", "punctuation"),
+        )
+
+        self.assertEqual(rows[0]["family"], "0O")
+        self.assertEqual(rows[0]["replacement_report"], {"changed": 2, "fixed": 1, "broken": 1})
+        self.assertEqual(rows[0]["family_reports"], [{"family": "0O", "eligible": 2, "changed": 2}])
+        self.assertIn("digit_validation_accuracy 0.0000% < baseline 100.0000%", rows[0]["protected_failures"])
+        self.assertEqual(rows[0]["delta"]["validation_accuracy"], 0.0)
 
 
 if __name__ == "__main__":

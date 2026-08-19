@@ -339,6 +339,51 @@ def threshold_report(base: torch.Tensor, candidate: torch.Tensor, targets: torch
     return {"changed": int(changed.sum().item()), "fixed": int(fixed.sum().item()), "broken": int(broken.sum().item())}
 
 
+def family_validation_diagnostics(
+    base_predictions: torch.Tensor,
+    images: torch.Tensor,
+    targets: torch.Tensor,
+    labels: list[str],
+    specialists: list[Specialist],
+    batch_size: int,
+    device: torch.device,
+    confidence_threshold: float,
+    margin_threshold: float,
+    source_groups: tuple[str, ...],
+) -> list[dict[str, object]]:
+    """Evaluate each trained specialist by itself on the validation split."""
+
+    rows: list[dict[str, object]] = []
+    base_metrics = metrics(base_predictions, targets, labels)
+    for specialist in specialists:
+        candidate_predictions, family_reports = apply_specialists(
+            base_predictions,
+            images,
+            [specialist],
+            labels,
+            batch_size,
+            device,
+            confidence_threshold,
+            margin_threshold,
+            source_groups,
+        )
+        candidate_metrics = metrics(candidate_predictions, targets, labels)
+        rows.append(
+            {
+                "family": specialist.family,
+                "metrics": candidate_metrics,
+                "delta": {
+                    key: float(candidate_metrics.get(key, 0.0)) - float(base_metrics.get(key, 0.0))
+                    for key in sorted(candidate_metrics)
+                },
+                "replacement_report": threshold_report(base_predictions, candidate_predictions, targets),
+                "family_reports": family_reports,
+                "protected_failures": protected_failures(candidate_metrics, base_metrics),
+            }
+        )
+    return rows
+
+
 def protected_ok(candidate: dict[str, float], baseline: dict[str, float]) -> bool:
     """Return whether candidate metrics preserve protected splits."""
 
@@ -550,6 +595,8 @@ def probe_family_specialists(
     if confidence is None or margin is None:
         candidate_predictions = base_validation_predictions.clone()
         family_reports = [{"family": specialist.family, "eligible": 0, "changed": 0} for specialist in specialists]
+        diagnostic_confidence = confidence_grid[0] if confidence_grid else float("inf")
+        diagnostic_margin = margin_grid[0] if margin_grid else float("inf")
     else:
         candidate_predictions, family_reports = apply_specialists(
             base_validation_predictions,
@@ -562,6 +609,8 @@ def probe_family_specialists(
             float(margin),
             source_groups,
         )
+        diagnostic_confidence = float(confidence)
+        diagnostic_margin = float(margin)
     base_metrics = metrics(base_validation_predictions, validation_targets, labels)
     candidate_metrics = metrics(candidate_predictions, validation_targets, labels)
     return {
@@ -574,6 +623,18 @@ def probe_family_specialists(
         "candidate": candidate_metrics,
         "delta": {key: candidate_metrics[key] - base_metrics[key] for key in sorted(candidate_metrics)},
         "family_reports": family_reports,
+        "family_validation_diagnostics": family_validation_diagnostics(
+            base_validation_predictions,
+            validation_images,
+            validation_targets,
+            labels,
+            specialists,
+            batch_size,
+            device,
+            diagnostic_confidence,
+            diagnostic_margin,
+            source_groups,
+        ),
         "selection_samples": int(selection_targets.numel()),
         "confirmation_samples": int(confirmation_targets.numel()),
         "validation_samples": int(validation_targets.numel()),
