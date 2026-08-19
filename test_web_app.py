@@ -1638,6 +1638,51 @@ class WebAppRenderingTests(unittest.TestCase):
 
         self.assertEqual("".join(main.prediction_value(item) for item in resolved), "Hello")
 
+    def test_visual_twin_resolver_relabels_box_aligned_context_rows(self) -> None:
+        """Context allowlist fixes should update box labels when lengths match."""
+
+        examples = {
+            "Te5t": "Test",
+            "I11!": "Il1!",
+            "T357": "T3s7",
+            "iOOkbehindYOu": "lookbehindyou",
+            "lookbeh'nd": "lookbehind",
+        }
+        for raw, expected in examples.items():
+            with self.subTest(raw=raw):
+                predictions = [
+                    {"label": label, "confidence": 0.91, "x": index * 12, "y": 1, "width": 10, "height": 20, "row": 1}
+                    for index, label in enumerate(raw)
+                ]
+
+                resolved = main.resolve_visual_twin_predictions(predictions)
+
+                self.assertEqual("".join(main.prediction_value(item) for item in resolved), expected)
+
+    def test_visual_twin_resolver_does_not_relabel_short_phrase_fragments(self) -> None:
+        """Phrase cleanup cannot become raw labels when detection missed boxes."""
+
+        predictions = [
+            {"label": label, "confidence": 0.91, "x": index * 12, "y": 1, "width": 10, "height": 20, "row": 1}
+            for index, label in enumerate("xOOh:1i7o4")
+        ]
+
+        resolved = main.resolve_visual_twin_predictions(predictions)
+
+        self.assertEqual("".join(main.prediction_value(item) for item in resolved), "xOOh:1i7o4")
+
+    def test_visual_twin_resolver_keeps_unknown_rows_out_of_context_relabeling(self) -> None:
+        """Only exact allowlisted cleanup rows should be relabeled."""
+
+        predictions = [
+            {"label": label, "confidence": 0.91, "x": index * 12, "y": 1, "width": 10, "height": 20, "row": 1}
+            for index, label in enumerate("xOOh:1iA")
+        ]
+
+        resolved = main.resolve_visual_twin_predictions(predictions)
+
+        self.assertEqual("".join(main.prediction_value(item) for item in resolved), "xOOh:1iA")
+
     def test_visual_twin_resolver_handles_t3s7_shape(self) -> None:
         """Strong S/s and 7 alternatives should recover a mixed T3s7 code."""
 

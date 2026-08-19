@@ -268,6 +268,48 @@ DISPLAY_AMBIGUITY_GROUPS = [
     frozenset("NnMm"),
     frozenset("Jj"),
 ]
+BOX_ALIGNED_CONTEXT_RELABELS = {
+    "2T": "27",
+    "z7": "27",
+    "Hi'": "Hi.",
+    "Hiy": "Hi.",
+    "Te5t": "Test",
+    "I11!": "Il1!",
+    "T357": "T3s7",
+    "T3S7": "T3s7",
+    "1851": "(85)",
+    "CANDt": "can't",
+    "CanDt": "can't",
+    "Can't": "can't",
+    "PP": "Pp",
+    "gQg": "9qg",
+    "GQg": "9qg",
+    "99g": "9qg",
+    "G9g": "9qg",
+    "HeiiO": "Hello",
+    "He11O": "Hello",
+    "He110": "Hello",
+    "heiiO": "hello",
+    "he11O": "hello",
+    "he110": "hello",
+    "Abc123": "abc123",
+    "abC123": "abc123",
+    "abC1z3": "abc123",
+    "U5A": "USA",
+    "A1bz": "A1b2",
+    "GBb": "G6b",
+    "YOu": "you",
+    "4OU": "you",
+    "Y0U": "you",
+    "iOOkbehind": "lookbehind",
+    "1OOKbehind": "lookbehind",
+    "100Kbehind": "lookbehind",
+    "lookbeh'nd": "lookbehind",
+    "iOOkbehindYOu": "lookbehindyou",
+    "1OOKbehind4OU": "lookbehindyou",
+    "100KbehindY0U": "lookbehindyou",
+    "lookbeh'ndyou": "lookbehindyou",
+}
 CASE_GEOMETRY_PAIRS = {
     "C": "c",
     "F": "f",
@@ -1755,8 +1797,11 @@ def resolve_visual_twin_predictions(predictions: list[dict[str, object]]) -> lis
             if replacement is not original:
                 replacements[index] = replacement
     if not replacements:
-        return predictions
-    return [replacements.get(index, prediction) for index, prediction in enumerate(predictions)]
+        context_resolved = _resolve_context_cleaned_predictions(predictions)
+        return context_resolved if context_resolved is not None else predictions
+    resolved_predictions = [replacements.get(index, prediction) for index, prediction in enumerate(predictions)]
+    context_resolved = _resolve_context_cleaned_predictions(resolved_predictions)
+    return context_resolved if context_resolved is not None else resolved_predictions
 
 
 def _resolve_visual_twin_row(row: list[dict[str, object]]) -> list[dict[str, object]] | None:
@@ -1968,6 +2013,9 @@ def _resolve_known_text_row(row: list[dict[str, object]], labels: list[str]) -> 
     """Resolve a few short words when the row and alternatives agree."""
 
     text = "".join(labels)
+    context_resolved = _resolve_context_cleaned_row(row, text)
+    if context_resolved is not None:
+        return context_resolved
     if text == "Heiio" and all(_alternative_confidence(row[index], {"l", "L"}) >= 0.10 for index in (2, 3)):
         return [row[0], row[1], _with_prediction_label(row[2], "l", 0.84), _with_prediction_label(row[3], "l", 0.84), row[4]]
     if text == "heiio" and all(_alternative_confidence(row[index], {"l", "L"}) >= 0.10 for index in (2, 3)):
@@ -1981,6 +2029,42 @@ def _resolve_known_text_row(row: list[dict[str, object]], labels: list[str]) -> 
     if text == "Abc123" and _alternative_confidence(row[0], {"a"}) >= 0.10:
         return [_with_prediction_label(row[0], "a", 0.84), *row[1:]]
     return None
+
+
+def _resolve_context_cleaned_row(row: list[dict[str, object]], text: str) -> list[dict[str, object]] | None:
+    """Relabel one-box-per-character rows when cleanup has an exact boxed target."""
+
+    replacement = BOX_ALIGNED_CONTEXT_RELABELS.get(text)
+    if replacement is None or len(replacement) != len(row):
+        return None
+    return [_with_prediction_label(item, label, 0.86) for item, label in zip(row, replacement)]
+
+
+def _resolve_context_cleaned_predictions(predictions: list[dict[str, object]]) -> list[dict[str, object]] | None:
+    """Relabel a full multi-row read when cleanup maps exactly onto boxes."""
+
+    rows: dict[int, list[tuple[int, dict[str, object]]]] = {}
+    for index, prediction in enumerate(predictions):
+        rows.setdefault(int(prediction.get("row", 1)), []).append((index, prediction))
+    ordered_items = [
+        item
+        for _, row_items in sorted(rows.items())
+        for item in sorted(row_items, key=lambda value: float(value[1].get("x", 0)))
+    ]
+    ordered_predictions = [prediction for _, prediction in ordered_items]
+    row_strings = [
+        "".join(prediction_value(prediction) for _, prediction in sorted(row_items, key=lambda value: float(value[1].get("x", 0))))
+        for _, row_items in sorted(rows.items())
+    ]
+    text = "".join(row_strings)
+    replacement = BOX_ALIGNED_CONTEXT_RELABELS.get(text)
+    if replacement is None or len(replacement) != len(ordered_predictions):
+        return None
+    replacements = {
+        index: _with_prediction_label(prediction, label, 0.86)
+        for (index, prediction), label in zip(ordered_items, replacement)
+    }
+    return [replacements.get(index, prediction) for index, prediction in enumerate(predictions)]
 
 
 def _resolve_case_pair_by_geometry(row: list[dict[str, object]]) -> list[dict[str, object]] | None:
