@@ -15,6 +15,7 @@ from scripts.probe_mixedcase_feature_reranker import family_features
 from scripts.probe_mixedcase_feature_reranker import parse_family_names
 from scripts.probe_mixedcase_feature_reranker import parse_source_groups
 from scripts.probe_mixedcase_feature_reranker import pixel_features
+from scripts.probe_mixedcase_feature_reranker import prepare_feature_probe_data
 from scripts.probe_mixedcase_feature_reranker import selected_families
 from scripts.probe_mixedcase_feature_reranker import source_group_mask
 from scripts.probe_mixedcase_feature_reranker import train_family_probe
@@ -351,6 +352,53 @@ class MixedcaseFeatureRerankerTests(unittest.TestCase):
         self.assertEqual(report["confirmation_samples"], 2)
         self.assertEqual(report["test_delta"], 0.0)
         self.assertFalse(report["promotable"])
+
+    def test_prepare_data_can_use_external_test_tensor_pack(self) -> None:
+        """Feature probes should allow an external held-out tensor pack."""
+
+        train_images = torch.zeros((20, 1, 28, 28), dtype=torch.float32)
+        train_targets = torch.tensor([10, 11] * 10, dtype=torch.long)
+        test_images = torch.ones((3, 1, 28, 28), dtype=torch.float32)
+        test_targets = torch.tensor([10, 11, 12], dtype=torch.long)
+        mixed_outputs = torch.zeros((20, 62), dtype=torch.float32)
+        folded_outputs = torch.zeros((20, 36), dtype=torch.float32)
+        mixed_outputs[:, 10] = 1.0
+        folded_outputs[:, 10] = 1.0
+        test_mixed_outputs = torch.zeros((3, 62), dtype=torch.float32)
+        test_folded_outputs = torch.zeros((3, 36), dtype=torch.float32)
+        test_mixed_outputs[:, 10] = 1.0
+        test_folded_outputs[:, 10] = 1.0
+
+        def fake_split(train: bool, sample_limit: int | None):
+            return (train_images, train_targets) if train else self.fail("default test split should not load")
+
+        def fake_outputs(images: torch.Tensor, batch_size: int, include_embedding_features: bool):
+            if int(images.shape[0]) == 3:
+                return test_mixed_outputs, test_folded_outputs, None
+            count = int(images.shape[0])
+            return mixed_outputs[:count], folded_outputs[:count], None
+
+        with (
+            patch("scripts.probe_mixedcase_feature_reranker._split_tensors", side_effect=fake_split),
+            patch("scripts.probe_mixedcase_feature_reranker.load_tensor_pack", return_value=(test_images, test_targets)),
+            patch("scripts.probe_mixedcase_feature_reranker._model_outputs_with_embeddings", side_effect=fake_outputs),
+            patch("scripts.probe_mixedcase_feature_reranker._load_hybrid_artifact", return_value={}),
+            patch(
+                "scripts.probe_mixedcase_feature_reranker.hybrid_predictions",
+                side_effect=lambda mixed, folded, artifact: mixed.argmax(dim=1),
+            ),
+        ):
+            data = prepare_feature_probe_data(
+                batch_size=4,
+                train_sample_limit=None,
+                calibration_ratio=0.2,
+                seed=1,
+                test_tensor_path=Path("rough-validation.pt"),
+            )
+
+        self.assertEqual(data.test_samples, 3)
+        self.assertEqual(data.test_tensor_path, Path("rough-validation.pt"))
+        self.assertEqual(data.test_targets.tolist(), [10, 11, 12])
 
     def test_run_probe_rejects_adapter_without_confirmation_gain(self) -> None:
         """One calibration win should not be enough to touch final test predictions."""

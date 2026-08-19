@@ -42,6 +42,7 @@ from alnum_model import (  # noqa: E402
 from mnist_model import MNIST_MEAN, MNIST_STD, load_model as load_digit_model  # noqa: E402
 from mnist_model import get_device  # noqa: E402
 from scripts.calibrate_mixedcase_hybrid import hybrid_predictions  # noqa: E402
+from scripts.evaluate_mixedcase_candidate import load_tensor_pack  # noqa: E402
 
 
 def _file_sha256(path: Path) -> str | None:
@@ -148,6 +149,7 @@ class FeatureProbeData:
     test_samples: int
     extra_roots: tuple[Path, ...]
     extra_samples_per_class: int | None
+    test_tensor_path: Path | None
 
 
 def _family_name(indices: tuple[int, ...]) -> str:
@@ -668,12 +670,17 @@ def prepare_feature_probe_data(
     confirmation_ratio: float = 0.5,
     include_digit_features: bool = False,
     include_embedding_features: bool = False,
+    test_tensor_path: Path | None = None,
 ) -> FeatureProbeData:
     """Precompute shared tensors and base predictions for feature-probe sweeps."""
 
     torch.manual_seed(seed)
     train_images, train_targets = _split_tensors(train=True, sample_limit=train_sample_limit)
-    test_images, test_targets = _split_tensors(train=False, sample_limit=None)
+    test_images, test_targets = (
+        _split_tensors(train=False, sample_limit=None)
+        if test_tensor_path is None
+        else load_tensor_pack(test_tensor_path)
+    )
     generator = torch.Generator().manual_seed(seed)
     order = torch.randperm(int(train_targets.numel()), generator=generator)
     calibration_count = max(1, min(int(train_targets.numel()) - 1, int(round(train_targets.numel() * calibration_ratio))))
@@ -769,6 +776,7 @@ def prepare_feature_probe_data(
         test_samples=int(test_targets.numel()),
         extra_roots=tuple(extra_roots or []),
         extra_samples_per_class=extra_samples_per_class,
+        test_tensor_path=test_tensor_path,
     )
 
 
@@ -1036,6 +1044,7 @@ def run_probe(
     include_digit_features: bool = False,
     include_pixel_features: bool = False,
     include_embedding_features: bool = False,
+    test_tensor_path: Path | None = None,
     min_digit: float | None = None,
     min_upper: float | None = None,
     min_lower: float | None = None,
@@ -1051,7 +1060,11 @@ def run_probe(
 
     torch.manual_seed(seed)
     train_images, train_targets = _split_tensors(train=True, sample_limit=train_sample_limit)
-    test_images, test_targets = _split_tensors(train=False, sample_limit=None)
+    test_images, test_targets = (
+        _split_tensors(train=False, sample_limit=None)
+        if test_tensor_path is None
+        else load_tensor_pack(test_tensor_path)
+    )
     generator = torch.Generator().manual_seed(seed)
     order = torch.randperm(int(train_targets.numel()), generator=generator)
     calibration_count = max(1, min(int(train_targets.numel()) - 1, int(round(train_targets.numel() * calibration_ratio))))
@@ -1308,6 +1321,7 @@ def run_probe(
         "test_samples": int(test_targets.numel()),
         "extra_roots": [str(path) for path in (extra_roots or [])],
         "extra_samples_per_class": extra_samples_per_class,
+        "test_tensor_path": str(test_tensor_path) if test_tensor_path is not None else None,
         "hidden_units": hidden_units,
         "confirmation_ratio": confirmation_ratio,
         "family_names": list(family_names or []),
@@ -1347,6 +1361,7 @@ def main() -> None:
     parser.add_argument("--seed", type=int, default=20260818)
     parser.add_argument("--extra-root", action="append", type=Path, default=[])
     parser.add_argument("--extra-samples-per-class", type=int, default=None)
+    parser.add_argument("--test-tensor-path", type=Path, default=None)
     parser.add_argument("--hidden-units", type=int, default=0)
     parser.add_argument(
         "--confirmation-ratio",
@@ -1415,6 +1430,7 @@ def main() -> None:
                 include_digit_features=args.include_digit_features,
                 include_pixel_features=args.include_pixel_features,
                 include_embedding_features=args.include_embedding_features,
+                test_tensor_path=args.test_tensor_path,
                 min_digit=args.min_digit,
                 min_upper=args.min_upper,
                 min_lower=args.min_lower,
