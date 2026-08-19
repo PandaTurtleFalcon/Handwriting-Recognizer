@@ -281,6 +281,8 @@ def _read_character_calibration(project_dir: Path) -> dict[str, object] | None:
     best = calibration.get("best_checkpoint")
     if not isinstance(best, dict):
         return None
+    if calibration.get("includes_pair_rules") and not _character_pair_rule_dependency_current(calibration, project_dir):
+        return None
     return best
 
 
@@ -317,7 +319,15 @@ def _character_calibration_includes_current_pair_rules(project_dir: Path) -> boo
         return False
     if not isinstance(calibration, dict) or not calibration.get("includes_pair_rules"):
         return False
-    return _artifact_hash_matches(calibration, "pair_rules_sha256", project_dir / "character_pair_rules.json")
+    return _character_pair_rule_dependency_current(calibration, project_dir)
+
+
+def _character_pair_rule_dependency_current(calibration: dict[str, object], project_dir: Path) -> bool:
+    """Return whether a character calibration is tied to valid current pair rules."""
+
+    if _read_character_pair_rules(project_dir) is None:
+        return False
+    return _artifact_dependency_hash_matches(calibration, "pair_rules_sha256", project_dir / "character_pair_rules.json")
 
 
 def _artifact_matches_checkpoint(artifact: object, weights_path: Path) -> bool:

@@ -1528,7 +1528,8 @@ restored, so future improvement loops do not repeat known-bad blends.
 
 - Benchmark artifact hash hardening:
   - Code path: `scripts/summarize_benchmarks.py` now rejects optional calibration, pair-rule, hybrid, and reranker artifacts when their required checkpoint hash field is missing instead of silently treating missing hashes as current.
+  - Follow-up: reviewer found that character calibrations with `includes_pair_rules=true` could still be accepted before proving the referenced pair-rule artifact was itself current. The character path now mirrors mixed-case by rejecting combined bias metrics unless current pair-rule metrics and the stored pair-rule file digest both match.
   - Reported browser failure: the attached transient screenshot path was unavailable in the sandbox, but the raw prediction string the user reported (`xOOh:1i`) remains covered by context-rule regressions and should clean to `look behind` when the current app code is served.
-  - Verification: `test_summarize_benchmarks.py` passed (`24` tests), `test_context_rules.py` plus targeted web cleanup/render tests passed (`46` tests), and `scripts/summarize_benchmarks.py`, `main.py`, and `context_rules.py` compiled.
+  - Verification: `test_summarize_benchmarks.py` passed (`26` tests), `test_context_rules.py` plus targeted web cleanup/render tests passed (`46` tests), and `scripts/summarize_benchmarks.py`, `main.py`, and `context_rules.py` compiled.
   - Current gates after stricter artifact freshness: digit `99.65%`, folded alnum `96.6591%`, punctuation `96.0619%`, mixed-case exact `87.7797%`, character exact `94.1666%`, app hardcase raw exact `66.6667%`, app hardcase raw ambiguity `93.8889%`, uploaded hardcase raw exact/ambiguity `0.0%`.
   - Takeaway: the display cleanup can repair this exact phrase shape, but raw app recognition is still the real blocker. Missing hashes can no longer make old helper metrics look deployed-current.
