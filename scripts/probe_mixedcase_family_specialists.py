@@ -312,6 +312,48 @@ def threshold_report(
     }
 
 
+def family_test_diagnostics(
+    base_predictions: torch.Tensor,
+    images: torch.Tensor,
+    targets: torch.Tensor,
+    specialists: list[Specialist],
+    batch_size: int,
+    device: torch.device,
+    confidence_threshold: float,
+    margin_threshold: float,
+    source_groups: tuple[str, ...],
+) -> list[dict[str, object]]:
+    """Evaluate each trained family by itself on the test split."""
+
+    rows: list[dict[str, object]] = []
+    base_metrics = _metrics(base_predictions, targets, list(MIXEDCASE_LABELS))
+    for specialist in specialists:
+        candidate_predictions, family_reports = apply_specialists(
+            base_predictions,
+            images,
+            [specialist],
+            batch_size,
+            device,
+            confidence_threshold=confidence_threshold,
+            margin_threshold=margin_threshold,
+            source_groups=source_groups,
+        )
+        candidate_metrics, replacements = threshold_report(base_predictions, candidate_predictions, targets)
+        rows.append(
+            {
+                "family": specialist.family,
+                "metrics": candidate_metrics,
+                "delta": {
+                    key: float(candidate_metrics.get(key, 0.0)) - float(base_metrics.get(key, 0.0))
+                    for key in sorted(candidate_metrics)
+                },
+                "replacement_report": replacements,
+                "family_reports": family_reports,
+            }
+        )
+    return rows
+
+
 def choose_thresholds(
     validation_predictions: torch.Tensor,
     validation_images: torch.Tensor,
@@ -463,6 +505,8 @@ def probe_family_specialists(
 
     torch.manual_seed(seed)
     device = get_device()
+    requested_confidence = specialist_confidence
+    requested_margin = specialist_margin
     train_images, train_targets = load_split_tensors(train=True)
     test_images, test_targets = load_split_tensors(train=False)
     if train_sample_limit is not None and train_sample_limit < int(train_targets.numel()):
@@ -597,6 +641,28 @@ def probe_family_specialists(
             for key in sorted(candidate_metrics)
         },
         "family_reports": family_reports,
+        "family_test_diagnostics": family_test_diagnostics(
+            base_predictions,
+            test_images,
+            test_targets,
+            trained,
+            batch_size,
+            device,
+            confidence_threshold=specialist_confidence,
+            margin_threshold=specialist_margin,
+            source_groups=source_groups,
+        ),
+        "family_requested_threshold_diagnostics": family_test_diagnostics(
+            base_predictions,
+            test_images,
+            test_targets,
+            trained,
+            batch_size,
+            device,
+            confidence_threshold=requested_confidence,
+            margin_threshold=requested_margin,
+            source_groups=source_groups,
+        ),
         "source_groups": list(source_groups),
         "selection_samples": int(selection_targets.numel()),
         "confirmation_samples": int(confirmation_targets.numel()),

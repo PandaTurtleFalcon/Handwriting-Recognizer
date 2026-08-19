@@ -7,6 +7,7 @@ from scripts.probe_mixedcase_family_specialists import (
     apply_specialists,
     choose_thresholds,
     family_indices,
+    family_test_diagnostics,
     parse_families,
     parse_source_groups,
     probe_family_specialists,
@@ -175,6 +176,27 @@ class MixedcaseFamilySpecialistTests(unittest.TestCase):
 
         self.assertFalse(confirmed)
         self.assertEqual(report["gain"], 0.0)
+
+    def test_family_test_diagnostics_reports_fix_break_counts(self) -> None:
+        class HelpfulSpecialist(torch.nn.Module):
+            def forward(self, images: torch.Tensor) -> torch.Tensor:
+                return torch.tensor([[0.0, 4.0], [0.0, 4.0]], dtype=torch.float32)
+
+        rows = family_test_diagnostics(
+            torch.tensor([0, 0], dtype=torch.long),
+            torch.zeros((2, 1, 28, 28), dtype=torch.float32),
+            torch.tensor([24, 0], dtype=torch.long),
+            [Specialist("0O", (0, 24), HelpfulSpecialist())],
+            batch_size=8,
+            device=torch.device("cpu"),
+            confidence_threshold=0.0,
+            margin_threshold=0.0,
+            source_groups=("digit", "upper", "lower"),
+        )
+
+        self.assertEqual(rows[0]["family"], "0O")
+        self.assertEqual(rows[0]["replacement_report"], {"changed": 2, "fixed": 1, "broken": 1})
+        self.assertIn("test_accuracy", rows[0]["delta"])
 
     def test_probe_uses_true_abstention_when_auto_threshold_finds_no_gain(self) -> None:
         class CertainSpecialist(torch.nn.Module):
