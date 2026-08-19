@@ -333,7 +333,7 @@ def _artifact_hash_matches(artifact: object, key: str, weights_path: Path) -> bo
         return False
     expected = artifact.get(key)
     if not expected:
-        return True
+        return False
     return expected == _file_sha256(weights_path)
 
 

@@ -228,6 +228,8 @@ class BenchmarkSummaryTests(unittest.TestCase):
     def test_summarizes_matching_character_calibration_metrics(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
+            character_weights = root / "character_cnn.pt"
+            character_weights.write_bytes(b"character checkpoint")
             (root / "training_metrics.json").write_text(json.dumps({"best_checkpoint": {"test_accuracy": 99.0}}))
             (root / "alnum_training_metrics.json").write_text(json.dumps({"best_checkpoint": {"test_accuracy": 96.0}}))
             (root / "mixedcase_training_metrics.json").write_text(
@@ -249,6 +251,7 @@ class BenchmarkSummaryTests(unittest.TestCase):
             torch.save(
                 {
                     "labels": ["A", "B"],
+                    "checkpoint_sha256": hashlib.sha256(b"character checkpoint").hexdigest(),
                     "best_checkpoint": {
                         "validation_accuracy": 93.0,
                         "ambiguity_aware_validation_accuracy": 99.0,
@@ -272,6 +275,7 @@ class BenchmarkSummaryTests(unittest.TestCase):
     def test_summarizes_matching_character_pair_rule_metrics(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
+            (root / "character_cnn.pt").write_bytes(b"character checkpoint")
             (root / "training_metrics.json").write_text(json.dumps({"best_checkpoint": {"test_accuracy": 99.0}}))
             (root / "alnum_training_metrics.json").write_text(json.dumps({"best_checkpoint": {"test_accuracy": 96.0}}))
             (root / "mixedcase_training_metrics.json").write_text(
@@ -294,6 +298,7 @@ class BenchmarkSummaryTests(unittest.TestCase):
                 json.dumps(
                     {
                         "labels": ["A", "B"],
+                        "checkpoint_sha256": hashlib.sha256(b"character checkpoint").hexdigest(),
                         "best_checkpoint": {
                             "validation_accuracy": 93.7,
                             "ambiguity_aware_validation_accuracy": 99.0,
@@ -315,9 +320,11 @@ class BenchmarkSummaryTests(unittest.TestCase):
     def test_pair_rule_aware_character_bias_overrides_pair_rule_summary(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
+            character_checkpoint_sha256 = hashlib.sha256(b"character checkpoint").hexdigest()
             pair_rules_bytes = json.dumps(
                 {
                     "labels": ["A", "B"],
+                    "checkpoint_sha256": character_checkpoint_sha256,
                     "best_checkpoint": {
                         "validation_accuracy": 93.7,
                         "letter_validation_accuracy": 92.9,
@@ -329,6 +336,7 @@ class BenchmarkSummaryTests(unittest.TestCase):
             (root / "mixedcase_training_metrics.json").write_text(
                 json.dumps({"best_checkpoint": {"test_accuracy": 80.0, "case_or_ambiguity_aware_test_accuracy": 97.0}})
             )
+            (root / "character_cnn.pt").write_bytes(b"character checkpoint")
             (root / "character_labels.json").write_text(json.dumps(["A", "B"]))
             (root / "character_training_metrics.json").write_text(
                 json.dumps({"best_checkpoint": {"validation_accuracy": 91.0, "letter_validation_accuracy": 90.0}})
@@ -337,6 +345,7 @@ class BenchmarkSummaryTests(unittest.TestCase):
             torch.save(
                 {
                     "labels": ["A", "B"],
+                    "checkpoint_sha256": character_checkpoint_sha256,
                     "includes_pair_rules": True,
                     "pair_rules_sha256": hashlib.sha256(pair_rules_bytes).hexdigest(),
                     "best_checkpoint": {
@@ -395,9 +404,41 @@ class BenchmarkSummaryTests(unittest.TestCase):
         self.assertEqual(by_name["character_exact"]["value"], 91.0)
         self.assertEqual(by_name["character_letter_exact"]["value"], 90.0)
 
+    def test_character_pair_rule_metrics_require_checkpoint_hash(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            (root / "training_metrics.json").write_text(json.dumps({"best_checkpoint": {"test_accuracy": 99.0}}))
+            (root / "alnum_training_metrics.json").write_text(json.dumps({"best_checkpoint": {"test_accuracy": 96.0}}))
+            (root / "mixedcase_training_metrics.json").write_text(
+                json.dumps({"best_checkpoint": {"test_accuracy": 80.0, "case_or_ambiguity_aware_test_accuracy": 97.0}})
+            )
+            (root / "character_cnn.pt").write_bytes(b"current character checkpoint")
+            (root / "character_labels.json").write_text(json.dumps(["A", "B"]))
+            (root / "character_training_metrics.json").write_text(
+                json.dumps({"best_checkpoint": {"validation_accuracy": 91.0, "letter_validation_accuracy": 90.0}})
+            )
+            (root / "character_pair_rules.json").write_text(
+                json.dumps(
+                    {
+                        "labels": ["A", "B"],
+                        "best_checkpoint": {
+                            "validation_accuracy": 99.0,
+                            "letter_validation_accuracy": 99.0,
+                        },
+                    }
+                )
+            )
+
+            report = summarize_saved_metrics(root, target=95.0)
+
+        by_name = {str(item["name"]): item for item in report}
+        self.assertEqual(by_name["character_exact"]["value"], 91.0)
+        self.assertEqual(by_name["character_letter_exact"]["value"], 90.0)
+
     def test_summarizes_matching_mixedcase_calibration_metrics(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
+            (root / "mixedcase_cnn.pt").write_bytes(b"mixedcase checkpoint")
             (root / "training_metrics.json").write_text(json.dumps({"best_checkpoint": {"test_accuracy": 99.0}}))
             (root / "alnum_training_metrics.json").write_text(json.dumps({"best_checkpoint": {"test_accuracy": 96.0}}))
             (root / "mixedcase_training_metrics.json").write_text(
@@ -420,6 +461,7 @@ class BenchmarkSummaryTests(unittest.TestCase):
             torch.save(
                 {
                     "labels": list(MIXEDCASE_LABELS),
+                    "checkpoint_sha256": hashlib.sha256(b"mixedcase checkpoint").hexdigest(),
                     "best_checkpoint": {
                         "test_accuracy": 87.2,
                         "case_or_ambiguity_aware_test_accuracy": 97.6,
@@ -443,6 +485,7 @@ class BenchmarkSummaryTests(unittest.TestCase):
     def test_summarizes_matching_mixedcase_pair_rule_metrics(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
+            (root / "mixedcase_cnn.pt").write_bytes(b"mixedcase checkpoint")
             (root / "training_metrics.json").write_text(json.dumps({"best_checkpoint": {"test_accuracy": 99.0}}))
             (root / "alnum_training_metrics.json").write_text(json.dumps({"best_checkpoint": {"test_accuracy": 96.0}}))
             (root / "mixedcase_training_metrics.json").write_text(
@@ -466,6 +509,7 @@ class BenchmarkSummaryTests(unittest.TestCase):
                 json.dumps(
                     {
                         "labels": list(MIXEDCASE_LABELS),
+                        "checkpoint_sha256": hashlib.sha256(b"mixedcase checkpoint").hexdigest(),
                         "best_checkpoint": {
                             "test_accuracy": 87.5,
                             "case_or_ambiguity_aware_test_accuracy": 97.8,
@@ -753,6 +797,61 @@ class BenchmarkSummaryTests(unittest.TestCase):
                     {
                         "labels": list(MIXEDCASE_LABELS),
                         "checkpoint_sha256": "not-the-current-checkpoint",
+                        "best_checkpoint": {
+                            "test_accuracy": 99.0,
+                            "case_or_ambiguity_aware_test_accuracy": 99.0,
+                            "digit_test_accuracy": 99.0,
+                            "upper_test_accuracy": 99.0,
+                            "lower_test_accuracy": 99.0,
+                        },
+                    }
+                )
+            )
+
+            report = summarize_saved_metrics(root, target=95.0)
+
+        by_name = {str(item["name"]): item for item in report}
+        self.assertEqual(by_name["mixedcase_exact"]["value"], 80.0)
+        self.assertEqual(by_name["mixedcase_upper_exact"]["value"], 70.0)
+        self.assertEqual(by_name["mixedcase_lower_exact"]["value"], 60.0)
+
+    def test_mixedcase_pair_rule_metrics_require_checkpoint_hash(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            (root / "training_metrics.json").write_text(json.dumps({"best_checkpoint": {"test_accuracy": 99.0}}))
+            (root / "alnum_training_metrics.json").write_text(json.dumps({"best_checkpoint": {"test_accuracy": 96.0}}))
+            (root / "mixedcase_cnn.pt").write_bytes(b"current mixedcase checkpoint")
+            (root / "mixedcase_training_metrics.json").write_text(
+                json.dumps(
+                    {
+                        "best_checkpoint": {
+                            "test_accuracy": 80.0,
+                            "case_or_ambiguity_aware_test_accuracy": 97.0,
+                            "digit_test_accuracy": 91.0,
+                            "upper_test_accuracy": 70.0,
+                            "lower_test_accuracy": 60.0,
+                        }
+                    }
+                )
+            )
+            (root / "character_training_metrics.json").write_text(
+                json.dumps(
+                    {
+                        "best_checkpoint": {
+                            "validation_accuracy": 91.0,
+                            "ambiguity_aware_validation_accuracy": 98.0,
+                            "punctuation_validation_accuracy": 95.0,
+                            "punctuation_ambiguity_aware_validation_accuracy": 99.0,
+                        }
+                    }
+                )
+            )
+            from alnum_model import MIXEDCASE_LABELS
+
+            (root / "mixedcase_pair_rules.json").write_text(
+                json.dumps(
+                    {
+                        "labels": list(MIXEDCASE_LABELS),
                         "best_checkpoint": {
                             "test_accuracy": 99.0,
                             "case_or_ambiguity_aware_test_accuracy": 99.0,
