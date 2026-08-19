@@ -67,6 +67,31 @@ class WebAppRenderingTests(unittest.TestCase):
 
         self.assertEqual(main.build_row_sequences(predictions), ["lok b"])
 
+    def test_build_row_sequences_handles_wide_handwriting_word_gap(self) -> None:
+        """Very wide glyphs should still split on a clear relative word gap."""
+
+        predictions = [
+            {"label": "l", "row": 1, "x": 0, "width": 72},
+            {"label": "o", "row": 1, "x": 80, "width": 72},
+            {"label": "o", "row": 1, "x": 160, "width": 72},
+            {"label": "k", "row": 1, "x": 240, "width": 72},
+            {"label": "b", "row": 1, "x": 360, "width": 72},
+        ]
+
+        self.assertEqual(main.build_row_sequences(predictions), ["look b"])
+
+    def test_build_row_sequences_ignores_moderately_uneven_same_word_gaps(self) -> None:
+        """The adaptive spacing rule should not split normal stretched words."""
+
+        predictions = [
+            {"label": "l", "row": 1, "x": 0, "width": 40},
+            {"label": "o", "row": 1, "x": 48, "width": 40},
+            {"label": "o", "row": 1, "x": 101, "width": 40},
+            {"label": "k", "row": 1, "x": 154, "width": 40},
+        ]
+
+        self.assertEqual(main.build_row_sequences(predictions), ["look"])
+
     def test_build_row_sequences_keeps_close_digits_compact(self) -> None:
         """Normal digit groups should not get accidental spaces."""
 

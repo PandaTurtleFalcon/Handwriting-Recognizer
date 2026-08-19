@@ -1765,7 +1765,15 @@ def build_spaced_row_sequence(items: list[dict[str, object]]) -> str:
         return ""
     widths = [max(1.0, float(item.get("width", 0))) for item in items]
     typical_width = sorted(widths)[len(widths) // 2]
-    gap_threshold = max(32.0, typical_width * 0.85)
+    observed_gaps: list[float] = []
+    previous_right = float(items[0].get("x", 0)) + max(0.0, float(items[0].get("width", 0)))
+    for item in items[1:]:
+        x = float(item.get("x", 0))
+        observed_gaps.append(max(0.0, x - previous_right))
+        previous_right = max(previous_right, x + max(0.0, float(item.get("width", 0))))
+    positive_gaps = [gap for gap in observed_gaps if gap > 0]
+    typical_gap = sorted(positive_gaps)[len(positive_gaps) // 2] if positive_gaps else 0.0
+    gap_threshold = max(24.0, min(typical_width * 0.85, max(typical_width * 0.55, typical_gap * 2.4)))
     parts = [prediction_value(items[0])]
     previous_right = float(items[0].get("x", 0)) + max(0.0, float(items[0].get("width", 0)))
     for item in items[1:]:
