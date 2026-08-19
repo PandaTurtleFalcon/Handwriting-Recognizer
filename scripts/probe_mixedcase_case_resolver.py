@@ -94,6 +94,7 @@ def train_case_resolver(
     hidden_units: int,
     epochs: int,
     learning_rate: float,
+    class_weighting: str = "none",
 ) -> nn.Module | None:
     """Train a binary model for upper/lower case when folded identity is right."""
 
@@ -111,7 +112,14 @@ def train_case_resolver(
     else:
         model = nn.Linear(features.shape[1], 2)
     optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate, weight_decay=0.001)
-    criterion = nn.CrossEntropyLoss()
+    if class_weighting == "balanced":
+        counts = torch.bincount(train_targets, minlength=2).float().clamp_min(1.0)
+        weights = train_targets.numel() / (2.0 * counts)
+        criterion = nn.CrossEntropyLoss(weight=weights)
+    elif class_weighting == "none":
+        criterion = nn.CrossEntropyLoss()
+    else:
+        raise ValueError(f"Unsupported case-resolver class weighting: {class_weighting}")
     train_features = features[eligible]
     for _epoch in range(max(1, epochs)):
         optimizer.zero_grad(set_to_none=True)
@@ -283,6 +291,16 @@ def _append_extra_tensors(
     return torch.cat(image_parts), torch.cat(target_parts)
 
 
+def _case_target_counts(targets: torch.Tensor, folded_predictions: torch.Tensor) -> dict[str, int]:
+    """Count eligible upper/lower case training labels for resolver diagnostics."""
+
+    target_identity = _letter_identity_index(targets)
+    eligible = (target_identity >= 0) & (folded_predictions == target_identity + 10)
+    case_targets = (targets[eligible] >= 36).long()
+    counts = torch.bincount(case_targets, minlength=2)
+    return {"upper": int(counts[0].item()), "lower": int(counts[1].item())}
+
+
 def _split_fit_selection_confirmation(
     targets: torch.Tensor,
     calibration_ratio: float,
@@ -397,6 +415,7 @@ def run_probe(
     confirmation_ratio: float = 0.5,
     include_embedding_features: bool = False,
     objective: str = "exact",
+    class_weighting: str = "none",
 ) -> dict[str, object]:
     """Train and evaluate a case-resolver probe without writing artifacts."""
 
@@ -480,6 +499,7 @@ def run_probe(
         hidden_units,
         epochs,
         learning_rate,
+        class_weighting,
     )
     artifact = _load_hybrid_artifact()
     selection_predictions = hybrid_predictions(selection_mixed, selection_folded, artifact)
@@ -565,6 +585,8 @@ def run_probe(
         "confirmation_samples": int(confirmation_targets.numel()),
         "test_samples": int(test_targets.numel()),
         "hidden_units": hidden_units,
+        "class_weighting": class_weighting,
+        "fit_case_counts": _case_target_counts(fit_targets, train_folded_predictions),
         "confidence_threshold": confidence_threshold,
         "margin_threshold": margin_threshold,
         "selected_thresholds": selected_thresholds,
@@ -605,6 +627,7 @@ def main() -> None:
     parser.add_argument("--confirmation-ratio", type=float, default=0.5)
     parser.add_argument("--include-embedding-features", action="store_true")
     parser.add_argument("--objective", choices=("exact", "balanced"), default="exact")
+    parser.add_argument("--class-weighting", choices=("none", "balanced"), default="none")
     args = parser.parse_args()
     print(
         json.dumps(
@@ -633,6 +656,7 @@ def main() -> None:
                 confirmation_ratio=args.confirmation_ratio,
                 include_embedding_features=args.include_embedding_features,
                 objective=args.objective,
+                class_weighting=args.class_weighting,
             ),
             indent=2,
         )

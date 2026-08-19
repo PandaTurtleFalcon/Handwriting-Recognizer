@@ -3,6 +3,7 @@ import unittest
 import torch
 
 from scripts.probe_mixedcase_case_resolver import (
+    _case_target_counts,
     _letter_identity_index,
     _resolver_objective,
     apply_case_resolver,
@@ -173,6 +174,32 @@ class MixedcaseCaseResolverTests(unittest.TestCase):
                 learning_rate=0.01,
             )
         )
+
+    def test_train_case_resolver_rejects_unknown_class_weighting(self) -> None:
+        """Class weighting should fail fast for unsupported modes."""
+
+        features = torch.zeros((20, 3), dtype=torch.float32)
+        targets = torch.tensor([10, 36] * 10, dtype=torch.long)
+        folded_predictions = torch.tensor([10, 10] * 10, dtype=torch.long)
+
+        with self.assertRaisesRegex(ValueError, "Unsupported"):
+            train_case_resolver(
+                features,
+                targets,
+                folded_predictions,
+                hidden_units=0,
+                epochs=1,
+                learning_rate=0.01,
+                class_weighting="weird",
+            )
+
+    def test_case_target_counts_reports_eligible_upper_lower_samples(self) -> None:
+        """Diagnostics should count only samples whose folded identity is right."""
+
+        targets = torch.tensor([10, 36, 11, 37, 5], dtype=torch.long)
+        folded_predictions = torch.tensor([10, 10, 12, 11, 5], dtype=torch.long)
+
+        self.assertEqual(_case_target_counts(targets, folded_predictions), {"upper": 1, "lower": 2})
 
     def test_select_confirm_case_resolver_rejects_confirmation_regression(self) -> None:
         """Selection wins should not be used on test when confirmation disagrees."""
