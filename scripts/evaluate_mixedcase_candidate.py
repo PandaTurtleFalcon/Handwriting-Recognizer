@@ -24,6 +24,7 @@ from alnum_model import (  # noqa: E402
     build_or_load_emnist_byclass_mixedcase_cache,
     build_or_load_mnist_cache,
     evaluate_mixedcase_breakdown,
+    load_mixedcase_model,
 )
 from mnist_model import get_device  # noqa: E402
 from scripts.probe_mixedcase_checkpoint_ensemble import hybrid_stack_metrics  # noqa: E402
@@ -68,6 +69,49 @@ def load_candidate_checkpoint(path: Path, device: torch.device) -> nn.Module:
     return model
 
 
+def _selected_device(device_name: str) -> torch.device:
+    """Return the requested torch device for candidate evaluation."""
+
+    if device_name == "cpu":
+        return torch.device("cpu")
+    if device_name == "mps":
+        if getattr(torch.backends, "mps", None) is None or not torch.backends.mps.is_available():
+            raise RuntimeError("MPS was requested but is not available.")
+        return torch.device("mps")
+    return get_device()
+
+
+def evaluate_deployed_stack(
+    batch_size: int = 4096,
+    device_name: str = "auto",
+    sample_limit: int | None = None,
+) -> dict[str, object]:
+    """Evaluate the fully deployed mixed-case stack on the candidate tensor split."""
+
+    device = _selected_device(device_name)
+    model, labels = load_mixedcase_model(device=device)
+    if model is None or labels is None:
+        raise RuntimeError("The deployed mixed-case model could not be loaded.")
+    if list(labels) != list(MIXEDCASE_LABELS):
+        raise RuntimeError("The deployed mixed-case labels do not match the expected label order.")
+    images, targets = candidate_test_tensors(sample_limit=sample_limit)
+    loader = DataLoader(TensorDataset(images, targets), batch_size=batch_size, shuffle=False)
+    criterion = nn.CrossEntropyLoss()
+    metrics = evaluate_mixedcase_breakdown(model, loader, criterion, list(MIXEDCASE_LABELS), device)
+    metrics["balanced_group_accuracy"] = min(
+        metrics["digit_test_accuracy"],
+        metrics["upper_test_accuracy"],
+        metrics["lower_test_accuracy"],
+    )
+    return {
+        "checkpoint_path": str(MIXEDCASE_WEIGHTS_PATH),
+        "mode": "deployed",
+        "sample_limit": sample_limit,
+        "total_examples": int(targets.numel()),
+        "metrics": metrics,
+    }
+
+
 def evaluate_candidate(
     checkpoint_path: Path,
     batch_size: int = 4096,
@@ -76,17 +120,11 @@ def evaluate_candidate(
     sample_limit: int | None = None,
     allow_deployed_calibration: bool = False,
     hybrid_artifact_path: Path | None = None,
+    include_deployed_baseline: bool = False,
 ) -> dict[str, object]:
     """Evaluate one candidate checkpoint and return benchmark-style metrics."""
 
-    if device_name == "cpu":
-        device = torch.device("cpu")
-    elif device_name == "mps":
-        if getattr(torch.backends, "mps", None) is None or not torch.backends.mps.is_available():
-            raise RuntimeError("MPS was requested but is not available.")
-        device = torch.device("mps")
-    else:
-        device = get_device()
+    device = _selected_device(device_name)
     model = load_candidate_checkpoint(checkpoint_path, device)
     images, targets = candidate_test_tensors(sample_limit=sample_limit)
     if mode == "hybrid":
@@ -122,7 +160,7 @@ def evaluate_candidate(
         )
     else:
         raise ValueError(f"Unknown candidate evaluation mode: {mode}")
-    return {
+    report: dict[str, object] = {
         "checkpoint_path": str(checkpoint_path),
         "mode": mode,
         "hybrid_artifact_path": str(hybrid_artifact_path) if hybrid_artifact_path is not None else None,
@@ -130,6 +168,13 @@ def evaluate_candidate(
         "total_examples": int(targets.numel()),
         "metrics": metrics,
     }
+    if include_deployed_baseline:
+        report["deployed_baseline"] = evaluate_deployed_stack(
+            batch_size=batch_size,
+            device_name=device_name,
+            sample_limit=sample_limit,
+        )
+    return report
 
 
 def gate_rows(metrics: dict[str, float], target: float) -> list[dict[str, object]]:
@@ -266,6 +311,11 @@ def main() -> None:
     parser.add_argument("--sample-limit", type=int, default=None)
     parser.add_argument("--target", type=float, default=95.0)
     parser.add_argument("--baseline-json", type=Path, default=None)
+    parser.add_argument(
+        "--include-deployed-baseline",
+        action="store_true",
+        help="Evaluate the current fully deployed mixed-case stack on the same examples.",
+    )
     parser.add_argument("--baseline-tolerance", type=float, default=0.0)
     parser.add_argument("--baseline-objective", choices=GATE_KEYS, default="test_accuracy")
     parser.add_argument("--baseline-min-delta", type=float, default=0.0)
@@ -294,9 +344,20 @@ def main() -> None:
         sample_limit=args.sample_limit,
         allow_deployed_calibration=args.allow_deployed_calibration,
         hybrid_artifact_path=args.hybrid_artifact_path,
+        include_deployed_baseline=args.include_deployed_baseline,
     )
     target_rows = gate_rows(report["metrics"], args.target)
     baseline_metrics = read_baseline_metrics(args.baseline_json)
+    if not baseline_metrics and args.include_deployed_baseline:
+        deployed_baseline = report.get("deployed_baseline")
+        if isinstance(deployed_baseline, dict):
+            deployed_metrics = deployed_baseline.get("metrics")
+            if isinstance(deployed_metrics, dict):
+                baseline_metrics = {
+                    key: float(value)
+                    for key, value in deployed_metrics.items()
+                    if key in GATE_KEYS and isinstance(value, (int, float))
+                }
     comparison_rows = baseline_rows(report["metrics"], baseline_metrics, args.baseline_tolerance)
     objective_row = improvement_row(
         report["metrics"],
