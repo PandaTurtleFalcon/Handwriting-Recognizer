@@ -1925,3 +1925,10 @@ restored, so future improvement loops do not repeat known-bad blends.
   - Result: rejected by the same floor pattern as the larger pack. The epoch printed `validation_acc=92.91%`; the best checkpoint report was exact `93.09% < 94.17%`, digit `94.04% < 95.11%`, and letter `92.42% < 93.59%`.
   - Verification: no candidate checkpoint/labels/exemplars/metrics files were written, and the benchmark summary stayed unchanged.
   - Takeaway: even tiny ordinary cross-entropy hard-example fine-tuning destabilizes the deployed character model. Do not repeat hard packs as direct CNN fine-tunes; future work needs a separate auxiliary/family head or new real correction data integrated with a safer objective.
+
+- Rejected standalone character family-head diagnostic:
+  - Tooling: added `scripts/diagnose_character_family_head.py`, which trains the same family head used by reranker probes but reports standalone true-family accuracy on selection, confirmation, and validation before showing applied metric deltas. This distinguishes a weak family classifier from a deployment-threshold problem.
+  - Experiment: ran `tmp/character_family_head_diag_1ili_20260822.json` for `!/1Iil|` with the tiny hard pack, pixel+embedding features, hidden size `32`, `80` epochs, and `1800` capped probe samples.
+  - Result: the head had mild apparent signal on calibration splits but failed on validation. Family accuracy was selection `82.36%` vs base `79.50%`, confirmation `82.63%` vs base `81.27%`, but validation `82.80%` vs base `83.77%`. Applying it to validation changed `77` predictions, fixed only `13`, broke `40`, and dropped exact by `0.2553` points.
+  - Verification: `test_diagnose_character_family_head.py` passed (`3` tests); no serving artifact was written.
+  - Takeaway: a separate family head is not automatically enough. The current features/head overfit calibration and are weaker than the deployed classifier on real validation `!/1Iil|` samples, so future work needs better labeled data or a different representation/objective, not just a sidecar family head.
