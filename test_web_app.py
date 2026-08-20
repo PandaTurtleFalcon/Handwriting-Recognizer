@@ -1989,9 +1989,9 @@ class WebAppRenderingTests(unittest.TestCase):
     def test_practice_priority_labels_start_with_verified_worst_labels(self) -> None:
         """Practice collection should attack the measured exact-recognition gaps first."""
 
-        self.assertEqual(main.CHARACTER_PRACTICE_PRIORITY_LABELS[:12], ["O", "l", "o", "I", "0", "1", "i", "s", "c", "z", "v", "-"])
+        self.assertEqual(main.CHARACTER_PRACTICE_PRIORITY_LABELS[:12], ["!", "1", "I", "l", "i", "|", "/", "O", "o", "0", "s", "c"])
         self.assertEqual(main.MIXEDCASE_PRACTICE_PRIORITY_LABELS[:12], ["1", "l", "I", "i", "0", "O", "o", "9", "q", "g", "5", "S"])
-        self.assertEqual(main.PRACTICE_PRIORITY_LABELS[:4], ["O", "l", "o", "I"])
+        self.assertEqual(main.PRACTICE_PRIORITY_LABELS[:4], ["!", "1", "I", "l"])
 
     def test_correction_readiness_report_exposes_training_gates(self) -> None:
         """The app should expose machine-readable correction readiness."""
@@ -2025,6 +2025,24 @@ class WebAppRenderingTests(unittest.TestCase):
         self.assertEqual([item["label"] for item in report["labels"]], ["s", "O", "V"])
         self.assertEqual(report["recommended_label"], "s")
         self.assertEqual(report["not_ready_label_count"], 3)
+
+    def test_correction_coverage_report_can_target_folded_queue(self) -> None:
+        """Folded coverage should not depend on character or mixed-case focus order."""
+
+        folded_targets = torch.tensor([0], dtype=torch.long)
+
+        with patch("scripts.train_from_corrections.LABELS", ["0", "A"]):
+            with patch("scripts.train_from_corrections.DEFAULT_PRIORITY_LABELS", "0A!"):
+                with patch(
+                    "scripts.train_from_corrections.load_correction_cache",
+                    return_value=(torch.zeros((1, 1, 28, 28)), folded_targets),
+                ):
+                    report = main.correction_coverage_report("folded_alnum")
+
+        self.assertEqual(report["mode"], "folded_alnum")
+        self.assertEqual([item["label"] for item in report["labels"]], ["0", "A"])
+        self.assertEqual(report["recommended_label"], "A")
+        self.assertEqual(report["not_ready_label_count"], 2)
 
     def test_correction_coverage_report_rejects_unknown_modes(self) -> None:
         """Unknown coverage modes should fall back to the character queue."""

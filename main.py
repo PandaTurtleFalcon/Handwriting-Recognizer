@@ -77,13 +77,16 @@ DIGIT_SPECIALIST_COMPATIBLE_LABELS = set("0123456789BIJLOSYZlo")
 DIGIT_SPECIALIST_LETTER_BLOCKERS = set("BOSo")
 DIGIT_SPECIALIST_MAX_LETTER_RATIO = 0.25
 CHARACTER_PRACTICE_PRIORITY_LABELS = [
-    "O",
-    "l",
-    "o",
-    "I",
-    "0",
+    "!",
     "1",
+    "I",
+    "l",
     "i",
+    "|",
+    "/",
+    "O",
+    "o",
+    "0",
     "s",
     "c",
     "z",
@@ -128,6 +131,26 @@ CHARACTER_PRACTICE_PRIORITY_LABELS = [
     "J",
     "j",
     "K",
+]
+# Ordered by refreshed character headroom. The `!/1Iil|` visual family alone
+# has enough recoverable validation errors to move character exact past 95%, so
+# it should be collected before broader character practice samples.
+CHARACTER_CORRECTION_FOCUS_LABELS = [
+    "!",
+    "1",
+    "I",
+    "l",
+    "i",
+    "|",
+    "/",
+    "O",
+    "o",
+    "0",
+    "5",
+    "S",
+    "s",
+    "C",
+    "c",
 ]
 MIXEDCASE_PRACTICE_PRIORITY_LABELS = [
     "1",
@@ -216,6 +239,9 @@ PRACTICE_FAMILY_PRIORITY_LABELS = [
     (":/;/!", [":", ";", "!"]),
 ]
 PRACTICE_PRIORITY_EVIDENCE = {
+    "!": "largest character !/1/I/l/i/| visual-twin blocker",
+    "|": "largest character !/1/I/l/i/| visual-twin blocker",
+    "/": "largest character !/1/I/l/i/| visual-twin blocker",
     "s": "top mixed-case 5/S/s visual twin family",
     "O": "worst character label and O/0/o confusion",
     "V": "top mixed-case U/u/V/v visual twin family",
@@ -1708,6 +1734,7 @@ def correction_coverage_report(mode: str = "character") -> dict[str, object]:
     )
 
     normalized_mode = mode if mode in {"character", "folded_alnum", "mixedcase"} else "character"
+    focus_order = None
     if normalized_mode == "folded_alnum":
         folded_corrections = load_correction_cache(LABELS)
         counts = correction_item_label_counts(LABELS, folded_corrections)
@@ -1721,7 +1748,7 @@ def correction_coverage_report(mode: str = "character") -> dict[str, object]:
         character_labels = load_character_labels()
         counts = exportable_character_correction_counts(character_labels)
         labels = CHARACTER_PRACTICE_PRIORITY_LABELS
-        focus_order = None
+        focus_order = CHARACTER_CORRECTION_FOCUS_LABELS
     report = build_correction_coverage_report(counts, labels, focus_order=focus_order)
     return {**report, "mode": normalized_mode}
 

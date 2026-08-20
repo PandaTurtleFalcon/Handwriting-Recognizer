@@ -43,6 +43,7 @@ from character_model import saved_benchmark_values
 from character_model import train_character_model
 from main import (
     CHARACTER_PRACTICE_PRIORITY_LABELS,
+    CHARACTER_CORRECTION_FOCUS_LABELS,
     MIXEDCASE_CORRECTION_FOCUS_LABELS,
     MIXEDCASE_PRACTICE_PRIORITY_LABELS,
     PRACTICE_FAMILY_PRIORITY_LABELS,
@@ -603,8 +604,16 @@ def dry_run_report(
     folded_priority_labels = filter_priority_labels(character_priority_labels.upper(), LABELS)
     mixed_priority_labels = filter_priority_labels(mixedcase_priority_labels, list(MIXEDCASE_LABELS))
     character_readiness = correction_readiness_summary(character_counts, character_priority_labels)
-    character_next_needed = next_needed_labels(character_counts, character_priority_labels)
-    character_not_ready_labels = not_ready_label_list(character_counts, character_priority_labels)
+    character_next_needed = next_needed_labels(
+        character_counts,
+        character_priority_labels,
+        focus_order=CHARACTER_CORRECTION_FOCUS_LABELS,
+    )
+    character_not_ready_labels = not_ready_label_list(
+        character_counts,
+        character_priority_labels,
+        focus_order=CHARACTER_CORRECTION_FOCUS_LABELS,
+    )
     character_recommendation = correction_recommendation(character_readiness, character_next_needed)
     folded_readiness = correction_readiness_summary(folded_counts, folded_priority_labels)
     folded_next_needed = next_needed_labels(folded_counts, folded_priority_labels)
