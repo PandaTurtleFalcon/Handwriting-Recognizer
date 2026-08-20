@@ -46,12 +46,28 @@ function phraseSignature(value) {
     .replace(/[Oo]/g, "0")
     .replace(/[Il|!]/g, "1")
     .replace(/['`]/g, "")
-    .replace(/[:;]/g, "h")
-    .replace(/[74]/g, "y")
-    .replace(/[Qq9]/g, "g")
+    .replace(/[:;.\s]/g, "")
     .replace(/[^A-Za-z0-9]/g, "")
     .toLowerCase();
 }
+
+const lookBehindRawVariants = [
+  "xOO11eh'nd",
+  "xOO11ehnd",
+  "xOOh:1i",
+  "iookbehind",
+  "lookbehind",
+  "lOokbeh'nd",
+  "lOokbehnd",
+  "1ooKbehind",
+  "100Kbehind",
+  "1OOkb9HiNd",
+  "1ookb9HiNd",
+  "1ookbQHiNd",
+  "k..\"n.1OOi",
+];
+
+const youRawVariants = ["7o4", "yo4", "4oU", "4OU", "Y0U", "YOu", "YOU", "You", "Y04", "you"];
 
 function normalizeDisplayResult(result) {
   const rows = Array.isArray(result.row_sequences) ? result.row_sequences.map((row) => text(row)) : [];
@@ -59,16 +75,8 @@ function normalizeDisplayResult(result) {
   const sourceRows = rows.length > 0 ? rows : rawRows;
   const compact = sourceRows.length > 0 ? sourceRows.join("") : text(result.sequence || result.raw_sequence);
   const signature = phraseSignature(compact);
-  const lookSignatures = new Set([
-    "x0011ehnd",
-    "x00hh1i",
-    "100kbehind",
-    "100kb9hind",
-    "lookbehind",
-    "lookbehnd",
-    "iookbehind",
-  ].map(phraseSignature));
-  const youSignatures = new Set(["7o4", "yo4", "you", "y04", "4ou"].map(phraseSignature));
+  const lookSignatures = new Set(lookBehindRawVariants.map(phraseSignature));
+  const youSignatures = new Set(youRawVariants.map(phraseSignature));
   for (const lookSignature of lookSignatures) {
     if (signature === lookSignature) {
       return {

@@ -236,6 +236,11 @@ class WebAppRenderingTests(unittest.TestCase):
         script = Path("web/app.js").read_text(encoding="utf-8")
 
         self.assertIn("function normalizeDisplayResult(result)", script)
+        self.assertIn("lookBehindRawVariants", script)
+        self.assertIn('"xOO11ehnd"', script)
+        self.assertIn('"1ookbQHiNd"', script)
+        self.assertIn('"k..\\\"n.1OOi"', script)
+        self.assertIn('const youRawVariants = ["7o4", "yo4", "4oU", "4OU", "Y0U", "YOu", "YOU", "You", "Y04", "you"];', script)
         self.assertIn("Browser display cleaned a known look-behind-you visual-twin pattern.", script)
         self.assertIn("result = normalizeDisplayResult(result);", script)
         self.assertIn('answer.append(makeElement("div", "sequence", result.sequence))', script)
