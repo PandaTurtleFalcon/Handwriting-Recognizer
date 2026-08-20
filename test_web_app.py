@@ -240,9 +240,9 @@ class WebAppRenderingTests(unittest.TestCase):
         self.assertIn("result = normalizeDisplayResult(result);", script)
         self.assertIn('answer.append(makeElement("div", "sequence", result.sequence))', script)
         self.assertIn('makeElement("details", "raw-output")', script)
-        self.assertIn('makeElement("summary", "", "Diagnostics: raw read, not final")', script)
-        self.assertIn("raw read only:", script)
-        self.assertIn("displayed final answer:", script)
+        self.assertIn('makeElement("summary", "", "Diagnostics only: model raw read")', script)
+        self.assertIn("ignore as answer - raw model boxes:", script)
+        self.assertIn("final answer used by app:", script)
         self.assertNotIn('answer.append(makeElement("div", "sequence", result.raw_sequence))', script)
 
     def test_static_html_cache_busts_assets_with_revision(self) -> None:
@@ -928,9 +928,9 @@ class WebAppRenderingTests(unittest.TestCase):
             }
         )
 
-        self.assertIn("<summary>Diagnostics: raw read, not final</summary>", html)
-        self.assertIn("raw read only: xOOh:1i / 7o4", html)
-        self.assertIn("displayed final answer: look behind / you", html)
+        self.assertIn("<summary>Diagnostics only: model raw read</summary>", html)
+        self.assertIn("ignore as answer - raw model boxes: xOOh:1i / 7o4", html)
+        self.assertIn("final answer used by app: look behind / you", html)
         self.assertIn("used saved correction for this exact upload", html)
         self.assertIn("final answer", html)
 

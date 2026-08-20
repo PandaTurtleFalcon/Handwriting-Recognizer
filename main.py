@@ -2817,9 +2817,9 @@ def render_raw_sequence_note(result: dict[str, object]) -> str:
         return ""
     return (
         '<details class="row-output raw-output">'
-        "<summary>Diagnostics: raw read, not final</summary>"
-        f"<code>raw read only: {html.escape(raw_display)}</code>"
-        f'<code class="final-answer-chip">displayed final answer: {html.escape(cleaned_display)}</code>'
+        "<summary>Diagnostics only: model raw read</summary>"
+        f"<code>ignore as answer - raw model boxes: {html.escape(raw_display)}</code>"
+        f'<code class="final-answer-chip">final answer used by app: {html.escape(cleaned_display)}</code>'
         "</details>"
     )
 
