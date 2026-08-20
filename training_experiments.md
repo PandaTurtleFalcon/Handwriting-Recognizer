@@ -1955,3 +1955,11 @@ restored, so future improvement loops do not repeat known-bad blends.
   - Result: `scripts/train_from_corrections.py --dry-run --json` now recommends the first mixed-case collection batch as `o, c, m, s, u, l, f, p` instead of the static-family batch `I, 0, O, 9, q, g, S, s`.
   - Verification: `test_train_from_corrections.py` and `test_web_app.py` passed (`129` tests), correction replay stayed `100.00%` (`4/4`), and benchmark summary remained unchanged.
   - Takeaway: this does not improve model accuracy immediately, but it makes the next user-labeled samples attack the exact lower/mixed-case blockers instead of spreading effort across less urgent labels.
+
+- Browser look-behind display fallback plus rejected calibration probes:
+  - Trigger: browser report showed the known raw read `xOOh:1i` even though the backend cleanup and correction replay already display it as `look behind`.
+  - UI change: added a narrow browser-side `normalizeDisplayResult` fallback in `web/app.js` for the already-allowlisted look-behind/look-behind-you visual-twin signatures. The big answer now cleans this phrase family even if a stale or raw API payload reaches the static HTML/JS app, while raw text remains visible only in diagnostics.
+  - Mixed-case probe: a lower-label greedy logit-bias dry run over `o,c,m,s,u,l,f,p,q,i,v` found `0` safe steps and left lower accuracy unchanged at `72.65%` in the isolated probe.
+  - Character probe: isolated letter pair-rules improved a non-deployed baseline by `+0.2414` letter points, but rejected against the deployed baseline because letter validation regressed from `92.9874%` to `92.8935%`. Re-running with existing deployed rules produced no new improvement.
+  - Verification: `test_context_rules.py` and `test_web_app.py` passed (`155` tests), `node --check web/app.js` passed, and benchmark summary remained unchanged: digit `99.65%`, folded `96.66%`, mixed-case exact `87.78%`, character exact `94.17%`, punctuation `96.06%`, app hardcases `100.00%`.
+  - Takeaway: the reported raw phrase was a stale/raw display failure, not a missing backend rule. The remaining 95% blockers are still mixed-case lower/upper separation and character letter exactness; current calibration grids are exhausted without safe gains.

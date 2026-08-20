@@ -235,6 +235,9 @@ class WebAppRenderingTests(unittest.TestCase):
 
         script = Path("web/app.js").read_text(encoding="utf-8")
 
+        self.assertIn("function normalizeDisplayResult(result)", script)
+        self.assertIn("Browser display cleaned a known look-behind-you visual-twin pattern.", script)
+        self.assertIn("result = normalizeDisplayResult(result);", script)
         self.assertIn('answer.append(makeElement("div", "sequence", result.sequence))', script)
         self.assertIn('makeElement("details", "raw-output")', script)
         self.assertIn('makeElement("summary", "", "Diagnostics: raw read, not final")', script)

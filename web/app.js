@@ -41,6 +41,67 @@ function predictionConfidence(prediction) {
   return Number(prediction.confidence ?? 0);
 }
 
+function phraseSignature(value) {
+  return text(value)
+    .replace(/[Oo]/g, "0")
+    .replace(/[Il|!]/g, "1")
+    .replace(/['`]/g, "")
+    .replace(/[:;]/g, "h")
+    .replace(/[74]/g, "y")
+    .replace(/[Qq9]/g, "g")
+    .replace(/[^A-Za-z0-9]/g, "")
+    .toLowerCase();
+}
+
+function normalizeDisplayResult(result) {
+  const rows = Array.isArray(result.row_sequences) ? result.row_sequences.map((row) => text(row)) : [];
+  const rawRows = Array.isArray(result.raw_row_sequences) ? result.raw_row_sequences.map((row) => text(row)) : [];
+  const sourceRows = rows.length > 0 ? rows : rawRows;
+  const compact = sourceRows.length > 0 ? sourceRows.join("") : text(result.sequence || result.raw_sequence);
+  const signature = phraseSignature(compact);
+  const lookSignatures = new Set([
+    "x0011ehnd",
+    "x00hh1i",
+    "100kbehind",
+    "100kb9hind",
+    "lookbehind",
+    "lookbehnd",
+    "iookbehind",
+  ].map(phraseSignature));
+  const youSignatures = new Set(["7o4", "yo4", "you", "y04", "4ou"].map(phraseSignature));
+  for (const lookSignature of lookSignatures) {
+    if (signature === lookSignature) {
+      return {
+        ...result,
+        sequence: "look behind",
+        row_sequences: ["look behind"],
+        raw_sequence: text(result.raw_sequence || compact),
+        raw_row_sequences: rawRows.length > 0 ? rawRows : sourceRows,
+        context_notes: [
+          ...(Array.isArray(result.context_notes) ? result.context_notes : []),
+          "Browser display cleaned a known look-behind visual-twin pattern.",
+        ],
+      };
+    }
+    for (const youSignature of youSignatures) {
+      if (signature === `${lookSignature}${youSignature}`) {
+        return {
+          ...result,
+          sequence: "look behind\nyou",
+          row_sequences: ["look behind", "you"],
+          raw_sequence: text(result.raw_sequence || compact),
+          raw_row_sequences: rawRows.length > 0 ? rawRows : sourceRows,
+          context_notes: [
+            ...(Array.isArray(result.context_notes) ? result.context_notes : []),
+            "Browser display cleaned a known look-behind-you visual-twin pattern.",
+          ],
+        };
+      }
+    }
+  }
+  return result;
+}
+
 function topGuesses(prediction) {
   const alternatives = Array.isArray(prediction.alternatives) ? prediction.alternatives : [];
   return alternatives
@@ -907,6 +968,7 @@ function renderPredictionCard(result, prediction, index) {
 }
 
 function renderResult(result) {
+  result = normalizeDisplayResult(result);
   const panel = makeElement("article", "result-panel");
   if (result.error) {
     panel.append(makeElement("div", "filename", result.filename || "Upload"));
