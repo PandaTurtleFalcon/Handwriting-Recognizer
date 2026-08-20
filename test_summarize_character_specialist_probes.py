@@ -44,6 +44,16 @@ class SummarizeCharacterSpecialistProbeTests(unittest.TestCase):
                             "digit_validation_accuracy": 0.0,
                             "punctuation_validation_accuracy": 0.0,
                         },
+                        "family_reports": [{"family": "1Ili", "eligible": 3, "changed": 1}],
+                        "family_validation_diagnostics": [
+                            {
+                                "family": "1Ili",
+                                "delta": {"validation_accuracy": 0.2},
+                                "replacement_report": {"changed": 1, "fixed": 1, "broken": 0},
+                                "family_reports": [{"family": "1Ili", "eligible": 3, "changed": 1}],
+                                "protected_failures": [],
+                            }
+                        ],
                     }
                 ),
                 encoding="utf-8",
@@ -66,6 +76,19 @@ class SummarizeCharacterSpecialistProbeTests(unittest.TestCase):
         self.assertEqual(summary["promotable_count"], 1)
         self.assertEqual(summary["confirmed_count"], 1)
         self.assertEqual(summary["summaries"][0]["validation_delta"], 0.2)
+        self.assertEqual(summary["summaries"][0]["family_reports"], [{"family": "1Ili", "eligible": 3, "changed": 1}])
+        self.assertEqual(
+            summary["summaries"][0]["family_validation_diagnostics"],
+            [
+                {
+                    "family": "1Ili",
+                    "validation_delta": 0.2,
+                    "replacement_report": {"changed": 1, "fixed": 1, "broken": 0},
+                    "family_reports": [{"family": "1Ili", "eligible": 3, "changed": 1}],
+                    "protected_failures": [],
+                }
+            ],
+        )
         self.assertIsNone(summary["summaries"][1]["best_selection"])
 
 
