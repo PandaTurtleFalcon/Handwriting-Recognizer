@@ -824,6 +824,78 @@ def _is_promotable(
     )
 
 
+def _family_reranker_artifact(
+    probes: list[dict[str, object]],
+    base_metrics: dict[str, float],
+    reranked_metrics: dict[str, float],
+) -> dict[str, object]:
+    """Return the torch-saveable mixed-case family-reranker artifact."""
+
+    return {
+        "enabled": True,
+        "source": "mixedcase_feature_family_reranker_probe",
+        "labels": list(MIXEDCASE_LABELS),
+        "probes": probes,
+        "best_checkpoint": reranked_metrics,
+        "base_checkpoint": base_metrics,
+        **_current_artifact_hashes(),
+    }
+
+
+def _deployed_family_reranker_metrics(
+    data: FeatureProbeData,
+    family_reranker_path: Path,
+    batch_size: int,
+) -> dict[str, float]:
+    """Evaluate one family-reranker artifact through the deployed loader path."""
+
+    device = get_device()
+    model, labels = load_mixedcase_model(device=device, family_reranker_path=family_reranker_path)
+    if model is None or list(labels or []) != list(MIXEDCASE_LABELS):
+        raise RuntimeError("Could not load mixed-case model for deployed family-reranker validation.")
+    predictions: list[torch.Tensor] = []
+    loader = DataLoader(TensorDataset(data.test_images, data.test_targets), batch_size=batch_size)
+    model.eval()
+    with torch.no_grad():
+        for images, _targets in loader:
+            predictions.append(model(images.to(device)).argmax(dim=1).cpu())
+    return _metrics(torch.cat(predictions), data.test_targets)
+
+
+def _deployed_validation_report(
+    data: FeatureProbeData,
+    candidate_path: Path,
+    baseline_path: Path,
+    batch_size: int,
+    min_digit: float | None = None,
+    min_upper: float | None = None,
+    min_lower: float | None = None,
+    min_case_or_visual: float | None = None,
+) -> dict[str, object]:
+    """Return whether a candidate improves the actual deployed serving stack."""
+
+    base_metrics = _deployed_family_reranker_metrics(data, baseline_path, batch_size)
+    candidate_metrics = _deployed_family_reranker_metrics(data, candidate_path, batch_size)
+    return {
+        "baseline_path": str(baseline_path),
+        "candidate_path": str(candidate_path),
+        "base": base_metrics,
+        "candidate": candidate_metrics,
+        "delta": {
+            key: candidate_metrics[key] - base_metrics[key]
+            for key in base_metrics
+        },
+        "promotable": _is_promotable(
+            base_metrics,
+            candidate_metrics,
+            min_digit=min_digit,
+            min_upper=min_upper,
+            min_lower=min_lower,
+            min_case_or_visual=min_case_or_visual,
+        ),
+    }
+
+
 def _final_gate_rejection(
     base_metrics: dict[str, float],
     candidate_metrics: dict[str, float],
@@ -996,6 +1068,9 @@ def run_probe_from_data(
     mini_batch_size: int | None = None,
     output_path: Path = MIXEDCASE_FAMILY_RERANKER_PATH,
     write: bool = False,
+    require_deployed_validation: bool = False,
+    deployed_baseline_path: Path = MIXEDCASE_FAMILY_RERANKER_PATH,
+    deployed_validation_batch_size: int = 4096,
 ) -> dict[str, object]:
     """Train family probes against already-prepared model outputs."""
 
@@ -1181,25 +1256,38 @@ def run_probe_from_data(
         min_case_or_visual=min_case_or_visual,
     )
     wrote = False
+    deployed_validation: dict[str, object] | None = None
     if write and promotable and accepted_probe_artifacts:
         merged_probe_artifacts = merge_family_probe_artifacts(
             _compatible_existing_family_probes(output_path),
             accepted_probe_artifacts,
         )
-        artifact_hashes = _current_artifact_hashes()
-        torch.save(
-            {
-                "enabled": True,
-                "source": "mixedcase_feature_family_reranker_probe",
-                "labels": list(MIXEDCASE_LABELS),
-                "probes": merged_probe_artifacts,
-                "best_checkpoint": reranked_metrics,
-                "base_checkpoint": base_metrics,
-                **artifact_hashes,
-            },
-            output_path,
-        )
-        wrote = True
+        artifact = _family_reranker_artifact(merged_probe_artifacts, base_metrics, reranked_metrics)
+        if require_deployed_validation:
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+            candidate_path = output_path.with_name(f"{output_path.name}.candidate")
+            torch.save(artifact, candidate_path)
+            try:
+                deployed_validation = _deployed_validation_report(
+                    data,
+                    candidate_path,
+                    deployed_baseline_path,
+                    deployed_validation_batch_size,
+                    min_digit=min_digit,
+                    min_upper=min_upper,
+                    min_lower=min_lower,
+                    min_case_or_visual=min_case_or_visual,
+                )
+                if bool(deployed_validation.get("promotable")):
+                    candidate_path.replace(output_path)
+                    wrote = True
+            finally:
+                if candidate_path.exists():
+                    candidate_path.unlink()
+            promotable = promotable and bool(deployed_validation.get("promotable"))
+        else:
+            torch.save(artifact, output_path)
+            wrote = True
     return {
         "base": base_metrics,
         "reranked": reranked_metrics,
@@ -1241,6 +1329,9 @@ def run_probe_from_data(
         },
         "wrote": wrote,
         "output_path": str(output_path),
+        "require_deployed_validation": require_deployed_validation,
+        "deployed_baseline_path": str(deployed_baseline_path),
+        "deployed_validation": deployed_validation,
     }
 
 
@@ -1278,6 +1369,9 @@ def run_probe(
     output_path: Path = MIXEDCASE_FAMILY_RERANKER_PATH,
     write: bool = False,
     prepare_cache_path: Path | None = None,
+    require_deployed_validation: bool = False,
+    deployed_baseline_path: Path = MIXEDCASE_FAMILY_RERANKER_PATH,
+    deployed_validation_batch_size: int = 4096,
 ) -> dict[str, object]:
     """Train family probes on train split and evaluate on test split."""
 
@@ -1320,6 +1414,9 @@ def run_probe(
         mini_batch_size=mini_batch_size,
         output_path=output_path,
         write=write,
+        require_deployed_validation=require_deployed_validation,
+        deployed_baseline_path=deployed_baseline_path,
+        deployed_validation_batch_size=deployed_validation_batch_size,
     )
     report["prepare_cache_path"] = str(prepare_cache_path) if prepare_cache_path is not None else None
     report["prepare_cache_hit"] = cache_hit
@@ -1393,6 +1490,18 @@ def main() -> None:
     )
     parser.add_argument("--output-path", type=Path, default=MIXEDCASE_FAMILY_RERANKER_PATH)
     parser.add_argument(
+        "--require-deployed-validation",
+        action="store_true",
+        help="Only write if the candidate improves the live load_mixedcase_model family-reranker path.",
+    )
+    parser.add_argument(
+        "--deployed-baseline-path",
+        type=Path,
+        default=MIXEDCASE_FAMILY_RERANKER_PATH,
+        help="Current family-reranker artifact used as the deployed-validation baseline.",
+    )
+    parser.add_argument("--deployed-validation-batch-size", type=int, default=4096)
+    parser.add_argument(
         "--precomputed-cache-path",
         "--prepare-cache-path",
         dest="prepare_cache_path",
@@ -1438,6 +1547,9 @@ def main() -> None:
                 output_path=args.output_path,
                 prepare_cache_path=args.prepare_cache_path,
                 write=args.write,
+                require_deployed_validation=args.require_deployed_validation,
+                deployed_baseline_path=args.deployed_baseline_path,
+                deployed_validation_batch_size=args.deployed_validation_batch_size,
             ),
             indent=2,
         )
