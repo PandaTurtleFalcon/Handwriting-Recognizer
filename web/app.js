@@ -985,6 +985,7 @@ async function checkHealth() {
   } catch {
     serverPill.textContent = "offline";
     serverPill.classList.remove("live");
+    modelNote.textContent = "Local server is offline. Restart it before trusting predictions in this tab.";
   }
 }
 

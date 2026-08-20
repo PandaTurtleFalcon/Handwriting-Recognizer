@@ -235,10 +235,12 @@ class WebAppRenderingTests(unittest.TestCase):
 
         script = Path("web/app.js").read_text(encoding="utf-8")
 
+        self.assertIn('answer.append(makeElement("div", "sequence", result.sequence))', script)
         self.assertIn('makeElement("details", "raw-output")', script)
         self.assertIn('makeElement("summary", "", "Diagnostics: raw read, not final")', script)
         self.assertIn("raw read only:", script)
         self.assertIn("displayed final answer:", script)
+        self.assertNotIn('answer.append(makeElement("div", "sequence", result.raw_sequence))', script)
 
     def test_static_html_cache_busts_assets_with_revision(self) -> None:
         """Fast iteration should not leave the browser on stale app assets."""
@@ -264,6 +266,7 @@ class WebAppRenderingTests(unittest.TestCase):
         self.assertIn("payload.revision", script)
         self.assertIn("live @", script)
         self.assertIn("payload.started_at", script)
+        self.assertIn("Local server is offline. Restart it before trusting predictions in this tab.", script)
 
     def test_static_ui_bypasses_fetch_cache_for_live_api_calls(self) -> None:
         """Browser requests should not reuse stale prediction or health responses."""
