@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -25,6 +26,7 @@ from character_model import (  # noqa: E402
     PAIR_RULES_PATH,
     WEIGHTS_PATH,
     build_or_load_combined_cache,
+    evaluate_character_breakdown,
     _file_sha256,
     labels_match_with_ambiguity,
     load_character_model,
@@ -537,6 +539,40 @@ def _character_tensors() -> tuple[torch.Tensor, torch.Tensor, list[str]]:
     return build_or_load_combined_cache(DATASET_ROOT, _metric_extra_roots())
 
 
+def deployed_validation_report(
+    candidate_artifact_path: Path,
+    baseline_artifact_path: Path | None,
+    batch_size: int,
+) -> dict[str, object]:
+    """Compare a candidate reranker against the deployed validation path."""
+
+    device = get_device()
+    images, targets, cache_labels = _character_tensors()
+
+    def evaluate(artifact_path: Path | None) -> dict[str, float]:
+        model, labels = load_character_model(device=device, family_reranker_path=artifact_path)
+        if list(labels) != list(cache_labels):
+            raise RuntimeError("Character cache labels do not match deployed checkpoint labels.")
+        loader = DataLoader(TensorDataset(images, targets), batch_size=batch_size, shuffle=False)
+        return evaluate_character_breakdown(model, loader, nn.CrossEntropyLoss(), labels, device)
+
+    baseline = evaluate(baseline_artifact_path)
+    candidate = evaluate(candidate_artifact_path)
+    delta = {key: float(candidate.get(key, 0.0)) - float(baseline.get(key, 0.0)) for key in sorted(candidate)}
+    safe = (
+        candidate["validation_accuracy"] > baseline["validation_accuracy"]
+        and all(candidate[metric] >= baseline[metric] for metric in PROTECTED_METRICS)
+    )
+    return {
+        "candidate_artifact_path": str(candidate_artifact_path),
+        "baseline_artifact_path": str(baseline_artifact_path) if baseline_artifact_path is not None else None,
+        "baseline": baseline,
+        "candidate": candidate,
+        "delta": delta,
+        "safe": safe,
+    }
+
+
 def prepare_probe_data(
     batch_size: int,
     calibration_ratio: float,
@@ -649,6 +685,8 @@ def run_probe(
     probe_data: CharacterProbeData | None = None,
     output_path: Path = FAMILY_RERANKER_PATH,
     write: bool = False,
+    require_deployed_validation: bool = False,
+    deployed_baseline_path: Path | None = None,
 ) -> dict[str, object]:
     """Train confirmed family rerankers and evaluate them on validation."""
 
@@ -866,28 +904,48 @@ def run_probe(
 
     base_metrics = _metrics(base_predictions, validation_targets, labels)
     reranked_metrics = _metrics(probe_predictions, validation_targets, labels)
-    promotable = (
+    split_promotable = (
         reranked_metrics["validation_accuracy"] > base_metrics["validation_accuracy"]
         and all(reranked_metrics[metric] >= base_metrics[metric] for metric in PROTECTED_METRICS)
     )
+    promotable = split_promotable
+    deployed_validation: dict[str, object] | None = None
     wrote = False
-    if write and promotable and accepted_probe_artifacts:
+    artifact_payload: dict[str, object] | None = None
+    if promotable and accepted_probe_artifacts:
         merged_probe_artifacts = merge_family_probe_artifacts(
             _compatible_existing_family_probes(output_path, labels),
             accepted_probe_artifacts,
         )
-        torch.save(
-            {
-                "enabled": True,
-                "source": "character_family_reranker_probe",
-                "labels": labels,
-                "probes": merged_probe_artifacts,
-                "best_checkpoint": reranked_metrics,
-                "base_checkpoint": base_metrics,
-                **_current_artifact_hashes(),
-            },
-            output_path,
-        )
+        artifact_payload = {
+            "enabled": True,
+            "source": "character_family_reranker_probe",
+            "labels": labels,
+            "probes": merged_probe_artifacts,
+            "best_checkpoint": reranked_metrics,
+            "base_checkpoint": base_metrics,
+            **_current_artifact_hashes(),
+        }
+        if require_deployed_validation:
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+            with tempfile.NamedTemporaryFile(
+                dir=output_path.parent,
+                prefix=f"{output_path.stem}-deployed-",
+                suffix=output_path.suffix or ".pt",
+                delete=False,
+            ) as temporary:
+                candidate_path = Path(temporary.name)
+            try:
+                torch.save(artifact_payload, candidate_path)
+                baseline_path = deployed_baseline_path
+                if baseline_path is None and FAMILY_RERANKER_PATH.exists():
+                    baseline_path = FAMILY_RERANKER_PATH
+                deployed_validation = deployed_validation_report(candidate_path, baseline_path, batch_size)
+                promotable = bool(deployed_validation["safe"])
+            finally:
+                candidate_path.unlink(missing_ok=True)
+    if write and promotable and artifact_payload is not None:
+        torch.save(artifact_payload, output_path)
         wrote = True
     return {
         "families": reports,
@@ -895,7 +953,9 @@ def run_probe(
         "base": base_metrics,
         "reranked": reranked_metrics,
         "validation_delta": reranked_metrics["validation_accuracy"] - base_metrics["validation_accuracy"],
+        "split_promotable": split_promotable,
         "promotable": promotable,
+        "deployed_validation": deployed_validation,
         "wrote": wrote,
         "fit_samples": int(fit_targets.numel()),
         "train_only_extra_samples": data.train_only_count,
@@ -953,6 +1013,17 @@ def main() -> None:
         help="Extra ASCII folder or .pt tensor cache used only for fitting rerankers, never selection/validation.",
     )
     parser.add_argument("--output-path", type=Path, default=FAMILY_RERANKER_PATH)
+    parser.add_argument(
+        "--require-deployed-validation",
+        action="store_true",
+        help="Only mark/write a candidate when the full deployed validation path also improves safely.",
+    )
+    parser.add_argument(
+        "--deployed-baseline-path",
+        type=Path,
+        default=None,
+        help="Optional baseline reranker artifact for deployed validation comparison.",
+    )
     parser.add_argument("--write", action="store_true")
     args = parser.parse_args()
     print(
@@ -977,6 +1048,8 @@ def main() -> None:
                 mini_batch_size=args.mini_batch_size,
                 output_path=args.output_path,
                 write=args.write,
+                require_deployed_validation=args.require_deployed_validation,
+                deployed_baseline_path=args.deployed_baseline_path,
             ),
             indent=2,
         )
