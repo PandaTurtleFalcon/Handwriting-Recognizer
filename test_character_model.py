@@ -1248,6 +1248,77 @@ class CharacterPostprocessingTests(unittest.TestCase):
 
             self.assertIs(attached, model)
 
+    def test_attach_character_family_reranker_rejects_missing_checkpoint_hash(self) -> None:
+        """New reranker artifacts must be fingerprinted to a character checkpoint."""
+
+        with tempfile.TemporaryDirectory() as directory:
+            weights_path = Path(directory) / "character.pt"
+            artifact_path = Path(directory) / "character_family_reranker.pt"
+            weights_path.write_bytes(b"current")
+            torch.save(
+                {
+                    "enabled": True,
+                    "labels": ["1", "I"],
+                    "probes": [
+                        {
+                            "family_indices": [0, 1],
+                            "input_dim": 28,
+                            "state_dict": torch.nn.Linear(28, 2).state_dict(),
+                        }
+                    ],
+                },
+                artifact_path,
+            )
+            model = torch.nn.Linear(1, 2)
+
+            attached = attach_character_family_reranker(
+                model,
+                ["1", "I"],
+                torch.device("cpu"),
+                artifact_path=artifact_path,
+                weights_path=weights_path,
+                logit_bias_path=Path(directory) / "missing-bias.pt",
+                pair_rules_path=Path(directory) / "missing-rules.json",
+            )
+
+            self.assertIs(attached, model)
+
+    def test_attach_character_family_reranker_skips_malformed_probe(self) -> None:
+        """Bad probe tensor shapes should disable the artifact instead of breaking load."""
+
+        with tempfile.TemporaryDirectory() as directory:
+            weights_path = Path(directory) / "character.pt"
+            artifact_path = Path(directory) / "character_family_reranker.pt"
+            weights_path.write_bytes(b"current")
+            torch.save(
+                {
+                    "enabled": True,
+                    "labels": ["1", "I"],
+                    "checkpoint_sha256": hashlib.sha256(b"current").hexdigest(),
+                    "probes": [
+                        {
+                            "family_indices": [0, 1],
+                            "input_dim": 28,
+                            "state_dict": torch.nn.Linear(27, 2).state_dict(),
+                        }
+                    ],
+                },
+                artifact_path,
+            )
+            model = torch.nn.Linear(1, 2)
+
+            attached = attach_character_family_reranker(
+                model,
+                ["1", "I"],
+                torch.device("cpu"),
+                artifact_path=artifact_path,
+                weights_path=weights_path,
+                logit_bias_path=Path(directory) / "missing-bias.pt",
+                pair_rules_path=Path(directory) / "missing-rules.json",
+            )
+
+            self.assertIs(attached, model)
+
     def test_letter_model_only_replaces_same_alphabetic_label(self) -> None:
         """Uppercase-only letter votes should not erase case or change letters."""
 

@@ -548,7 +548,7 @@ def prepare_probe_data(
     """Precompute fixed tensors and model outputs for character-family probes."""
 
     device = get_device()
-    model, labels = load_character_model(device=device)
+    model, labels = load_character_model(device=device, family_reranker_path=None)
     images, targets, cache_labels = _character_tensors()
     if list(cache_labels) != list(labels):
         raise RuntimeError("Character cache labels do not match deployed checkpoint labels.")

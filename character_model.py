@@ -1533,7 +1533,10 @@ class FamilyRerankedCharacterModel(nn.Module):
             state = probe.get("state_dict")
             if not isinstance(state, dict):
                 continue
-            module.load_state_dict(state)
+            try:
+                module.load_state_dict(state)
+            except RuntimeError:
+                continue
             module.eval()
             self.probes.append(module)
             self.probe_configs.append(
@@ -1622,7 +1625,7 @@ def attach_character_family_reranker(
         return model
     if list(artifact.get("labels", [])) != list(labels):
         return model
-    if not _artifact_hash_matches(artifact, "checkpoint_sha256", weights_path):
+    if not _artifact_dependency_hash_matches(artifact, "checkpoint_sha256", weights_path):
         return model
     if not _artifact_dependency_hash_matches(artifact, "logit_bias_sha256", logit_bias_path):
         return model

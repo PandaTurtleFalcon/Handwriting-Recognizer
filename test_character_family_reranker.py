@@ -250,7 +250,10 @@ class CharacterFamilyRerankerTests(unittest.TestCase):
             output_path = Path(directory) / "character_family_reranker.pt"
             with (
                 patch("scripts.probe_character_family_reranker.get_device", return_value=torch.device("cpu")),
-                patch("scripts.probe_character_family_reranker.load_character_model", return_value=(torch.nn.Linear(1, 2), labels)),
+                patch(
+                    "scripts.probe_character_family_reranker.load_character_model",
+                    return_value=(torch.nn.Linear(1, 2), labels),
+                ) as load_model_mock,
                 patch("scripts.probe_character_family_reranker._character_tensors", return_value=(images, targets, labels)),
                 patch(
                     "scripts.probe_character_family_reranker.stratified_split_indices",
@@ -296,6 +299,7 @@ class CharacterFamilyRerankerTests(unittest.TestCase):
         self.assertEqual(artifact["labels"], labels)
         self.assertEqual(artifact["probes"][0]["family"], "1I")
         self.assertEqual(artifact["checkpoint_sha256"], "hash")
+        load_model_mock.assert_called_once_with(device=torch.device("cpu"), family_reranker_path=None)
 
     def test_run_probe_rejects_family_without_confirmation_gain(self) -> None:
         labels = ["!", "1"]
