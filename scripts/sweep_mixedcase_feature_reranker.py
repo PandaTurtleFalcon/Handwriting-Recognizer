@@ -13,9 +13,9 @@ if str(PROJECT_DIR) not in sys.path:
     sys.path.insert(0, str(PROJECT_DIR))
 
 from scripts.probe_mixedcase_feature_reranker import (  # noqa: E402
+    load_or_prepare_feature_probe_data,
     parse_family_names,
     parse_source_groups,
-    prepare_feature_probe_data,
     run_probe_from_data,
 )
 
@@ -151,6 +151,7 @@ def run_sweep(
     max_probe_train_samples: int | None = None,
     mini_batch_size: int | None = None,
     max_runs: int | None = None,
+    prepare_cache_path: Path | None = None,
 ) -> dict[str, object]:
     """Run bounded mixed-case family-reranker probes and summarize results."""
 
@@ -170,7 +171,8 @@ def run_sweep(
         )
     )
     selected_runs = all_runs[:max_runs] if max_runs is not None else all_runs
-    data = prepare_feature_probe_data(
+    data, prepare_cache_hit = load_or_prepare_feature_probe_data(
+        prepare_cache_path,
         batch_size=batch_size,
         train_sample_limit=train_sample_limit,
         calibration_ratio=calibration_ratio,
@@ -265,6 +267,8 @@ def run_sweep(
         "completed_runs": len(rows),
         "truncated": max_runs is not None and len(all_runs) > max_runs,
         "prepared_once": True,
+        "prepare_cache_path": str(prepare_cache_path) if prepare_cache_path is not None else None,
+        "prepare_cache_hit": prepare_cache_hit,
     }
 
 
@@ -302,6 +306,14 @@ def main() -> None:
     parser.add_argument("--max-probe-train-samples", type=int, default=None)
     parser.add_argument("--mini-batch-size", type=int, default=None)
     parser.add_argument("--max-runs", type=int, default=None)
+    parser.add_argument(
+        "--precomputed-cache-path",
+        "--prepare-cache-path",
+        dest="prepare_cache_path",
+        type=Path,
+        default=None,
+        help="Reuse prepared split logits/features for repeated sweeps with matching metadata.",
+    )
     args = parser.parse_args()
     print(
         json.dumps(
@@ -336,6 +348,7 @@ def main() -> None:
                 max_probe_train_samples=args.max_probe_train_samples,
                 mini_batch_size=args.mini_batch_size,
                 max_runs=args.max_runs,
+                prepare_cache_path=args.prepare_cache_path,
             ),
             indent=2,
         )

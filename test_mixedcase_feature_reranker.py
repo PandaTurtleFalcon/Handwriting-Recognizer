@@ -17,6 +17,7 @@ from scripts.probe_mixedcase_feature_reranker import parse_family_names
 from scripts.probe_mixedcase_feature_reranker import parse_source_groups
 from scripts.probe_mixedcase_feature_reranker import pixel_features
 from scripts.probe_mixedcase_feature_reranker import prepare_feature_probe_data
+from scripts.probe_mixedcase_feature_reranker import load_or_prepare_feature_probe_data
 from scripts.probe_mixedcase_feature_reranker import protected_balanced_score
 from scripts.probe_mixedcase_feature_reranker import selected_families
 from scripts.probe_mixedcase_feature_reranker import source_group_mask
@@ -521,6 +522,139 @@ class MixedcaseFeatureRerankerTests(unittest.TestCase):
         self.assertEqual(data.test_samples, 3)
         self.assertEqual(data.test_tensor_path, Path("rough-validation.pt"))
         self.assertEqual(data.test_targets.tolist(), [10, 11, 12])
+
+    def test_prepare_feature_probe_data_reuses_precomputed_cache(self) -> None:
+        """Repeated probe runs should reuse matching prepared logits/features."""
+
+        train_images = torch.zeros((12, 1, 28, 28), dtype=torch.float32)
+        train_targets = torch.tensor([10, 11] * 6, dtype=torch.long)
+        test_images = torch.ones((4, 1, 28, 28), dtype=torch.float32)
+        test_targets = torch.tensor([10, 11, 10, 11], dtype=torch.long)
+
+        def fake_split(train: bool, sample_limit: int | None):
+            return (train_images, train_targets) if train else (test_images, test_targets)
+
+        def fake_outputs(images: torch.Tensor, _batch_size: int, _include_embedding_features: bool):
+            mixed = torch.zeros((images.shape[0], 62), dtype=torch.float32)
+            folded = torch.zeros((images.shape[0], 36), dtype=torch.float32)
+            mixed[:, 10] = 1.0
+            folded[:, 10] = 1.0
+            return mixed, folded, None
+
+        with tempfile.TemporaryDirectory() as directory:
+            cache_path = Path(directory) / "prepared.pt"
+            with (
+                patch("scripts.probe_mixedcase_feature_reranker._split_tensors", side_effect=fake_split),
+                patch("scripts.probe_mixedcase_feature_reranker._model_outputs_with_embeddings", side_effect=fake_outputs) as outputs_mock,
+                patch("scripts.probe_mixedcase_feature_reranker._load_hybrid_artifact", return_value={}),
+                patch(
+                    "scripts.probe_mixedcase_feature_reranker.hybrid_predictions",
+                    side_effect=lambda mixed, _folded, _artifact: mixed.argmax(dim=1),
+                ),
+                patch("scripts.probe_mixedcase_feature_reranker._current_artifact_hashes", return_value={"mixed": "hash"}),
+            ):
+                first, first_hit = load_or_prepare_feature_probe_data(
+                    cache_path,
+                    batch_size=4,
+                    train_sample_limit=None,
+                    calibration_ratio=0.25,
+                    seed=3,
+                )
+                second, second_hit = load_or_prepare_feature_probe_data(
+                    cache_path,
+                    batch_size=4,
+                    train_sample_limit=None,
+                    calibration_ratio=0.25,
+                    seed=3,
+                )
+
+        self.assertFalse(first_hit)
+        self.assertTrue(second_hit)
+        self.assertEqual(outputs_mock.call_count, 4)
+        self.assertEqual(first.test_samples, second.test_samples)
+        self.assertEqual(second.test_targets.tolist(), first.test_targets.tolist())
+
+    def test_prepare_feature_probe_data_invalidates_cache_when_embedding_flag_changes(self) -> None:
+        """Prepared data caches should not cross feature-flag boundaries."""
+
+        train_images = torch.zeros((12, 1, 28, 28), dtype=torch.float32)
+        train_targets = torch.tensor([10, 11] * 6, dtype=torch.long)
+        test_images = torch.ones((4, 1, 28, 28), dtype=torch.float32)
+        test_targets = torch.tensor([10, 11, 10, 11], dtype=torch.long)
+
+        def fake_split(train: bool, sample_limit: int | None):
+            return (train_images, train_targets) if train else (test_images, test_targets)
+
+        def fake_outputs(images: torch.Tensor, _batch_size: int, include_embedding_features: bool):
+            mixed = torch.zeros((images.shape[0], 62), dtype=torch.float32)
+            folded = torch.zeros((images.shape[0], 36), dtype=torch.float32)
+            mixed[:, 10] = 1.0
+            folded[:, 10] = 1.0
+            embedding = torch.ones((images.shape[0], 3), dtype=torch.float32) if include_embedding_features else None
+            return mixed, folded, embedding
+
+        with tempfile.TemporaryDirectory() as directory:
+            cache_path = Path(directory) / "prepared.pt"
+            with (
+                patch("scripts.probe_mixedcase_feature_reranker._split_tensors", side_effect=fake_split),
+                patch("scripts.probe_mixedcase_feature_reranker._model_outputs_with_embeddings", side_effect=fake_outputs) as outputs_mock,
+                patch("scripts.probe_mixedcase_feature_reranker._load_hybrid_artifact", return_value={}),
+                patch(
+                    "scripts.probe_mixedcase_feature_reranker.hybrid_predictions",
+                    side_effect=lambda mixed, _folded, _artifact: mixed.argmax(dim=1),
+                ),
+                patch("scripts.probe_mixedcase_feature_reranker._current_artifact_hashes", return_value={"mixed": "hash"}),
+            ):
+                load_or_prepare_feature_probe_data(
+                    cache_path,
+                    batch_size=4,
+                    train_sample_limit=None,
+                    calibration_ratio=0.25,
+                    seed=3,
+                    include_embedding_features=False,
+                )
+                _data, cache_hit = load_or_prepare_feature_probe_data(
+                    cache_path,
+                    batch_size=4,
+                    train_sample_limit=None,
+                    calibration_ratio=0.25,
+                    seed=3,
+                    include_embedding_features=True,
+                )
+
+        self.assertFalse(cache_hit)
+        self.assertEqual(outputs_mock.call_count, 8)
+
+    def test_run_probe_delegates_to_prepared_data_path(self) -> None:
+        """Direct probes should use the same preparation path as sweeps."""
+
+        fake_data = object()
+        with (
+            patch(
+                "scripts.probe_mixedcase_feature_reranker.load_or_prepare_feature_probe_data",
+                return_value=(fake_data, True),
+            ) as prepare_mock,
+            patch(
+                "scripts.probe_mixedcase_feature_reranker.run_probe_from_data",
+                return_value={"base": {}, "reranked": {}, "promotable": False},
+            ) as run_mock,
+        ):
+            report = run_probe(
+                batch_size=4,
+                epochs=1,
+                learning_rate=0.01,
+                train_sample_limit=None,
+                family_limit=None,
+                calibration_ratio=0.2,
+                min_family_delta=0.0,
+                seed=5,
+                prepare_cache_path=Path("prepared.pt"),
+            )
+
+        self.assertTrue(report["prepare_cache_hit"])
+        self.assertEqual(report["prepare_cache_path"], "prepared.pt")
+        self.assertIs(run_mock.call_args.kwargs["data"], fake_data)
+        self.assertEqual(prepare_mock.call_args.args[0], Path("prepared.pt"))
 
     def test_run_probe_rejects_adapter_without_confirmation_gain(self) -> None:
         """One calibration win should not be enough to touch final test predictions."""

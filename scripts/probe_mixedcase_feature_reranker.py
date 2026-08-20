@@ -7,7 +7,7 @@ import hashlib
 import json
 import pickle
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, fields
 from functools import lru_cache
 from pathlib import Path
 
@@ -68,6 +68,22 @@ def _current_artifact_hashes() -> dict[str, str | None]:
         "mixedcase_pair_rules_sha256": _file_sha256(MIXEDCASE_PAIR_RULES_PATH),
         "mixedcase_hybrid_sha256": _file_sha256(MIXEDCASE_HYBRID_PATH),
     }
+
+
+def _path_fingerprint(path: Path) -> dict[str, object]:
+    """Return a conservative fingerprint for an input file or directory."""
+
+    if path.is_file():
+        return {"path": str(path), "kind": "file", "sha256": _file_sha256(path)}
+    if path.is_dir():
+        digest = hashlib.sha256()
+        for child in sorted(item for item in path.rglob("*") if item.is_file()):
+            relative = child.relative_to(path).as_posix()
+            digest.update(relative.encode("utf-8"))
+            child_hash = _file_sha256(child)
+            digest.update(str(child_hash).encode("utf-8"))
+        return {"path": str(path), "kind": "directory", "sha256": digest.hexdigest()}
+    return {"path": str(path), "kind": "missing", "sha256": None}
 
 
 def _compatible_existing_family_probes(output_path: Path) -> list[dict[str, object]]:
@@ -150,6 +166,117 @@ class FeatureProbeData:
     extra_roots: tuple[Path, ...]
     extra_samples_per_class: int | None
     test_tensor_path: Path | None
+
+
+def _feature_probe_cache_metadata(
+    batch_size: int,
+    train_sample_limit: int | None,
+    calibration_ratio: float,
+    seed: int,
+    extra_roots: list[Path] | None = None,
+    extra_samples_per_class: int | None = None,
+    confirmation_ratio: float = 0.5,
+    include_digit_features: bool = False,
+    include_embedding_features: bool = False,
+    test_tensor_path: Path | None = None,
+) -> dict[str, object]:
+    """Return metadata that must match before prepared probe data is reused."""
+
+    return {
+        "schema_version": 1,
+        "kind": "feature_probe_data",
+        "batch_size": batch_size,
+        "train_sample_limit": train_sample_limit,
+        "calibration_ratio": calibration_ratio,
+        "confirmation_ratio": confirmation_ratio,
+        "seed": seed,
+        "extra_roots": [str(path) for path in (extra_roots or [])],
+        "extra_root_fingerprints": [_path_fingerprint(path) for path in (extra_roots or [])],
+        "extra_samples_per_class": extra_samples_per_class,
+        "include_digit_features": include_digit_features,
+        "include_embedding_features": include_embedding_features,
+        "test_tensor_path": str(test_tensor_path) if test_tensor_path is not None else None,
+        "test_tensor_fingerprint": _path_fingerprint(test_tensor_path) if test_tensor_path is not None else None,
+        "artifact_hashes": _current_artifact_hashes(),
+    }
+
+
+def _feature_probe_cache_payload(data: FeatureProbeData, metadata: dict[str, object]) -> dict[str, object]:
+    """Return a torch-saveable payload for prepared feature-probe data."""
+
+    values = {field.name: getattr(data, field.name) for field in fields(FeatureProbeData)}
+    values["extra_roots"] = [str(path) for path in data.extra_roots]
+    values["test_tensor_path"] = str(data.test_tensor_path) if data.test_tensor_path is not None else None
+    return {"metadata": metadata, "data": values}
+
+
+def _feature_probe_data_from_payload(payload: dict[str, object]) -> FeatureProbeData | None:
+    """Rehydrate feature-probe data from a validated cache payload."""
+
+    values = payload.get("data")
+    if not isinstance(values, dict):
+        return None
+    data_kwargs = {field.name: values.get(field.name) for field in fields(FeatureProbeData)}
+    data_kwargs["extra_roots"] = tuple(Path(str(path)) for path in values.get("extra_roots", []))
+    test_tensor_path = values.get("test_tensor_path")
+    data_kwargs["test_tensor_path"] = Path(str(test_tensor_path)) if test_tensor_path else None
+    return FeatureProbeData(**data_kwargs)
+
+
+def load_or_prepare_feature_probe_data(
+    cache_path: Path | None,
+    batch_size: int,
+    train_sample_limit: int | None,
+    calibration_ratio: float,
+    seed: int,
+    extra_roots: list[Path] | None = None,
+    extra_samples_per_class: int | None = None,
+    confirmation_ratio: float = 0.5,
+    include_digit_features: bool = False,
+    include_embedding_features: bool = False,
+    test_tensor_path: Path | None = None,
+) -> tuple[FeatureProbeData, bool]:
+    """Load prepared feature-probe data from disk, or build and cache it."""
+
+    metadata = _feature_probe_cache_metadata(
+        batch_size=batch_size,
+        train_sample_limit=train_sample_limit,
+        calibration_ratio=calibration_ratio,
+        seed=seed,
+        extra_roots=extra_roots,
+        extra_samples_per_class=extra_samples_per_class,
+        confirmation_ratio=confirmation_ratio,
+        include_digit_features=include_digit_features,
+        include_embedding_features=include_embedding_features,
+        test_tensor_path=test_tensor_path,
+    )
+    if cache_path is not None and cache_path.exists():
+        try:
+            payload = torch.load(cache_path, map_location="cpu", weights_only=True)
+        except (OSError, RuntimeError, ValueError, pickle.UnpicklingError):
+            payload = None
+        if isinstance(payload, dict) and payload.get("metadata") == metadata:
+            cached = _feature_probe_data_from_payload(payload)
+            if cached is not None:
+                return cached, True
+    data = prepare_feature_probe_data(
+        batch_size=batch_size,
+        train_sample_limit=train_sample_limit,
+        calibration_ratio=calibration_ratio,
+        seed=seed,
+        extra_roots=extra_roots,
+        extra_samples_per_class=extra_samples_per_class,
+        confirmation_ratio=confirmation_ratio,
+        include_digit_features=include_digit_features,
+        include_embedding_features=include_embedding_features,
+        test_tensor_path=test_tensor_path,
+    )
+    if cache_path is not None:
+        cache_path.parent.mkdir(parents=True, exist_ok=True)
+        temp_path = cache_path.with_name(f"{cache_path.name}.tmp")
+        torch.save(_feature_probe_cache_payload(data, metadata), temp_path)
+        temp_path.replace(cache_path)
+    return data, False
 
 
 def _family_name(indices: tuple[int, ...]) -> str:
@@ -1150,319 +1277,53 @@ def run_probe(
     mini_batch_size: int | None = None,
     output_path: Path = MIXEDCASE_FAMILY_RERANKER_PATH,
     write: bool = False,
+    prepare_cache_path: Path | None = None,
 ) -> dict[str, object]:
     """Train family probes on train split and evaluate on test split."""
 
-    torch.manual_seed(seed)
-    train_images, train_targets = _split_tensors(train=True, sample_limit=train_sample_limit)
-    test_images, test_targets = (
-        _split_tensors(train=False, sample_limit=None)
-        if test_tensor_path is None
-        else load_tensor_pack(test_tensor_path)
+    data, cache_hit = load_or_prepare_feature_probe_data(
+        prepare_cache_path,
+        batch_size=batch_size,
+        train_sample_limit=train_sample_limit,
+        calibration_ratio=calibration_ratio,
+        seed=seed,
+        extra_roots=extra_roots,
+        extra_samples_per_class=extra_samples_per_class,
+        confirmation_ratio=confirmation_ratio,
+        include_digit_features=include_digit_features,
+        include_embedding_features=include_embedding_features,
+        test_tensor_path=test_tensor_path,
     )
-    generator = torch.Generator().manual_seed(seed)
-    order = torch.randperm(int(train_targets.numel()), generator=generator)
-    calibration_count = max(1, min(int(train_targets.numel()) - 1, int(round(train_targets.numel() * calibration_ratio))))
-    calibration_indices = order[:calibration_count]
-    fit_indices = order[calibration_count:]
-    confirmation_count = int(round(calibration_count * confirmation_ratio))
-    confirmation_count = max(0, min(calibration_count - 1, confirmation_count))
-    selection_count = calibration_count - confirmation_count
-    selection_indices = calibration_indices[:selection_count]
-    confirmation_indices = calibration_indices[selection_count:]
-    fit_images = train_images[fit_indices]
-    fit_targets = train_targets[fit_indices]
-    fit_images, fit_targets = _fit_tensors(
-        fit_images,
-        fit_targets,
-        extra_roots or [],
-        extra_samples_per_class,
-        seed,
-    )
-    selection_images = train_images[selection_indices]
-    selection_targets = train_targets[selection_indices]
-    confirmation_images = train_images[confirmation_indices]
-    confirmation_targets = train_targets[confirmation_indices]
-    fit_mixed, fit_folded, fit_embedding = _model_outputs_with_embeddings(
-        fit_images,
-        batch_size,
-        include_embedding_features,
-    )
-    selection_mixed, selection_folded, selection_embedding = _model_outputs_with_embeddings(
-        selection_images,
-        batch_size,
-        include_embedding_features,
-    )
-    confirmation_mixed, confirmation_folded, confirmation_embedding = (
-        _model_outputs_with_embeddings(confirmation_images, batch_size, include_embedding_features)
-        if int(confirmation_targets.numel()) > 0
-        else (torch.empty((0, len(MIXEDCASE_LABELS))), torch.empty((0, len(LABELS))), None)
-    )
-    test_mixed, test_folded, test_embedding = _model_outputs_with_embeddings(
-        test_images,
-        batch_size,
-        include_embedding_features,
-    )
-    fit_digit = _digit_outputs(fit_images, batch_size) if include_digit_features else None
-    selection_digit = _digit_outputs(selection_images, batch_size) if include_digit_features else None
-    confirmation_digit = (
-        _digit_outputs(confirmation_images, batch_size)
-        if include_digit_features and int(confirmation_targets.numel()) > 0
-        else None
-    )
-    test_digit = _digit_outputs(test_images, batch_size) if include_digit_features else None
-    artifact = _load_hybrid_artifact()
-    selection_predictions = hybrid_predictions(selection_mixed, selection_folded, artifact)
-    confirmation_predictions = (
-        hybrid_predictions(confirmation_mixed, confirmation_folded, artifact)
-        if int(confirmation_targets.numel()) > 0
-        else torch.empty((0,), dtype=torch.long)
-    )
-    base_predictions = hybrid_predictions(test_mixed, test_folded, artifact)
-    probe_predictions = base_predictions.clone()
-    family_reports = []
-    accepted_probe_artifacts: list[dict[str, object]] = []
-    for family_indices in selected_families(family_limit, family_names):
-        train_features = family_features(
-            fit_images,
-            fit_mixed,
-            fit_folded,
-            family_indices,
-            fit_digit,
-            include_pixel_features,
-            fit_embedding,
-        )
-        probe = train_family_probe(
-            train_features,
-            fit_targets,
-            family_indices,
-            epochs,
-            learning_rate,
-            hidden_units,
-            max_train_samples=max_probe_train_samples,
-            mini_batch_size=mini_batch_size,
-            seed=seed,
-        )
-        if probe is None:
-            continue
-        selection_candidate = apply_family_probe(
-            selection_predictions,
-            selection_images,
-            selection_mixed,
-            selection_folded,
-            probe,
-            source_groups,
-            selection_digit,
-            probe_confidence,
-            probe_margin,
-            base_confidence_max,
-            base_margin_max,
-            digit_protect_confidence,
-            upper_protect_confidence,
-            include_pixel_features,
-            selection_embedding,
-        )
-        selection_before = _metrics(selection_predictions, selection_targets)
-        selection_after = _metrics(selection_candidate, selection_targets)
-        selection_delta = selection_after["test_accuracy"] - selection_before["test_accuracy"]
-        confirmation_delta = None
-        if int(confirmation_targets.numel()) > 0:
-            confirmation_candidate = apply_family_probe(
-                confirmation_predictions,
-                confirmation_images,
-                confirmation_mixed,
-                confirmation_folded,
-                probe,
-                source_groups,
-                confirmation_digit,
-                probe_confidence,
-                probe_margin,
-                base_confidence_max,
-                base_margin_max,
-                digit_protect_confidence,
-                upper_protect_confidence,
-                include_pixel_features,
-                confirmation_embedding,
-            )
-            confirmation_before = _metrics(confirmation_predictions, confirmation_targets)
-            confirmation_after = _metrics(confirmation_candidate, confirmation_targets)
-            confirmation_delta = confirmation_after["test_accuracy"] - confirmation_before["test_accuracy"]
-        if selection_delta < min_family_delta:
-            family_reports.append(
-                {
-                    "family": probe.name,
-                    "accepted": False,
-                    "selection_delta": selection_delta,
-                    "confirmation_delta": confirmation_delta,
-                    "rejection_reason": "selection_delta_below_floor",
-                }
-            )
-            continue
-        if confirmation_delta is not None and confirmation_delta < min_family_delta:
-            family_reports.append(
-                {
-                    "family": probe.name,
-                    "accepted": False,
-                    "selection_delta": selection_delta,
-                    "confirmation_delta": confirmation_delta,
-                    "rejection_reason": "confirmation_delta_below_floor",
-                }
-            )
-            continue
-        before = _metrics(probe_predictions, test_targets)
-        candidate_predictions = apply_family_probe(
-            probe_predictions,
-            test_images,
-            test_mixed,
-            test_folded,
-            probe,
-            source_groups,
-            test_digit,
-            probe_confidence,
-            probe_margin,
-            base_confidence_max,
-            base_margin_max,
-            digit_protect_confidence,
-            upper_protect_confidence,
-            include_pixel_features,
-            test_embedding,
-        )
-        after = _metrics(candidate_predictions, test_targets)
-        final_rejection = _final_gate_rejection(
-            before,
-            after,
-            min_family_delta,
-            min_digit=min_digit,
-            min_upper=min_upper,
-            min_lower=min_lower,
-            min_case_or_visual=min_case_or_visual,
-        )
-        if final_rejection is not None:
-            family_reports.append(
-                {
-                    "family": probe.name,
-                    "accepted": False,
-                    "selection_delta": selection_delta,
-                    "confirmation_delta": confirmation_delta,
-                    "before_test_accuracy": before["test_accuracy"],
-                    "after_test_accuracy": after["test_accuracy"],
-                    "before_metrics": before,
-                    "after_metrics": after,
-                    "delta": after["test_accuracy"] - before["test_accuracy"],
-                    "rejection_reason": final_rejection,
-                }
-            )
-            continue
-        family_reports.append(
-            {
-                "family": probe.name,
-                "accepted": True,
-                "selection_delta": selection_delta,
-                "confirmation_delta": confirmation_delta,
-                "before_test_accuracy": before["test_accuracy"],
-                "after_test_accuracy": after["test_accuracy"],
-                "before_metrics": before,
-                "after_metrics": after,
-                "delta": after["test_accuracy"] - before["test_accuracy"],
-            }
-        )
-        accepted_probe_artifacts.append(
-            {
-                "family": probe.name,
-                "family_indices": family_indices,
-                "state_dict": {key: value.detach().cpu() for key, value in probe.model.state_dict().items()},
-                "input_dim": int(train_features.shape[1]),
-                "hidden_units": hidden_units,
-                "source_groups": source_groups,
-                "probe_confidence": probe_confidence,
-                "probe_margin": probe_margin,
-                "base_confidence_max": base_confidence_max,
-                "base_margin_max": base_margin_max,
-                "digit_protect_confidence": digit_protect_confidence,
-                "upper_protect_confidence": upper_protect_confidence,
-                "include_digit_features": include_digit_features,
-                "include_pixel_features": include_pixel_features,
-                "include_embedding_features": include_embedding_features,
-                "max_probe_train_samples": max_probe_train_samples,
-                "mini_batch_size": mini_batch_size,
-            }
-        )
-        probe_predictions = candidate_predictions
-    base_metrics = _metrics(base_predictions, test_targets)
-    reranked_metrics = _metrics(probe_predictions, test_targets)
-    base_balanced_score = protected_balanced_score(base_metrics)
-    reranked_balanced_score = protected_balanced_score(reranked_metrics)
-    promotable = _is_promotable(
-        base_metrics,
-        reranked_metrics,
+    report = run_probe_from_data(
+        data=data,
+        epochs=epochs,
+        learning_rate=learning_rate,
+        family_limit=family_limit,
+        min_family_delta=min_family_delta,
+        seed=seed,
+        hidden_units=hidden_units,
+        confirmation_ratio=confirmation_ratio,
+        family_names=family_names,
+        source_groups=source_groups,
+        include_pixel_features=include_pixel_features,
         min_digit=min_digit,
         min_upper=min_upper,
         min_lower=min_lower,
         min_case_or_visual=min_case_or_visual,
+        probe_confidence=probe_confidence,
+        probe_margin=probe_margin,
+        base_confidence_max=base_confidence_max,
+        base_margin_max=base_margin_max,
+        digit_protect_confidence=digit_protect_confidence,
+        upper_protect_confidence=upper_protect_confidence,
+        max_probe_train_samples=max_probe_train_samples,
+        mini_batch_size=mini_batch_size,
+        output_path=output_path,
+        write=write,
     )
-    wrote = False
-    if write and promotable and accepted_probe_artifacts:
-        merged_probe_artifacts = merge_family_probe_artifacts(
-            _compatible_existing_family_probes(output_path),
-            accepted_probe_artifacts,
-        )
-        artifact_hashes = _current_artifact_hashes()
-        torch.save(
-            {
-                "enabled": True,
-                "source": "mixedcase_feature_family_reranker_probe",
-                "labels": list(MIXEDCASE_LABELS),
-                "probes": merged_probe_artifacts,
-                "best_checkpoint": reranked_metrics,
-                "base_checkpoint": base_metrics,
-                **artifact_hashes,
-            },
-            output_path,
-        )
-        wrote = True
-    return {
-        "base": base_metrics,
-        "reranked": reranked_metrics,
-        "promotable": promotable,
-        "test_delta": reranked_metrics["test_accuracy"] - base_metrics["test_accuracy"],
-        "balanced_score": reranked_balanced_score,
-        "balanced_delta": reranked_balanced_score - base_balanced_score,
-        "families": family_reports,
-        "train_samples": int(train_targets.numel()),
-        "fit_samples": int(fit_targets.numel()),
-        "calibration_samples": int(calibration_count),
-        "selection_samples": int(selection_targets.numel()),
-        "confirmation_samples": int(confirmation_targets.numel()),
-        "test_samples": int(test_targets.numel()),
-        "extra_roots": [str(path) for path in (extra_roots or [])],
-        "extra_samples_per_class": extra_samples_per_class,
-        "test_tensor_path": str(test_tensor_path) if test_tensor_path is not None else None,
-        "hidden_units": hidden_units,
-        "confirmation_ratio": confirmation_ratio,
-        "family_names": list(family_names or []),
-        "source_groups": list(source_groups),
-        "include_digit_features": include_digit_features,
-        "include_pixel_features": include_pixel_features,
-        "include_embedding_features": include_embedding_features,
-        "max_probe_train_samples": max_probe_train_samples,
-        "mini_batch_size": mini_batch_size,
-        "minimum_gates": {
-            "case_or_ambiguity_aware_test_accuracy": min_case_or_visual,
-            "digit_test_accuracy": min_digit,
-            "upper_test_accuracy": min_upper,
-            "lower_test_accuracy": min_lower,
-        },
-        "probe_thresholds": {
-            "confidence": probe_confidence,
-            "margin": probe_margin,
-            "base_confidence_max": base_confidence_max,
-            "base_margin_max": base_margin_max,
-            "digit_protect_confidence": digit_protect_confidence,
-            "upper_protect_confidence": upper_protect_confidence,
-        },
-        "wrote": wrote,
-        "output_path": str(output_path),
-    }
+    report["prepare_cache_path"] = str(prepare_cache_path) if prepare_cache_path is not None else None
+    report["prepare_cache_hit"] = cache_hit
+    return report
 
 
 def main() -> None:
@@ -1531,6 +1392,14 @@ def main() -> None:
         help="Train each family probe with mini-batches instead of one full batch.",
     )
     parser.add_argument("--output-path", type=Path, default=MIXEDCASE_FAMILY_RERANKER_PATH)
+    parser.add_argument(
+        "--precomputed-cache-path",
+        "--prepare-cache-path",
+        dest="prepare_cache_path",
+        type=Path,
+        default=None,
+        help="Reuse prepared split logits/features for repeated bounded probe runs with matching metadata.",
+    )
     parser.add_argument("--write", action="store_true")
     args = parser.parse_args()
     print(
@@ -1567,6 +1436,7 @@ def main() -> None:
                 max_probe_train_samples=args.max_probe_train_samples,
                 mini_batch_size=args.mini_batch_size,
                 output_path=args.output_path,
+                prepare_cache_path=args.prepare_cache_path,
                 write=args.write,
             ),
             indent=2,

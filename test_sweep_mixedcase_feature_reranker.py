@@ -81,9 +81,10 @@ class SweepMixedcaseFeatureRerankerTests(unittest.TestCase):
         prepare_calls = []
         fake_data = object()
 
-        def fake_prepare_feature_probe_data(**kwargs):
+        def fake_load_or_prepare_feature_probe_data(cache_path, **kwargs):
             prepare_calls.append(kwargs)
-            return fake_data
+            prepare_calls[-1]["cache_path"] = cache_path
+            return fake_data, True
 
         def fake_run_probe_from_data(**kwargs):
             calls.append(kwargs)
@@ -97,9 +98,9 @@ class SweepMixedcaseFeatureRerankerTests(unittest.TestCase):
                 "families": [{"accepted": False, "rejection_reason": "selection_delta_below_floor"}],
             }
 
-        original_prepare = run_sweep.__globals__["prepare_feature_probe_data"]
+        original_prepare = run_sweep.__globals__["load_or_prepare_feature_probe_data"]
         original_probe = run_sweep.__globals__["run_probe_from_data"]
-        run_sweep.__globals__["prepare_feature_probe_data"] = fake_prepare_feature_probe_data
+        run_sweep.__globals__["load_or_prepare_feature_probe_data"] = fake_load_or_prepare_feature_probe_data
         run_sweep.__globals__["run_probe_from_data"] = fake_run_probe_from_data
         try:
             report = run_sweep(
@@ -133,9 +134,10 @@ class SweepMixedcaseFeatureRerankerTests(unittest.TestCase):
                 max_probe_train_samples=128,
                 mini_batch_size=32,
                 max_runs=3,
+                prepare_cache_path=Path("prepared.pt"),
             )
         finally:
-            run_sweep.__globals__["prepare_feature_probe_data"] = original_prepare
+            run_sweep.__globals__["load_or_prepare_feature_probe_data"] = original_prepare
             run_sweep.__globals__["run_probe_from_data"] = original_probe
 
         self.assertEqual(len(prepare_calls), 1)
@@ -144,11 +146,14 @@ class SweepMixedcaseFeatureRerankerTests(unittest.TestCase):
         self.assertEqual(report["completed_runs"], 3)
         self.assertTrue(report["truncated"])
         self.assertTrue(report["prepared_once"])
+        self.assertTrue(report["prepare_cache_hit"])
+        self.assertEqual(report["prepare_cache_path"], "prepared.pt")
         self.assertIs(calls[0]["data"], fake_data)
         self.assertEqual(calls[0]["family_names"], ("0Oo",))
         self.assertEqual(prepare_calls[0]["extra_roots"], [Path("cvl.pt")])
         self.assertEqual(calls[0]["min_digit"], 95.0)
         self.assertTrue(prepare_calls[0]["include_digit_features"])
+        self.assertEqual(prepare_calls[0]["cache_path"], Path("prepared.pt"))
         self.assertTrue(calls[0]["include_pixel_features"])
         self.assertTrue(prepare_calls[0]["include_embedding_features"])
         self.assertEqual(calls[0]["max_probe_train_samples"], 128)
