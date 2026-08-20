@@ -1948,3 +1948,10 @@ restored, so future improvement loops do not repeat known-bad blends.
   - Result 2: not promotable. Selection again found no confirmed threshold, and final metrics stayed identical to baseline.
   - Verification: reran `scripts/summarize_benchmarks.py --target 95 --include-app-hardcases` after the probes; no model, calibration, hybrid, or family-reranker artifact was changed.
   - Takeaway: current family-specialist CNNs are still not selective enough. The next mixed-case route should either learn a better representation/objective for visual-family discrimination or focus on collecting targeted real correction samples for the worst labels (`o`, `c`, `m`, `s`, `u`, `l`) instead of expanding this specialist threshold grid.
+
+- Mixed-case correction queue now targets measured weak labels:
+  - Trigger: repeated resolver/specialist probes showed the current model needs better real labels for the worst visual twins before another safe fine-tune is likely.
+  - Change: added a mixed-case correction focus order from refreshed per-label accuracy (`o`, `c`, `m`, `s`, `u`, `l`, `f`, `p`, ...). The web coverage endpoint and daily correction dry-run now use this focus order only for the mixed-case queue; character and folded queues keep gap-first ordering.
+  - Result: `scripts/train_from_corrections.py --dry-run --json` now recommends the first mixed-case collection batch as `o, c, m, s, u, l, f, p` instead of the static-family batch `I, 0, O, 9, q, g, S, s`.
+  - Verification: `test_train_from_corrections.py` and `test_web_app.py` passed (`129` tests), correction replay stayed `100.00%` (`4/4`), and benchmark summary remained unchanged.
+  - Takeaway: this does not improve model accuracy immediately, but it makes the next user-labeled samples attack the exact lower/mixed-case blockers instead of spreading effort across less urgent labels.

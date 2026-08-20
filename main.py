@@ -175,6 +175,31 @@ MIXEDCASE_PRACTICE_PRIORITY_LABELS = [
     "J",
     "j",
 ]
+# Ordered by refreshed mixed-case per-label accuracy. These labels should be
+# collected first when the correction queue is otherwise tied or nearly tied,
+# because they are the biggest verified blockers for mixed-case exact accuracy.
+MIXEDCASE_CORRECTION_FOCUS_LABELS = [
+    "o",
+    "c",
+    "m",
+    "s",
+    "u",
+    "l",
+    "f",
+    "p",
+    "q",
+    "i",
+    "v",
+    "I",
+    "O",
+    "y",
+    "z",
+    "g",
+    "Z",
+    "k",
+    "V",
+    "x",
+]
 PRACTICE_PRIORITY_LABELS = list(dict.fromkeys(CHARACTER_PRACTICE_PRIORITY_LABELS + MIXEDCASE_PRACTICE_PRIORITY_LABELS))
 PRACTICE_FAMILY_PRIORITY_LABELS = [
     ("1/I/l/i/!/|", list("1Ili|!/")),
@@ -1534,6 +1559,7 @@ def build_correction_coverage_report(
     counts: dict[str, int],
     labels: list[str] = PRACTICE_PRIORITY_LABELS,
     target_per_label: int = PRACTICE_TARGET_PER_LABEL,
+    focus_order: list[str] | None = None,
 ) -> dict[str, object]:
     """Build practice-label coverage data for the browser UI."""
 
@@ -1560,7 +1586,19 @@ def build_correction_coverage_report(
         for index, row in enumerate(rows)
         if not bool(row["ready"])
     ]
-    ranked_rows.sort(key=lambda row: (-int(row["needed"]), int(row["count"]), int(row["rank"])))
+    focus_rank = {label: index for index, label in enumerate(focus_order or [])}
+    if focus_rank:
+        ranked_rows.sort(
+            key=lambda row: (
+                0 if str(row["label"]) in focus_rank else 1,
+                focus_rank.get(str(row["label"]), len(focus_rank) + int(row["rank"])),
+                -int(row["needed"]),
+                int(row["count"]),
+                int(row["rank"]),
+            )
+        )
+    else:
+        ranked_rows.sort(key=lambda row: (-int(row["needed"]), int(row["count"]), int(row["rank"])))
     focus_labels = [str(row["label"]) for row in ranked_rows][:8]
     not_ready_label_list = [str(row["label"]) for row in ranked_rows]
     focus_items = [
@@ -1678,11 +1716,13 @@ def correction_coverage_report(mode: str = "character") -> dict[str, object]:
         mixed_corrections = load_correction_cache(list(MIXEDCASE_LABELS))
         counts = correction_item_label_counts(list(MIXEDCASE_LABELS), mixed_corrections)
         labels = list(filter_priority_labels(DEFAULT_MIXEDCASE_PRIORITY_LABELS, list(MIXEDCASE_LABELS)))
+        focus_order = MIXEDCASE_CORRECTION_FOCUS_LABELS
     else:
         character_labels = load_character_labels()
         counts = exportable_character_correction_counts(character_labels)
         labels = CHARACTER_PRACTICE_PRIORITY_LABELS
-    report = build_correction_coverage_report(counts, labels)
+        focus_order = None
+    report = build_correction_coverage_report(counts, labels, focus_order=focus_order)
     return {**report, "mode": normalized_mode}
 
 

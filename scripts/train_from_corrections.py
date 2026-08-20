@@ -43,6 +43,7 @@ from character_model import saved_benchmark_values
 from character_model import train_character_model
 from main import (
     CHARACTER_PRACTICE_PRIORITY_LABELS,
+    MIXEDCASE_CORRECTION_FOCUS_LABELS,
     MIXEDCASE_PRACTICE_PRIORITY_LABELS,
     PRACTICE_FAMILY_PRIORITY_LABELS,
     PRACTICE_PRIORITY_EVIDENCE,
@@ -381,9 +382,11 @@ def next_needed_labels(
     priority_labels: str,
     target_per_label: int = PRACTICE_TARGET_PER_LABEL,
     limit: int = 8,
+    focus_order: list[str] | tuple[str, ...] | None = None,
 ) -> list[dict[str, int | str]]:
     """Return the highest-need labels to collect next."""
 
+    focus_rank = {label: index for index, label in enumerate(focus_order or [])}
     rows = []
     for index, label in enumerate(dict.fromkeys(priority_labels)):
         count = counts.get(label, 0)
@@ -391,7 +394,18 @@ def next_needed_labels(
         if needed <= 0:
             continue
         rows.append({"label": label, "count": count, "needed": needed, "rank": index})
-    rows.sort(key=lambda item: (-int(item["needed"]), int(item["count"]), int(item["rank"])))
+    if focus_rank:
+        rows.sort(
+            key=lambda item: (
+                0 if str(item["label"]) in focus_rank else 1,
+                focus_rank.get(str(item["label"]), len(focus_rank) + int(item["rank"])),
+                -int(item["needed"]),
+                int(item["count"]),
+                int(item["rank"]),
+            )
+        )
+    else:
+        rows.sort(key=lambda item: (-int(item["needed"]), int(item["count"]), int(item["rank"])))
     return [
         {
             "label": str(item["label"]),
@@ -440,6 +454,7 @@ def not_ready_label_list(
     counts: Counter[str],
     priority_labels: str,
     target_per_label: int = PRACTICE_TARGET_PER_LABEL,
+    focus_order: list[str] | tuple[str, ...] | None = None,
 ) -> list[str]:
     """Return all labels below target, ordered by current collection need."""
 
@@ -451,6 +466,7 @@ def not_ready_label_list(
             priority_labels,
             target_per_label=target_per_label,
             limit=priority_count,
+            focus_order=focus_order,
         )
     ]
 
@@ -595,8 +611,16 @@ def dry_run_report(
     folded_not_ready_labels = not_ready_label_list(folded_counts, folded_priority_labels)
     folded_recommendation = correction_recommendation(folded_readiness, folded_next_needed)
     mixed_readiness = correction_readiness_summary(mixed_counts, mixed_priority_labels)
-    mixed_next_needed = next_needed_labels(mixed_counts, mixed_priority_labels)
-    mixed_not_ready_labels = not_ready_label_list(mixed_counts, mixed_priority_labels)
+    mixed_next_needed = next_needed_labels(
+        mixed_counts,
+        mixed_priority_labels,
+        focus_order=MIXEDCASE_CORRECTION_FOCUS_LABELS,
+    )
+    mixed_not_ready_labels = not_ready_label_list(
+        mixed_counts,
+        mixed_priority_labels,
+        focus_order=MIXEDCASE_CORRECTION_FOCUS_LABELS,
+    )
     mixed_recommendation = correction_recommendation(mixed_readiness, mixed_next_needed)
     queue_recommendations = [
         correction_queue_recommendation(

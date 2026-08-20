@@ -2001,8 +2001,8 @@ class WebAppRenderingTests(unittest.TestCase):
         self.assertIn("readiness", report["folded_alnum"])
         self.assertIn("readiness", report["mixedcase"])
         self.assertEqual(report["summary"]["recommended_queue"], "mixedcase")
-        self.assertEqual(report["summary"]["recommended_label"], "I")
-        self.assertEqual(report["summary"]["recommended_batch_labels"][:3], ["I", "0", "O"])
+        self.assertEqual(report["summary"]["recommended_label"], "o")
+        self.assertEqual(report["summary"]["recommended_batch_labels"][:3], ["o", "c", "m"])
         self.assertEqual(report["queue_recommendations"][0]["queue"], "mixedcase")
 
     def test_correction_coverage_report_can_target_mixedcase_queue(self) -> None:
@@ -2020,7 +2020,7 @@ class WebAppRenderingTests(unittest.TestCase):
 
         self.assertEqual(report["mode"], "mixedcase")
         self.assertEqual([item["label"] for item in report["labels"]], ["s", "O", "V"])
-        self.assertEqual(report["recommended_label"], "O")
+        self.assertEqual(report["recommended_label"], "s")
         self.assertEqual(report["not_ready_label_count"], 3)
 
     def test_correction_coverage_report_rejects_unknown_modes(self) -> None:

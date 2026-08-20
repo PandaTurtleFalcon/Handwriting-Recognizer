@@ -193,6 +193,19 @@ class TrainFromCorrectionsTests(unittest.TestCase):
             ],
         )
 
+    def test_next_needed_labels_can_prioritize_measured_focus_order(self) -> None:
+        """Mixed-case collection should attack verified weak labels first."""
+
+        labels = next_needed_labels(
+            {"o": 3, "c": 0, "I": 0},
+            "Ioc",
+            target_per_label=20,
+            limit=3,
+            focus_order=["o", "c"],
+        )
+
+        self.assertEqual([item["label"] for item in labels], ["o", "c", "I"])
+
     def test_family_coverage_groups_visual_twin_blockers(self) -> None:
         """Dry-run coverage should expose measured visual-twin family gaps."""
 
