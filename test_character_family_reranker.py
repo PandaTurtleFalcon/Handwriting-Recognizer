@@ -277,6 +277,10 @@ class CharacterFamilyRerankerTests(unittest.TestCase):
                     "scripts.probe_character_family_reranker._metrics",
                     side_effect=[base, improved, base, improved, base, improved, base, improved],
                 ),
+                patch(
+                    "scripts.probe_character_family_reranker._prediction_change_summary",
+                    return_value={"changed": 1, "fixed": 1, "broken": 0, "still_wrong_changed": 0},
+                ),
                 patch("scripts.probe_character_family_reranker._file_sha256", return_value="hash"),
             ):
                 report = run_probe(
@@ -350,6 +354,10 @@ class CharacterFamilyRerankerTests(unittest.TestCase):
                     "scripts.probe_character_family_reranker._metrics",
                     side_effect=[base, improved, base, improved, base, improved, base, improved],
                 ),
+                patch(
+                    "scripts.probe_character_family_reranker._prediction_change_summary",
+                    return_value={"changed": 1, "fixed": 1, "broken": 0, "still_wrong_changed": 0},
+                ),
                 patch("scripts.probe_character_family_reranker._file_sha256", return_value="hash"),
                 patch("scripts.probe_character_family_reranker.FAMILY_RERANKER_PATH", deployed_path),
                 patch(
@@ -379,6 +387,62 @@ class CharacterFamilyRerankerTests(unittest.TestCase):
         self.assertFalse(report["promotable"])
         self.assertFalse(report["wrote"])
         self.assertEqual(report["deployed_validation"], {"safe": False, "delta": {"validation_accuracy": 0.0}})
+
+    def test_run_probe_rejects_validation_noops(self) -> None:
+        """A family probe that changes no validation samples should not be accepted."""
+
+        labels = ["1", "I"]
+        images = torch.zeros((8, 1, 32, 32), dtype=torch.float32)
+        targets = torch.tensor([0, 1, 0, 1, 0, 1, 0, 1], dtype=torch.long)
+        metrics = {
+            "validation_accuracy": 80.0,
+            "ambiguity_aware_validation_accuracy": 98.0,
+            "digit_validation_accuracy": 95.0,
+            "letter_validation_accuracy": 93.0,
+            "punctuation_validation_accuracy": 96.0,
+        }
+
+        with (
+            patch("scripts.probe_character_family_reranker.get_device", return_value=torch.device("cpu")),
+            patch(
+                "scripts.probe_character_family_reranker.load_character_model",
+                return_value=(torch.nn.Linear(1, 2), labels),
+            ),
+            patch("scripts.probe_character_family_reranker._character_tensors", return_value=(images, targets, labels)),
+            patch(
+                "scripts.probe_character_family_reranker.stratified_split_indices",
+                return_value=(list(range(6)), list(range(6, 8))),
+            ),
+            patch(
+                "scripts.probe_character_family_reranker._split_calibration",
+                return_value=(torch.arange(2), torch.arange(2, 4), torch.arange(4, 6)),
+            ),
+            patch("scripts.probe_character_family_reranker._model_outputs", return_value=torch.zeros((2, 2))),
+            patch("scripts.probe_character_family_reranker.family_features", return_value=torch.zeros((2, 1))),
+            patch(
+                "scripts.probe_character_family_reranker.train_family_probe",
+                return_value=CharacterFamilyProbe("1I", (0, 1), torch.nn.Linear(1, 2)),
+            ),
+            patch(
+                "scripts.probe_character_family_reranker.apply_family_probe",
+                side_effect=lambda predictions, *_args, **_kwargs: predictions,
+            ),
+            patch("scripts.probe_character_family_reranker._metrics", return_value=metrics),
+        ):
+            report = run_probe(
+                batch_size=2,
+                epochs=1,
+                learning_rate=0.01,
+                families=("1I",),
+                calibration_ratio=0.25,
+                confirmation_ratio=0.5,
+                min_family_delta=0.0,
+                seed=7,
+                hidden_units=0,
+            )
+
+        self.assertEqual(report["families"][0]["rejection_reason"], "validation_no_changes")
+        self.assertFalse(report["promotable"])
 
     def test_run_probe_rejects_family_without_confirmation_gain(self) -> None:
         labels = ["!", "1"]

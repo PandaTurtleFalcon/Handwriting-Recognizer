@@ -855,6 +855,9 @@ def run_probe(
         after = _metrics(candidate_predictions, validation_targets, labels)
         validation_changes = _prediction_change_summary(probe_predictions, candidate_predictions, validation_targets)
         test_passed, test_reason, test_delta = _gate_metrics(before, after, min_family_delta)
+        if int(validation_changes["changed"]) == 0:
+            test_passed = False
+            test_reason = "no_changes"
         if not test_passed:
             reports.append(
                 {
