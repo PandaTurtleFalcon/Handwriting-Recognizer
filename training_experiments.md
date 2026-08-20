@@ -1918,3 +1918,10 @@ restored, so future improvement loops do not repeat known-bad blends.
   - Result: `0` promotable rows. Rejections were `16` selection exact failures, `5` selection digit regressions, and `3` selection letter regressions. The best-looking `!/1Iil|` row had positive confirmation exact (`+0.0667`) but failed selection badly: `66` changes, `15` fixed, `32` broken, and letter accuracy down `0.5157` points.
   - Verification: no model or reranker artifact was written; the benchmark summary stayed unchanged.
   - Takeaway: hard-family support examples do not make the current reranker selective enough. The failure is not lack of hard examples alone; the feature/model form still breaks too many clean validation letters.
+
+- Rejected tiny hard-family character fine-tune:
+  - Pack: generated `tmp/character_hard_family_pack_1ili_0oo_tiny_20260822.pt` with only `20` samples per target label, confidence `<=0.55`, and margin `<=0.05`. It contains `200` real training-split samples for `!/1Iil|` and `0Oo`, including `143` current wrong predictions.
+  - Candidate: reran the character warm-start as gently as possible (`1` epoch, `lr=2e-7`, focal gamma `0.1`, label smoothing `0.01`) with the tiny pack as `--train-only-extra-root` and current deployed floors.
+  - Result: rejected by the same floor pattern as the larger pack. The epoch printed `validation_acc=92.91%`; the best checkpoint report was exact `93.09% < 94.17%`, digit `94.04% < 95.11%`, and letter `92.42% < 93.59%`.
+  - Verification: no candidate checkpoint/labels/exemplars/metrics files were written, and the benchmark summary stayed unchanged.
+  - Takeaway: even tiny ordinary cross-entropy hard-example fine-tuning destabilizes the deployed character model. Do not repeat hard packs as direct CNN fine-tunes; future work needs a separate auxiliary/family head or new real correction data integrated with a safer objective.
