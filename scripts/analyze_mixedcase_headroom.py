@@ -73,6 +73,7 @@ def headroom_report(
     expected_labels: list[str],
     predicted_labels: list[str],
     families: list[frozenset[str]] = MIXEDCASE_AMBIGUITY_GROUPS,
+    target_accuracy: float = 95.0,
 ) -> dict[str, object]:
     """Return exact and oracle-recoverable mixed-case error budgets."""
 
@@ -167,28 +168,36 @@ def headroom_report(
                 "family": family,
                 "cumulative_recoverable_errors": sum(int(item["recoverable_errors"]) for item in family_rows),
                 "cumulative_accuracy": cumulative_accuracy,
+                "reaches_target": cumulative_accuracy >= target_accuracy,
                 "reaches_95": cumulative_accuracy >= 95.0,
             }
         )
 
+    families_to_target = next((row for row in cumulative_rows if bool(row["reaches_target"])), None)
     families_to_95 = next((row for row in cumulative_rows if bool(row["reaches_95"])), None)
     exact_errors = max(len(expected_labels) - exact, 1)
     for row in error_types.values():
         row["error_percent"] = 100.0 * int(row["count"]) / exact_errors
         row["accuracy_gain_if_fixed"] = percent(int(row["count"]))
+    exact_accuracy = percent(exact)
+    case_or_visual_oracle_accuracy = percent(case_or_visual_oracle)
 
     return {
         "total": len(expected_labels),
-        "exact_accuracy": percent(exact),
+        "target_accuracy": target_accuracy,
+        "exact_accuracy": exact_accuracy,
         "case_oracle_accuracy": percent(case_oracle),
         "visual_oracle_accuracy": percent(visual_oracle),
-        "case_or_visual_oracle_accuracy": percent(case_or_visual_oracle),
+        "case_or_visual_oracle_accuracy": case_or_visual_oracle_accuracy,
+        "accuracy_gap_to_target": max(0.0, target_accuracy - exact_accuracy),
+        "case_or_visual_oracle_gap_to_target": max(0.0, target_accuracy - case_or_visual_oracle_accuracy),
         "case_or_visual_recoverable_errors": case_or_visual_oracle - exact,
         "remaining_non_family_errors": len(expected_labels) - case_or_visual_oracle,
         "error_types": error_types,
         "splits": split_rows,
         "families": family_rows,
         "cumulative_family_oracle": cumulative_rows,
+        "families_to_reach_target": families_to_target,
         "families_to_reach_95": families_to_95,
     }
 
@@ -235,9 +244,11 @@ def main() -> None:
 
     parser = argparse.ArgumentParser(description="Analyze mixed-case exact-accuracy headroom.")
     parser.add_argument("--batch-size", type=int, default=4096)
+    parser.add_argument("--target", type=float, default=95.0)
     parser.add_argument("--json", action="store_true")
     args = parser.parse_args()
-    report = analyze_deployed_headroom(batch_size=args.batch_size)
+    expected, predicted = deployed_predictions(args.batch_size)
+    report = headroom_report(expected, predicted, target_accuracy=args.target)
     if args.json:
         print(json.dumps(report, indent=2))
         return
@@ -257,10 +268,10 @@ def main() -> None:
             f"(gain {row['accuracy_gain_if_fixed']:.2f} pts; "
             f"digit {splits['digit']}, upper {splits['upper']}, lower {splits['lower']})"
         )
-    if report["families_to_reach_95"] is not None:
-        threshold = report["families_to_reach_95"]
+    if report["families_to_reach_target"] is not None:
+        threshold = report["families_to_reach_target"]
         print(
-            "families_to_reach_95="
+            "families_to_reach_target="
             f"{','.join(threshold['families'])} "
             f"cumulative_accuracy={threshold['cumulative_accuracy']:.2f}%"
         )

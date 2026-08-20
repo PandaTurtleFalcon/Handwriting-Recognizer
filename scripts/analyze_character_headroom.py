@@ -66,6 +66,7 @@ def headroom_report(
     expected_labels: list[str],
     predicted_labels: list[str],
     families: list[frozenset[str]] = AMBIGUITY_GROUPS,
+    target_accuracy: float = 95.0,
 ) -> dict[str, object]:
     """Return exact and visual-family-recoverable character error budgets."""
 
@@ -136,21 +137,30 @@ def headroom_report(
                 "family": family,
                 "cumulative_recoverable_errors": sum(int(item["recoverable_errors"]) for item in family_rows),
                 "cumulative_accuracy": cumulative_accuracy,
+                "reaches_target": cumulative_accuracy >= target_accuracy,
                 "reaches_95": cumulative_accuracy >= 95.0,
             }
         )
 
+    families_to_target = next((row for row in cumulative_rows if bool(row["reaches_target"])), None)
     families_to_95 = next((row for row in cumulative_rows if bool(row["reaches_95"])), None)
+    exact_accuracy = percent(exact)
+    visual_oracle_accuracy = percent(ambiguity)
 
     return {
         "total": len(expected_labels),
-        "exact_accuracy": percent(exact),
-        "ambiguity_aware_accuracy": percent(ambiguity),
+        "target_accuracy": target_accuracy,
+        "exact_accuracy": exact_accuracy,
+        "ambiguity_aware_accuracy": visual_oracle_accuracy,
+        "visual_oracle_accuracy": visual_oracle_accuracy,
+        "accuracy_gap_to_target": max(0.0, target_accuracy - exact_accuracy),
+        "visual_oracle_gap_to_target": max(0.0, target_accuracy - visual_oracle_accuracy),
         "visual_recoverable_errors": ambiguity - exact,
         "remaining_non_family_errors": len(expected_labels) - ambiguity,
         "splits": splits,
         "families": family_rows,
         "cumulative_family_oracle": cumulative_rows,
+        "families_to_reach_target": families_to_target,
         "families_to_reach_95": families_to_95,
     }
 
@@ -203,9 +213,11 @@ def main() -> None:
 
     parser = argparse.ArgumentParser(description="Analyze character exact-accuracy headroom.")
     parser.add_argument("--batch-size", type=int, default=4096)
+    parser.add_argument("--target", type=float, default=95.0)
     parser.add_argument("--json", action="store_true")
     args = parser.parse_args()
-    report = analyze_deployed_headroom(batch_size=args.batch_size)
+    expected, predicted = deployed_predictions(args.batch_size)
+    report = headroom_report(expected, predicted, target_accuracy=args.target)
     if args.json:
         print(json.dumps(report, indent=2))
         return
@@ -216,6 +228,13 @@ def main() -> None:
     )
     print(f"recoverable_family_errors={report['visual_recoverable_errors']}")
     print(f"remaining_non_family_errors={report['remaining_non_family_errors']}")
+    if report["families_to_reach_target"] is not None:
+        threshold = report["families_to_reach_target"]
+        print(
+            "families_to_reach_target="
+            f"{','.join(threshold['families'])} "
+            f"cumulative_accuracy={threshold['cumulative_accuracy']:.2f}%"
+        )
     for row in report["families"][:10]:
         print(f"  {row['family']}: {row['recoverable_errors']} recoverable errors")
 

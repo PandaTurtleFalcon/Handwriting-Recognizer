@@ -1832,3 +1832,10 @@ restored, so future improvement loops do not repeat known-bad blends.
   - Result: `scripts/summarize_benchmarks.py --target 95 --include-app-hardcases` now shows every tracked all-font app hardcase gate passing: display exact `100.0%`, raw exact `98.8889%`, compact raw-label exact `98.8889%`, and compact raw-label ambiguity `100.0%`.
   - Verification: `test_summarize_benchmarks.py` and `test_evaluate_hardcases.py` passed (`45` tests), `scripts/summarize_benchmarks.py` compiled, and `git diff --check` passed.
   - Takeaway: this does not solve the remaining model gaps. It removes an unfair app-level scoring row so the remaining red gates are the real ones: mixed-case exact/upper/lower and character exact/letter.
+
+- Target-aware headroom roadmap fields:
+  - Tooling: `scripts/analyze_character_headroom.py` and `scripts/analyze_mixedcase_headroom.py` now accept `--target` and emit stable top-level planning fields: `target_accuracy`, `accuracy_gap_to_target`, oracle gap fields, and `families_to_reach_target`. The existing `families_to_reach_95` field remains for compatibility.
+  - Character result: current character exact is `94.1477%`, gap to `95` is `0.8523` points, and the first visual family that can cross the target under oracle recovery is `!/1Iil|`, reaching `95.6037%`.
+  - Mixed-case result: current mixed-case exact is `87.7797%`, gap to `95` is `7.2203` points, and the cumulative visual-family oracle first crosses target with `!/1Iil|,0Oo,5Ss,MNmn,9gq,Uuv`, reaching `95.3247%`.
+  - Verification: `test_character_headroom.py` and `test_mixedcase_headroom.py` passed (`6` tests), and both refreshed analyzer JSON outputs were written under `tmp/`.
+  - Takeaway: this is not a metric promotion, but it gives the automation a precise target-selection surface. Character work should prioritize `!/1Iil|`; mixed-case must solve the top six visual families together or use a materially different representation.
