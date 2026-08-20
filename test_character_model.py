@@ -22,6 +22,7 @@ from character_model import (
     _punctuation_shape_label,
     _record_with_legacy_correction_boxes,
     _split_touching_character_regions,
+    attach_character_family_reranker,
     attach_character_pair_rules,
     attach_character_logit_bias,
     build_or_load_combined_cache,
@@ -32,6 +33,7 @@ from character_model import (
     character_loss_weights,
     benchmark_gate_failures,
     FocalCrossEntropyLoss,
+    FamilyRerankedCharacterModel,
     labels_match_with_ambiguity,
     load_extra_character_cache,
     load_correction_memory_exemplars,
@@ -1183,6 +1185,68 @@ class CharacterPostprocessingTests(unittest.TestCase):
         self.assertFalse(_letter_should_override("4", 0.98, "Y", 0.90, False))
         self.assertTrue(_letter_should_override("5", 0.80, "S", 0.93, False))
         self.assertFalse(_letter_should_override("5", 0.80, "S", 0.99, True))
+
+    def test_character_family_reranker_replaces_only_gated_family_predictions(self) -> None:
+        """Accepted character-family probes should adjust logits after base inference."""
+
+        class FixedBase(torch.nn.Module):
+            def forward(self, images: torch.Tensor) -> torch.Tensor:
+                outputs = torch.zeros((images.shape[0], 3), dtype=torch.float32)
+                outputs[:, 0] = 2.0
+                return outputs
+
+        probe = torch.nn.Linear(28, 2)
+        with torch.no_grad():
+            probe.weight.zero_()
+            probe.bias[:] = torch.tensor([0.0, 5.0])
+        model = FamilyRerankedCharacterModel(
+            FixedBase(),
+            ["1", "I", "O"],
+            [
+                {
+                    "family_indices": [0, 1],
+                    "input_dim": 28,
+                    "state_dict": probe.state_dict(),
+                    "source_groups": ["digit"],
+                    "probe_confidence": 0.0,
+                    "probe_margin": 0.0,
+                }
+            ],
+        )
+
+        outputs = model(torch.zeros((2, 1, 32, 32), dtype=torch.float32))
+
+        self.assertEqual(outputs.argmax(dim=1).tolist(), [1, 1])
+
+    def test_attach_character_family_reranker_rejects_stale_hash(self) -> None:
+        """Stale character-family artifacts should not alter loaded models."""
+
+        with tempfile.TemporaryDirectory() as directory:
+            weights_path = Path(directory) / "character.pt"
+            artifact_path = Path(directory) / "character_family_reranker.pt"
+            weights_path.write_bytes(b"current")
+            torch.save(
+                {
+                    "enabled": True,
+                    "labels": ["1", "I"],
+                    "checkpoint_sha256": "old",
+                    "probes": [],
+                },
+                artifact_path,
+            )
+            model = torch.nn.Linear(1, 2)
+
+            attached = attach_character_family_reranker(
+                model,
+                ["1", "I"],
+                torch.device("cpu"),
+                artifact_path=artifact_path,
+                weights_path=weights_path,
+                logit_bias_path=Path(directory) / "missing-bias.pt",
+                pair_rules_path=Path(directory) / "missing-rules.json",
+            )
+
+            self.assertIs(attached, model)
 
     def test_letter_model_only_replaces_same_alphabetic_label(self) -> None:
         """Uppercase-only letter votes should not erase case or change letters."""

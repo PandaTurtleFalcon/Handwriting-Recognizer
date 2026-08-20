@@ -20,7 +20,12 @@ from character_model import (  # noqa: E402
     CHAR_MEAN,
     CHAR_STD,
     DATASET_ROOT,
+    FAMILY_RERANKER_PATH,
+    LOGIT_BIAS_PATH,
+    PAIR_RULES_PATH,
+    WEIGHTS_PATH,
     build_or_load_combined_cache,
+    _file_sha256,
     labels_match_with_ambiguity,
     load_character_model,
     load_extra_character_tensors,
@@ -340,6 +345,46 @@ def train_family_probe(
     return CharacterFamilyProbe(name=name, indices=indices, model=model.eval())
 
 
+def _current_artifact_hashes() -> dict[str, str]:
+    """Return file hashes that make a reranker safe to attach later."""
+
+    hashes = {"checkpoint_sha256": _file_sha256(WEIGHTS_PATH)}
+    if LOGIT_BIAS_PATH.exists():
+        hashes["logit_bias_sha256"] = _file_sha256(LOGIT_BIAS_PATH)
+    if PAIR_RULES_PATH.exists():
+        hashes["pair_rules_sha256"] = _file_sha256(PAIR_RULES_PATH)
+    return {key: value for key, value in hashes.items() if value}
+
+
+def _compatible_existing_family_probes(output_path: Path, labels: list[str]) -> list[dict[str, object]]:
+    """Read existing probes only when their artifact hashes still match."""
+
+    if not output_path.exists():
+        return []
+    try:
+        artifact = torch.load(output_path, map_location="cpu", weights_only=True)
+    except (OSError, RuntimeError, ValueError):
+        return []
+    if not isinstance(artifact, dict) or list(artifact.get("labels", [])) != list(labels):
+        return []
+    for key, expected in _current_artifact_hashes().items():
+        if artifact.get(key) != expected:
+            return []
+    probes = artifact.get("probes", [])
+    return [probe for probe in probes if isinstance(probe, dict)] if isinstance(probes, list) else []
+
+
+def merge_family_probe_artifacts(
+    existing: list[dict[str, object]],
+    accepted: list[dict[str, object]],
+) -> list[dict[str, object]]:
+    """Replace matching families while preserving unrelated accepted probes."""
+
+    accepted_families = {str(probe.get("family", "")) for probe in accepted}
+    kept = [probe for probe in existing if str(probe.get("family", "")) not in accepted_families]
+    return [*kept, *accepted]
+
+
 def apply_family_probe(
     predictions: torch.Tensor,
     images: torch.Tensor,
@@ -602,6 +647,8 @@ def run_probe(
     max_probe_train_samples: int | None = None,
     mini_batch_size: int | None = None,
     probe_data: CharacterProbeData | None = None,
+    output_path: Path = FAMILY_RERANKER_PATH,
+    write: bool = False,
 ) -> dict[str, object]:
     """Train confirmed family rerankers and evaluate them on validation."""
 
@@ -642,6 +689,7 @@ def run_probe(
 
     reports = []
     skipped = []
+    accepted_probe_artifacts: list[dict[str, object]] = []
     for family in families:
         indices_tuple = family_indices(family, labels)
         if len(indices_tuple) < 2:
@@ -798,6 +846,22 @@ def run_probe(
                 "changes": validation_changes,
             }
         )
+        accepted_probe_artifacts.append(
+            {
+                "family": probe.name,
+                "family_indices": list(probe.indices),
+                "state_dict": probe.model.state_dict(),
+                "input_dim": int(next(probe.model.parameters()).shape[1]),
+                "hidden_units": hidden_units,
+                "source_groups": list(source_groups) if source_groups is not None else ["digit", "letter", "punctuation"],
+                "probe_confidence": probe_confidence,
+                "probe_margin": probe_margin,
+                "include_pixel_features": include_pixel_features,
+                "include_embedding_features": include_embedding_features,
+                "max_probe_train_samples": max_probe_train_samples,
+                "mini_batch_size": mini_batch_size,
+            }
+        )
         probe_predictions = candidate_predictions
 
     base_metrics = _metrics(base_predictions, validation_targets, labels)
@@ -806,6 +870,25 @@ def run_probe(
         reranked_metrics["validation_accuracy"] > base_metrics["validation_accuracy"]
         and all(reranked_metrics[metric] >= base_metrics[metric] for metric in PROTECTED_METRICS)
     )
+    wrote = False
+    if write and promotable and accepted_probe_artifacts:
+        merged_probe_artifacts = merge_family_probe_artifacts(
+            _compatible_existing_family_probes(output_path, labels),
+            accepted_probe_artifacts,
+        )
+        torch.save(
+            {
+                "enabled": True,
+                "source": "character_family_reranker_probe",
+                "labels": labels,
+                "probes": merged_probe_artifacts,
+                "best_checkpoint": reranked_metrics,
+                "base_checkpoint": base_metrics,
+                **_current_artifact_hashes(),
+            },
+            output_path,
+        )
+        wrote = True
     return {
         "families": reports,
         "skipped": skipped,
@@ -813,6 +896,7 @@ def run_probe(
         "reranked": reranked_metrics,
         "validation_delta": reranked_metrics["validation_accuracy"] - base_metrics["validation_accuracy"],
         "promotable": promotable,
+        "wrote": wrote,
         "fit_samples": int(fit_targets.numel()),
         "train_only_extra_samples": data.train_only_count,
         "selection_samples": int(selection_targets.numel()),
@@ -868,6 +952,8 @@ def main() -> None:
         default=[],
         help="Extra ASCII folder or .pt tensor cache used only for fitting rerankers, never selection/validation.",
     )
+    parser.add_argument("--output-path", type=Path, default=FAMILY_RERANKER_PATH)
+    parser.add_argument("--write", action="store_true")
     args = parser.parse_args()
     print(
         json.dumps(
@@ -889,6 +975,8 @@ def main() -> None:
                 probe_margin=args.probe_margin,
                 max_probe_train_samples=args.max_probe_train_samples,
                 mini_batch_size=args.mini_batch_size,
+                output_path=args.output_path,
+                write=args.write,
             ),
             indent=2,
         )

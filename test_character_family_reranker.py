@@ -1,3 +1,4 @@
+import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -17,6 +18,7 @@ from scripts.probe_character_family_reranker import (
     parse_label_groups,
     parse_families,
     pixel_features,
+    merge_family_probe_artifacts,
     run_probe,
     train_family_probe,
 )
@@ -216,6 +218,84 @@ class CharacterFamilyRerankerTests(unittest.TestCase):
         )
 
         self.assertIsNone(probe)
+
+    def test_merge_family_probe_artifacts_replaces_same_family(self) -> None:
+        """New accepted probes should replace older weights for the same family."""
+
+        existing = [{"family": "1I", "version": "old"}, {"family": "0O", "version": "kept"}]
+        accepted = [{"family": "1I", "version": "new"}]
+
+        self.assertEqual(
+            merge_family_probe_artifacts(existing, accepted),
+            [{"family": "0O", "version": "kept"}, {"family": "1I", "version": "new"}],
+        )
+
+    def test_run_probe_writes_promotable_family_reranker_artifact(self) -> None:
+        """Promotable character probes should be saveable as hash-checked artifacts."""
+
+        labels = ["1", "I"]
+        images = torch.zeros((8, 1, 32, 32), dtype=torch.float32)
+        targets = torch.tensor([0, 1, 0, 1, 0, 1, 0, 1], dtype=torch.long)
+        probe_model = torch.nn.Linear(1, 2)
+        base = {
+            "validation_accuracy": 80.0,
+            "ambiguity_aware_validation_accuracy": 98.0,
+            "digit_validation_accuracy": 95.0,
+            "letter_validation_accuracy": 93.0,
+            "punctuation_validation_accuracy": 96.0,
+        }
+        improved = {**base, "validation_accuracy": 80.2}
+
+        with tempfile.TemporaryDirectory() as directory:
+            output_path = Path(directory) / "character_family_reranker.pt"
+            with (
+                patch("scripts.probe_character_family_reranker.get_device", return_value=torch.device("cpu")),
+                patch("scripts.probe_character_family_reranker.load_character_model", return_value=(torch.nn.Linear(1, 2), labels)),
+                patch("scripts.probe_character_family_reranker._character_tensors", return_value=(images, targets, labels)),
+                patch(
+                    "scripts.probe_character_family_reranker.stratified_split_indices",
+                    return_value=(list(range(6)), list(range(6, 8))),
+                ),
+                patch(
+                    "scripts.probe_character_family_reranker._split_calibration",
+                    return_value=(torch.arange(2), torch.arange(2, 4), torch.arange(4, 6)),
+                ),
+                patch("scripts.probe_character_family_reranker._model_outputs", return_value=torch.zeros((2, 2))),
+                patch("scripts.probe_character_family_reranker.family_features", return_value=torch.zeros((2, 1))),
+                patch(
+                    "scripts.probe_character_family_reranker.train_family_probe",
+                    return_value=CharacterFamilyProbe("1I", (0, 1), probe_model),
+                ),
+                patch(
+                    "scripts.probe_character_family_reranker.apply_family_probe",
+                    side_effect=lambda predictions, *_args, **_kwargs: predictions,
+                ),
+                patch(
+                    "scripts.probe_character_family_reranker._metrics",
+                    side_effect=[base, improved, base, improved, base, improved, base, improved],
+                ),
+                patch("scripts.probe_character_family_reranker._file_sha256", return_value="hash"),
+            ):
+                report = run_probe(
+                    batch_size=2,
+                    epochs=1,
+                    learning_rate=0.01,
+                    families=("1I",),
+                    calibration_ratio=0.25,
+                    confirmation_ratio=0.5,
+                    min_family_delta=0.01,
+                    seed=7,
+                    hidden_units=0,
+                    output_path=output_path,
+                    write=True,
+                )
+
+            artifact = torch.load(output_path, map_location="cpu", weights_only=True)
+
+        self.assertTrue(report["wrote"])
+        self.assertEqual(artifact["labels"], labels)
+        self.assertEqual(artifact["probes"][0]["family"], "1I")
+        self.assertEqual(artifact["checkpoint_sha256"], "hash")
 
     def test_run_probe_rejects_family_without_confirmation_gain(self) -> None:
         labels = ["!", "1"]

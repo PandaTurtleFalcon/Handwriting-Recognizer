@@ -11,6 +11,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import pickle
 import random
 import shutil
 import threading
@@ -45,6 +46,7 @@ LABELS_PATH = PROJECT_DIR / "character_labels.json"
 EXEMPLARS_PATH = PROJECT_DIR / "character_exemplars.pt"
 LOGIT_BIAS_PATH = PROJECT_DIR / "character_logit_bias.pt"
 PAIR_RULES_PATH = PROJECT_DIR / "character_pair_rules.json"
+FAMILY_RERANKER_PATH = PROJECT_DIR / "character_family_reranker.pt"
 CORRECTIONS_PATH = PROJECT_DIR / "data" / "corrections" / "corrections.jsonl"
 CORRECTION_UPLOAD_DIR = PROJECT_DIR / "data" / "corrections" / "uploads"
 CHARACTER_ARTIFACT_PATHS = (
@@ -54,6 +56,7 @@ CHARACTER_ARTIFACT_PATHS = (
     EXEMPLARS_PATH,
     LOGIT_BIAS_PATH,
     PAIR_RULES_PATH,
+    FAMILY_RERANKER_PATH,
 )
 DEFAULT_CHARACTER_BENCHMARK_GATES = (
     "character_exact",
@@ -1336,6 +1339,7 @@ def load_character_model(
     device: torch.device | None = None,
     logit_bias_path: Path | None = LOGIT_BIAS_PATH,
     pair_rules_path: Path | None = PAIR_RULES_PATH,
+    family_reranker_path: Path | None = FAMILY_RERANKER_PATH,
 ) -> tuple[nn.Module, list[str]]:
     """Load the curated character classifier and optional exemplar bank."""
 
@@ -1350,6 +1354,16 @@ def load_character_model(
         attach_character_logit_bias(model, labels, selected_device, logit_bias_path, weights_path)
     if pair_rules_path is not None:
         attach_character_pair_rules(model, labels, selected_device, pair_rules_path, weights_path)
+    if family_reranker_path is not None and logit_bias_path is not None and pair_rules_path is not None:
+        model = attach_character_family_reranker(
+            model,
+            labels,
+            selected_device,
+            family_reranker_path,
+            weights_path,
+            logit_bias_path,
+            pair_rules_path,
+        )
     if EXEMPLARS_PATH.exists():
         exemplars = torch.load(EXEMPLARS_PATH, map_location="cpu", weights_only=True)
         if list(exemplars.get("labels", [])) == labels:
@@ -1363,6 +1377,270 @@ def load_character_model(
         model.correction_memory_signature = _correction_memory_signature()
     model.eval()
     return model, labels
+
+
+def _character_group(label: str) -> str:
+    """Return the broad benchmark group for one character label."""
+
+    if label.isdigit():
+        return "digit"
+    if label.isalpha():
+        return "letter"
+    return "punctuation"
+
+
+def _character_geometry_features(images: torch.Tensor) -> torch.Tensor:
+    """Extract compact shape features matching the character-family probe."""
+
+    foreground = (images.squeeze(1) * CHAR_STD + CHAR_MEAN).clamp(0.0, 1.0)
+    height_px = foreground.shape[1]
+    width_px = foreground.shape[2]
+    half_h = max(1, height_px // 2)
+    half_w = max(1, width_px // 2)
+    mask = foreground > 0.18
+    rows = torch.linspace(0.0, 1.0, height_px, dtype=torch.float32, device=images.device).view(1, -1, 1)
+    cols = torch.linspace(0.0, 1.0, width_px, dtype=torch.float32, device=images.device).view(1, 1, -1)
+    mass = foreground.sum(dim=(1, 2)).clamp_min(1e-6)
+    binary_mass = mask.float().sum(dim=(1, 2)).clamp_min(1.0)
+    row_weight = (foreground * rows).sum(dim=(1, 2)) / mass
+    col_weight = (foreground * cols).sum(dim=(1, 2)) / mass
+    row_var = (foreground * (rows - row_weight.view(-1, 1, 1)).pow(2)).sum(dim=(1, 2)) / mass
+    col_var = (foreground * (cols - col_weight.view(-1, 1, 1)).pow(2)).sum(dim=(1, 2)) / mass
+    any_row = mask.any(dim=2)
+    any_col = mask.any(dim=1)
+    box_height = any_row.float().sum(dim=1) / height_px
+    box_width = any_col.float().sum(dim=1) / width_px
+    density = mass / binary_mass
+    aspect = box_width / box_height.clamp_min(1e-6)
+    top_mass = foreground[:, :half_h, :].sum(dim=(1, 2)) / mass
+    bottom_mass = foreground[:, half_h:, :].sum(dim=(1, 2)) / mass
+    left_mass = foreground[:, :, :half_w].sum(dim=(1, 2)) / mass
+    right_mass = foreground[:, :, half_w:].sum(dim=(1, 2)) / mass
+    quadrants = torch.stack(
+        (
+            foreground[:, :half_h, :half_w].sum(dim=(1, 2)) / mass,
+            foreground[:, :half_h, half_w:].sum(dim=(1, 2)) / mass,
+            foreground[:, half_h:, :half_w].sum(dim=(1, 2)) / mass,
+            foreground[:, half_h:, half_w:].sum(dim=(1, 2)) / mass,
+        ),
+        dim=1,
+    )
+    vertical_symmetry = (foreground - torch.flip(foreground, dims=(2,))).abs().mean(dim=(1, 2))
+    horizontal_symmetry = (foreground - torch.flip(foreground, dims=(1,))).abs().mean(dim=(1, 2))
+    center_row = mask[:, height_px // 2, :].float()
+    center_col = mask[:, :, width_px // 2].float()
+    row_transitions = (center_row[:, 1:] != center_row[:, :-1]).float().sum(dim=1) / width_px
+    col_transitions = (center_col[:, 1:] != center_col[:, :-1]).float().sum(dim=1) / height_px
+    inner = foreground[:, height_px // 4 : (3 * height_px) // 4, width_px // 4 : (3 * width_px) // 4]
+    inner_mass = inner.sum(dim=(1, 2)) / mass
+    return torch.cat(
+        (
+            torch.stack(
+                (
+                    mass / foreground[0].numel(),
+                    density,
+                    row_weight,
+                    col_weight,
+                    row_var,
+                    col_var,
+                    box_height,
+                    box_width,
+                    aspect,
+                    top_mass,
+                    bottom_mass,
+                    left_mass,
+                    right_mass,
+                    vertical_symmetry,
+                    horizontal_symmetry,
+                    row_transitions,
+                    col_transitions,
+                    inner_mass,
+                ),
+                dim=1,
+            ),
+            quadrants,
+        ),
+        dim=1,
+    )
+
+
+def _character_family_features(
+    images: torch.Tensor,
+    outputs: torch.Tensor,
+    indices: tuple[int, ...],
+    include_pixel_features: bool = False,
+    embedding_outputs: torch.Tensor | None = None,
+) -> torch.Tensor:
+    """Build deployed reranker features for one character visual family."""
+
+    family_logits = outputs[:, list(indices)]
+    family_probs = family_logits.softmax(dim=1)
+    top2 = outputs.topk(2, dim=1).values
+    global_features = torch.stack((outputs.max(dim=1).values, top2[:, 0] - top2[:, 1]), dim=1)
+    parts = [family_logits, family_probs, global_features, _character_geometry_features(images)]
+    if include_pixel_features:
+        pixels = torch.nn.functional.interpolate(
+            (images * CHAR_STD + CHAR_MEAN).clamp(0.0, 1.0),
+            size=(12, 12),
+            mode="bilinear",
+            align_corners=False,
+        )
+        parts.append(pixels.flatten(start_dim=1).float())
+    if embedding_outputs is not None:
+        parts.append(torch.nn.functional.normalize(embedding_outputs.float(), dim=1))
+    return torch.cat(parts, dim=1).float()
+
+
+def _character_embedding_features(model: nn.Module, inputs: torch.Tensor) -> torch.Tensor | None:
+    """Return character penultimate activations when the checkpoint exposes them."""
+
+    model = getattr(model, "base_model", model)
+    network = getattr(model, "network", None)
+    if isinstance(network, nn.Sequential) and len(network) >= 2:
+        modules = list(network.children())
+        if isinstance(modules[-1], nn.Linear):
+            return nn.Sequential(*modules[:-1]).to(inputs.device).eval()(inputs).flatten(start_dim=1)
+    features = getattr(model, "features", None)
+    classifier = getattr(model, "classifier", None)
+    if isinstance(features, nn.Sequential) and isinstance(classifier, nn.Sequential) and len(classifier) >= 2:
+        modules = list(classifier.children())
+        if isinstance(modules[-1], nn.Linear):
+            extractor = nn.Sequential(features, *modules[:-1]).to(inputs.device).eval()
+            return extractor(inputs).flatten(start_dim=1)
+    return None
+
+
+class FamilyRerankedCharacterModel(nn.Module):
+    """Apply accepted visual-family probes after calibrated character inference."""
+
+    def __init__(self, base_model: nn.Module, labels: list[str], probes: list[dict[str, object]]) -> None:
+        super().__init__()
+        self.base_model = base_model
+        self.labels = list(labels)
+        self.probes = nn.ModuleList()
+        self.probe_configs: list[dict[str, object]] = []
+        for probe in probes:
+            indices = tuple(int(index) for index in probe.get("family_indices", []))
+            input_dim = int(probe.get("input_dim", 0))
+            hidden_units = int(probe.get("hidden_units", 0))
+            if len(indices) < 2 or input_dim <= 0:
+                continue
+            module: nn.Module
+            if hidden_units > 0:
+                module = nn.Sequential(nn.Linear(input_dim, hidden_units), nn.ReLU(), nn.Linear(hidden_units, len(indices)))
+            else:
+                module = nn.Linear(input_dim, len(indices))
+            state = probe.get("state_dict")
+            if not isinstance(state, dict):
+                continue
+            module.load_state_dict(state)
+            module.eval()
+            self.probes.append(module)
+            self.probe_configs.append(
+                {
+                    "family_indices": indices,
+                    "source_groups": tuple(str(group) for group in probe.get("source_groups", ("digit", "letter", "punctuation"))),
+                    "probe_confidence": float(probe.get("probe_confidence", 0.0)),
+                    "probe_margin": float(probe.get("probe_margin", 0.0)),
+                    "include_pixel_features": bool(probe.get("include_pixel_features", False)),
+                    "include_embedding_features": bool(probe.get("include_embedding_features", False)),
+                }
+            )
+
+    def forward(self, images: torch.Tensor) -> torch.Tensor:
+        base_outputs = self.base_model(images)
+        outputs = base_outputs.clone()
+        predictions = outputs.argmax(dim=1)
+        row_max = outputs.max(dim=1).values + 1e-4
+        embedding_outputs = (
+            _character_embedding_features(self.base_model, images)
+            if any(bool(config["include_embedding_features"]) for config in self.probe_configs)
+            else None
+        )
+        label_groups = [_character_group(label) for label in self.labels]
+        for module, config in zip(self.probes, self.probe_configs):
+            family_indices = config["family_indices"]
+            current_in_family = torch.zeros_like(predictions, dtype=torch.bool)
+            for family_index in family_indices:
+                current_in_family |= predictions == family_index
+            source_groups = set(config["source_groups"])
+            if source_groups:
+                allowed = torch.tensor(
+                    [group in source_groups for group in label_groups],
+                    dtype=torch.bool,
+                    device=images.device,
+                )
+                current_in_family &= allowed[predictions]
+            if not bool(current_in_family.any()):
+                continue
+            features = _character_family_features(
+                images,
+                base_outputs,
+                family_indices,
+                include_pixel_features=bool(config["include_pixel_features"]),
+                embedding_outputs=embedding_outputs if bool(config["include_embedding_features"]) else None,
+            )
+            logits = module(features[current_in_family])
+            probabilities = logits.softmax(dim=1)
+            top2 = probabilities.topk(min(2, probabilities.shape[1]), dim=1)
+            confidence = top2.values[:, 0]
+            margin = top2.values[:, 0] - top2.values[:, 1] if top2.values.shape[1] > 1 else torch.ones_like(confidence)
+            replace_mask = (confidence >= config["probe_confidence"]) & (margin >= config["probe_margin"])
+            replacements = torch.tensor(
+                [family_indices[int(index)] for index in top2.indices[:, 0].tolist()],
+                dtype=torch.long,
+                device=images.device,
+            )
+            candidate_indices = torch.where(current_in_family)[0]
+            selected_indices = candidate_indices[replace_mask]
+            selected_replacements = replacements[replace_mask]
+            if not int(selected_indices.numel()):
+                continue
+            outputs[selected_indices, selected_replacements] = row_max[selected_indices]
+            predictions[selected_indices] = selected_replacements
+        return outputs
+
+
+def attach_character_family_reranker(
+    model: nn.Module,
+    labels: list[str],
+    device: torch.device,
+    artifact_path: Path = FAMILY_RERANKER_PATH,
+    weights_path: Path = WEIGHTS_PATH,
+    logit_bias_path: Path = LOGIT_BIAS_PATH,
+    pair_rules_path: Path = PAIR_RULES_PATH,
+) -> nn.Module:
+    """Wrap a character model with accepted visual-family rerankers."""
+
+    if not artifact_path.exists():
+        return model
+    try:
+        artifact = torch.load(artifact_path, map_location=device, weights_only=True)
+    except (OSError, RuntimeError, ValueError, pickle.UnpicklingError):
+        return model
+    if not isinstance(artifact, dict) or not artifact.get("enabled", True):
+        return model
+    if list(artifact.get("labels", [])) != list(labels):
+        return model
+    if not _artifact_hash_matches(artifact, "checkpoint_sha256", weights_path):
+        return model
+    if not _artifact_dependency_hash_matches(artifact, "logit_bias_sha256", logit_bias_path):
+        return model
+    if not _artifact_dependency_hash_matches(artifact, "pair_rules_sha256", pair_rules_path):
+        return model
+    probes = artifact.get("probes", [])
+    if not isinstance(probes, list) or not probes:
+        return model
+    valid_probes = [probe for probe in probes if isinstance(probe, dict)]
+    if not valid_probes:
+        return model
+    wrapped = FamilyRerankedCharacterModel(model, labels, valid_probes)
+    if not wrapped.probes:
+        return model
+    wrapped.to(device)
+    wrapped.eval()
+    wrapped.character_family_reranker = artifact  # type: ignore[attr-defined]
+    return wrapped
 
 
 def attach_character_logit_bias(
@@ -1455,12 +1733,28 @@ def attach_character_pair_rules(
 def _artifact_matches_checkpoint(artifact: object, weights_path: Path) -> bool:
     """Reject fingerprinted calibration artifacts for a different checkpoint."""
 
+    return _artifact_hash_matches(artifact, "checkpoint_sha256", weights_path)
+
+
+def _artifact_hash_matches(artifact: object, key: str, weights_path: Path) -> bool:
+    """Return whether an artifact hash field matches a checkpoint path."""
+
     if not isinstance(artifact, dict):
         return False
-    expected = artifact.get("checkpoint_sha256")
+    expected = artifact.get(key)
     if not expected:
         return True
     return expected == _file_sha256(weights_path)
+
+
+def _artifact_dependency_hash_matches(artifact: object, key: str, dependency_path: Path) -> bool:
+    """Require matching dependency hashes when optional artifacts exist."""
+
+    if not dependency_path.exists():
+        return not isinstance(artifact, dict) or not artifact.get(key)
+    if not isinstance(artifact, dict) or not artifact.get(key):
+        return False
+    return artifact.get(key) == _file_sha256(dependency_path)
 
 
 def _file_sha256(path: Path) -> str | None:
