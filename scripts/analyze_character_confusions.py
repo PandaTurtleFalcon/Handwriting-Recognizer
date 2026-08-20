@@ -7,6 +7,7 @@ import json
 import sys
 from collections import Counter, defaultdict
 from pathlib import Path
+from typing import Iterable
 
 PROJECT_DIR = Path(__file__).resolve().parents[1]
 if str(PROJECT_DIR) not in sys.path:
@@ -19,6 +20,10 @@ get_device = None
 load_character_model = None
 train_test_split = None
 match_with_ambiguity = None
+
+DEFAULT_VISUAL_FAMILIES = ("!/1Iil|", "0Oo", "5Ss", "Cc", "Uuv", "Pp", "2Zz")
+CONFIDENCE_BANDS = ((0.7, "<0.70"), (0.9, "0.70-0.90"), (float("inf"), ">=0.90"))
+MARGIN_BANDS = ((0.05, "<0.05"), (0.15, "0.05-0.15"), (0.35, "0.15-0.35"), (float("inf"), ">=0.35"))
 
 
 def labels_match_with_ambiguity(expected: str, predicted: str) -> bool:
@@ -43,6 +48,24 @@ def _group(label: str) -> str:
     return "punctuation"
 
 
+def _band_name(value: float, bands: Iterable[tuple[float, str]]) -> str:
+    """Return the first named bucket whose upper bound contains value."""
+
+    for upper_bound, label in bands:
+        if value < upper_bound:
+            return label
+    return "unknown"
+
+
+def parse_families(value: str | None) -> tuple[str, ...]:
+    """Parse comma-separated visual-family labels for detailed diagnostics."""
+
+    if value is None:
+        return DEFAULT_VISUAL_FAMILIES
+    families = tuple(part.strip() for part in value.split(",") if part.strip())
+    return families or DEFAULT_VISUAL_FAMILIES
+
+
 def _metric_extra_roots() -> list[Path]:
     """Return extra roots used by the saved character metrics, when available."""
 
@@ -52,10 +75,78 @@ def _metric_extra_roots() -> list[Path]:
     return [Path(path) for path in metrics.get("extra_roots", []) if Path(path).exists()]
 
 
+def family_error_details(
+    expected_labels: list[str],
+    predicted_labels: list[str],
+    confidences: list[float],
+    margins: list[float],
+    families: tuple[str, ...] = DEFAULT_VISUAL_FAMILIES,
+    top: int = 12,
+) -> list[dict[str, object]]:
+    """Summarize exact misses whose expected/predicted labels share a family."""
+
+    details: list[dict[str, object]] = []
+    for family in families:
+        members = set(dict.fromkeys(family))
+        pair_counts: Counter[tuple[str, str]] = Counter()
+        split_counts: Counter[str] = Counter()
+        confidence_counts: Counter[str] = Counter()
+        margin_counts: Counter[str] = Counter()
+        confidence_total = 0.0
+        margin_total = 0.0
+        for expected, predicted, confidence, margin in zip(
+            expected_labels,
+            predicted_labels,
+            confidences,
+            margins,
+        ):
+            if expected == predicted or expected not in members or predicted not in members:
+                continue
+            pair_counts[(expected, predicted)] += 1
+            split_counts[_group(expected)] += 1
+            confidence_counts[_band_name(float(confidence), CONFIDENCE_BANDS)] += 1
+            margin_counts[_band_name(float(margin), MARGIN_BANDS)] += 1
+            confidence_total += float(confidence)
+            margin_total += float(margin)
+        recoverable = sum(pair_counts.values())
+        if not recoverable:
+            details.append(
+                {
+                    "family": family,
+                    "recoverable_errors": 0,
+                    "split_recoverable_errors": {},
+                    "confidence_bands": {},
+                    "margin_bands": {},
+                    "mean_confidence": None,
+                    "mean_margin": None,
+                    "top_pairs": [],
+                }
+            )
+            continue
+        details.append(
+            {
+                "family": family,
+                "recoverable_errors": recoverable,
+                "split_recoverable_errors": dict(split_counts),
+                "confidence_bands": dict(confidence_counts),
+                "margin_bands": dict(margin_counts),
+                "mean_confidence": confidence_total / recoverable,
+                "mean_margin": margin_total / recoverable,
+                "top_pairs": [
+                    {"expected": expected, "predicted": predicted, "count": count}
+                    for (expected, predicted), count in pair_counts.most_common(top)
+                ],
+            }
+        )
+    details.sort(key=lambda item: int(item["recoverable_errors"]), reverse=True)
+    return details
+
+
 def analyze_confusions(
     batch_size: int = 256,
     top: int = 25,
     extra_roots: list[Path] | None = None,
+    families: tuple[str, ...] = DEFAULT_VISUAL_FAMILIES,
 ) -> dict[str, object]:
     """Evaluate the deployed character model on its validation split."""
 
@@ -123,21 +214,33 @@ def analyze_confusions(
     group_confusions: dict[str, Counter[tuple[str, str]]] = defaultdict(Counter)
     per_label_total: Counter[str] = Counter()
     per_label_correct: Counter[str] = Counter()
+    expected_labels: list[str] = []
+    predicted_labels: list[str] = []
+    confidences: list[float] = []
+    margins: list[float] = []
 
     with torch.no_grad():
         for batch_images, batch_targets in loader:
             outputs = model(batch_images.to(device))
+            probabilities = outputs.softmax(dim=1).cpu()
+            top2 = probabilities.topk(min(2, probabilities.shape[1]), dim=1).values
             predictions = outputs.argmax(dim=1).cpu()
-            for expected_index, predicted_index in zip(batch_targets.tolist(), predictions.tolist()):
+            for row, (expected_index, predicted_index) in enumerate(zip(batch_targets.tolist(), predictions.tolist())):
                 expected = str(labels[int(expected_index)])
                 predicted = str(labels[int(predicted_index)])
                 group = _group(expected)
                 is_exact = expected == predicted
                 is_ambiguity = labels_match_with_ambiguity(expected, predicted)
+                confidence = float(top2[row, 0].item())
+                margin = float((top2[row, 0] - top2[row, 1]).item()) if top2.shape[1] > 1 else 1.0
 
                 total += 1
                 exact += int(is_exact)
                 ambiguity += int(is_ambiguity)
+                expected_labels.append(expected)
+                predicted_labels.append(predicted)
+                confidences.append(confidence)
+                margins.append(margin)
                 group_total[group] += 1
                 group_correct[group] += int(is_exact)
                 group_ambiguity[group] += int(is_ambiguity)
@@ -188,6 +291,14 @@ def analyze_confusions(
             for group in ("digits", "letters", "punctuation")
         },
         "worst_labels": worst_labels[:top],
+        "family_error_details": family_error_details(
+            expected_labels,
+            predicted_labels,
+            confidences,
+            margins,
+            families=families,
+            top=top,
+        ),
         "extra_roots": [str(path) for path in selected_extra_roots],
     }
 
@@ -199,6 +310,7 @@ def main() -> None:
     parser.add_argument("--top", type=int, default=25)
     parser.add_argument("--batch-size", type=int, default=256)
     parser.add_argument("--base-only", action="store_true", help="Ignore extra roots from character metrics.")
+    parser.add_argument("--families", default=",".join(DEFAULT_VISUAL_FAMILIES))
     parser.add_argument("--json", action="store_true")
     args = parser.parse_args()
 
@@ -206,6 +318,7 @@ def main() -> None:
         batch_size=args.batch_size,
         top=args.top,
         extra_roots=[] if args.base_only else None,
+        families=parse_families(args.families),
     )
     if args.json:
         print(json.dumps(report, indent=2))
@@ -227,6 +340,12 @@ def main() -> None:
     print("worst labels:")
     for item in report["worst_labels"][: args.top]:
         print(f"  {item['label']}: {item['accuracy']:.2f}% ({item['correct']}/{item['total']})")
+    print("visual-family recoverable errors:")
+    for item in report["family_error_details"][: args.top]:
+        print(
+            f"  {item['family']}: {item['recoverable_errors']} "
+            f"mean_conf={item['mean_confidence']} mean_margin={item['mean_margin']}"
+        )
 
 
 if __name__ == "__main__":

@@ -7,7 +7,13 @@ from unittest.mock import patch
 import torch
 from torch import nn
 
-from scripts.analyze_character_confusions import _metric_extra_roots, analyze_confusions, main
+from scripts.analyze_character_confusions import (
+    _metric_extra_roots,
+    analyze_confusions,
+    family_error_details,
+    main,
+    parse_families,
+)
 
 
 class CharacterConfusionAnalysisTests(unittest.TestCase):
@@ -52,11 +58,34 @@ class CharacterConfusionAnalysisTests(unittest.TestCase):
             ),
             patch("scripts.analyze_character_confusions.train_test_split", return_value=([], [0, 1, 2])),
         ):
-            report = analyze_confusions(batch_size=8, top=3, extra_roots=[])
+            report = analyze_confusions(batch_size=8, top=3, extra_roots=[], families=(".'",))
 
         self.assertEqual(report["total"], 3)
         self.assertEqual(report["top_confusions_by_group"]["punctuation"], [{"expected": ".", "predicted": "'", "count": 1}])
         self.assertAlmostEqual(report["group_accuracy"]["punctuation"], 50.0)
+        self.assertEqual(report["family_error_details"][0]["top_pairs"][0], {"expected": ".", "predicted": "'", "count": 1})
+
+    def test_family_error_details_reports_confidence_and_margin_bands(self) -> None:
+        details = family_error_details(
+            expected_labels=["1", "I", "O", "A", "l"],
+            predicted_labels=["I", "I", "0", "B", "!"],
+            confidences=[0.65, 0.99, 0.91, 0.4, 0.72],
+            margins=[0.03, 0.4, 0.2, 0.01, 0.12],
+            families=("!/1Iil|", "0Oo"),
+            top=3,
+        )
+
+        self.assertEqual(details[0]["family"], "!/1Iil|")
+        self.assertEqual(details[0]["recoverable_errors"], 2)
+        self.assertEqual(details[0]["confidence_bands"], {"<0.70": 1, "0.70-0.90": 1})
+        self.assertEqual(details[0]["margin_bands"], {"<0.05": 1, "0.05-0.15": 1})
+        self.assertEqual(details[0]["split_recoverable_errors"], {"digits": 1, "letters": 1})
+        self.assertEqual(details[1]["family"], "0Oo")
+        self.assertEqual(details[1]["recoverable_errors"], 1)
+
+    def test_parse_families_defaults_for_blank_input(self) -> None:
+        self.assertIn("!/1Iil|", parse_families(None))
+        self.assertEqual(parse_families(" 1Ili|!/, 0Oo "), ("1Ili|!/", "0Oo"))
 
     def test_main_prints_all_confusion_groups_and_worst_labels(self) -> None:
         report = {
@@ -72,6 +101,14 @@ class CharacterConfusionAnalysisTests(unittest.TestCase):
             "worst_labels": [
                 {"label": "0", "accuracy": 70.0, "correct": 7, "total": 10},
                 {"label": "s", "accuracy": 80.0, "correct": 8, "total": 10},
+            ],
+            "family_error_details": [
+                {
+                    "family": "0Oo",
+                    "recoverable_errors": 2,
+                    "mean_confidence": 0.8,
+                    "mean_margin": 0.2,
+                }
             ],
         }
         output = StringIO()
@@ -89,6 +126,8 @@ class CharacterConfusionAnalysisTests(unittest.TestCase):
         self.assertIn("top punctuation confusions:", text)
         self.assertIn("worst labels:", text)
         self.assertIn("0: 70.00% (7/10)", text)
+        self.assertIn("visual-family recoverable errors:", text)
+        self.assertIn("0Oo: 2", text)
 
 
 if __name__ == "__main__":
