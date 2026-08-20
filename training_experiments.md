@@ -1932,3 +1932,9 @@ restored, so future improvement loops do not repeat known-bad blends.
   - Result: the head had mild apparent signal on calibration splits but failed on validation. Family accuracy was selection `82.36%` vs base `79.50%`, confirmation `82.63%` vs base `81.27%`, but validation `82.80%` vs base `83.77%`. Applying it to validation changed `77` predictions, fixed only `13`, broke `40`, and dropped exact by `0.2553` points.
   - Verification: `test_diagnose_character_family_head.py` passed (`3` tests); no serving artifact was written.
   - Takeaway: a separate family head is not automatically enough. The current features/head overfit calibration and are weaker than the deployed classifier on real validation `!/1Iil|` samples, so future work needs better labeled data or a different representation/objective, not just a sidecar family head.
+
+- Live look-behind report triage:
+  - Trigger: browser report said the uploaded phrase still displayed raw `xOOh:1i` instead of the intended `look behind you`.
+  - Verification: the saved `look_behind_you_reported.png` correction replayed through `scripts/evaluate_corrections.py` as `look behind\nyou`, and direct `cleanup_context("xOOh:1i7o4", ["xOOh:1i", "7o4"])` returned `look behind\nyou`. Focused tests `test_context_rules.py`, `test_web_app.py`, and `test_evaluate_corrections.py` passed (`160` tests).
+  - Live-server finding: `/health` briefly reported revision `57acec1`, but the subsequent `/api/predict` POST failed to connect. A local restart attempt from this sandbox failed with `PermissionError: [Errno 1] Operation not permitted` while binding port `8000`.
+  - Takeaway: this report is a stale/dead running website process, not a model-training regression. Restart the local server from the desktop/session that owns port `8000` before spending more training time on this exact phrase.
