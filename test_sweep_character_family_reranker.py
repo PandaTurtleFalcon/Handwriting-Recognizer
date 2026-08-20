@@ -46,6 +46,8 @@ class SweepCharacterFamilyRerankerTests(unittest.TestCase):
                         "family": "0Oo",
                         "accepted": False,
                         "delta": 0.2,
+                        "selection_changes": {"changed": 3, "fixed": 1, "broken": 2, "still_wrong_changed": 0},
+                        "confirmation_changes": {"changed": 2, "fixed": 1, "broken": 1, "still_wrong_changed": 0},
                         "rejection_reason": "selection_validation_delta_below_floor",
                     },
                     {"family": "5Ss", "accepted": True, "delta": 0.1},
@@ -63,7 +65,10 @@ class SweepCharacterFamilyRerankerTests(unittest.TestCase):
             },
         ]
 
-        self.assertEqual(top_family_rows(rows, limit=1)[0]["family"], "0Oo")
+        top_row = top_family_rows(rows, limit=1)[0]
+        self.assertEqual(top_row["family"], "0Oo")
+        self.assertEqual(top_row["selection_changes"]["broken"], 2)
+        self.assertEqual(top_row["confirmation_changes"]["fixed"], 1)
         self.assertEqual(rejection_reason_counts(rows), {"selection_validation_delta_below_floor": 2})
         self.assertEqual(accepted_family_counts(rows), {"5Ss": 1})
 

@@ -439,6 +439,31 @@ def _gate_metrics(
     return True, None, delta
 
 
+def _metric_deltas(before: dict[str, float], after: dict[str, float]) -> dict[str, float]:
+    """Return after-minus-before deltas for every shared metric."""
+
+    return {name: after[name] - before[name] for name in sorted(before.keys() & after.keys())}
+
+
+def _prediction_change_summary(
+    before: torch.Tensor,
+    after: torch.Tensor,
+    targets: torch.Tensor,
+) -> dict[str, int]:
+    """Count how many reranker changes fix or break exact predictions."""
+
+    changed = before != after
+    fixed = changed & (before != targets) & (after == targets)
+    broken = changed & (before == targets) & (after != targets)
+    still_wrong_changed = changed & (after != targets) & (before != targets)
+    return {
+        "changed": int(changed.sum().item()),
+        "fixed": int(fixed.sum().item()),
+        "broken": int(broken.sum().item()),
+        "still_wrong_changed": int(still_wrong_changed.sum().item()),
+    }
+
+
 def _split_calibration(
     train_targets: torch.Tensor,
     calibration_ratio: float,
@@ -658,6 +683,7 @@ def run_probe(
         )
         selection_before = _metrics(selection_predictions, selection_targets, labels)
         selection_after = _metrics(selection_candidate, selection_targets, labels)
+        selection_changes = _prediction_change_summary(selection_predictions, selection_candidate, selection_targets)
         selection_passed, selection_reason, selection_delta = _gate_metrics(
             selection_before,
             selection_after,
@@ -681,18 +707,33 @@ def run_probe(
             )
             confirmation_before = _metrics(confirmation_predictions, confirmation_targets, labels)
             confirmation_after = _metrics(confirmation_candidate, confirmation_targets, labels)
+            confirmation_changes = _prediction_change_summary(
+                confirmation_predictions,
+                confirmation_candidate,
+                confirmation_targets,
+            )
             confirmation_passed, confirmation_reason, confirmation_delta = _gate_metrics(
                 confirmation_before,
                 confirmation_after,
                 min_family_delta,
             )
+        else:
+            confirmation_changes = {"changed": 0, "fixed": 0, "broken": 0, "still_wrong_changed": 0}
         if not selection_passed:
             reports.append(
                 {
                     "family": probe.name,
                     "accepted": False,
                     "selection_delta": selection_delta,
+                    "selection_metric_deltas": _metric_deltas(selection_before, selection_after),
+                    "selection_changes": selection_changes,
                     "confirmation_delta": confirmation_delta,
+                    "confirmation_metric_deltas": (
+                        _metric_deltas(confirmation_before, confirmation_after)
+                        if int(confirmation_targets.numel()) > 0
+                        else {}
+                    ),
+                    "confirmation_changes": confirmation_changes,
                     "rejection_reason": f"selection_{selection_reason}",
                 }
             )
@@ -703,7 +744,11 @@ def run_probe(
                     "family": probe.name,
                     "accepted": False,
                     "selection_delta": selection_delta,
+                    "selection_metric_deltas": _metric_deltas(selection_before, selection_after),
+                    "selection_changes": selection_changes,
                     "confirmation_delta": confirmation_delta,
+                    "confirmation_metric_deltas": _metric_deltas(confirmation_before, confirmation_after),
+                    "confirmation_changes": confirmation_changes,
                     "rejection_reason": f"confirmation_{confirmation_reason}",
                 }
             )
@@ -722,6 +767,7 @@ def run_probe(
             probe_margin=probe_margin,
         )
         after = _metrics(candidate_predictions, validation_targets, labels)
+        validation_changes = _prediction_change_summary(probe_predictions, candidate_predictions, validation_targets)
         test_passed, test_reason, test_delta = _gate_metrics(before, after, min_family_delta)
         if not test_passed:
             reports.append(
@@ -733,6 +779,8 @@ def run_probe(
                     "before_validation_accuracy": before["validation_accuracy"],
                     "after_validation_accuracy": after["validation_accuracy"],
                     "delta": test_delta,
+                    "metric_deltas": _metric_deltas(before, after),
+                    "changes": validation_changes,
                     "rejection_reason": f"validation_{test_reason}",
                 }
             )
@@ -746,6 +794,8 @@ def run_probe(
                 "before_validation_accuracy": before["validation_accuracy"],
                 "after_validation_accuracy": after["validation_accuracy"],
                 "delta": test_delta,
+                "metric_deltas": _metric_deltas(before, after),
+                "changes": validation_changes,
             }
         )
         probe_predictions = candidate_predictions

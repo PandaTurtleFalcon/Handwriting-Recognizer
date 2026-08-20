@@ -7,6 +7,8 @@ import torch
 from scripts.probe_character_family_reranker import (
     CharacterFamilyProbe,
     _gate_metrics,
+    _metric_deltas,
+    _prediction_change_summary,
     _split_calibration,
     apply_family_probe,
     family_features,
@@ -156,6 +158,25 @@ class CharacterFamilyRerankerTests(unittest.TestCase):
         self.assertEqual(reason, "letter_validation_accuracy_regressed")
         self.assertGreater(delta, 0)
 
+    def test_metric_deltas_reports_shared_after_minus_before(self) -> None:
+        before = {"validation_accuracy": 94.0, "letter_validation_accuracy": 93.0}
+        after = {"validation_accuracy": 94.2, "letter_validation_accuracy": 92.8}
+
+        self.assertEqual(
+            _metric_deltas(before, after),
+            {"letter_validation_accuracy": -0.20000000000000284, "validation_accuracy": 0.20000000000000284},
+        )
+
+    def test_prediction_change_summary_counts_fixes_and_breaks(self) -> None:
+        before = torch.tensor([0, 0, 1, 2, 2])
+        after = torch.tensor([0, 1, 0, 1, 2])
+        targets = torch.tensor([0, 1, 1, 2, 0])
+
+        self.assertEqual(
+            _prediction_change_summary(before, after, targets),
+            {"changed": 3, "fixed": 1, "broken": 2, "still_wrong_changed": 0},
+        )
+
     def test_family_probe_can_cap_and_minibatch_training_samples(self) -> None:
         features = torch.randn((90, 6), dtype=torch.float32)
         targets = torch.tensor([0, 1, 2] * 30, dtype=torch.long)
@@ -225,7 +246,10 @@ class CharacterFamilyRerankerTests(unittest.TestCase):
                 "scripts.probe_character_family_reranker.stratified_split_indices",
                 return_value=([0, 1, 2, 3, 4, 5, 6, 7], [8, 9, 10, 11]),
             ),
-            patch("scripts.probe_character_family_reranker._model_outputs", return_value=outputs[:4]),
+            patch(
+                "scripts.probe_character_family_reranker._model_outputs",
+                side_effect=lambda _model, batch_images, *_args: outputs[: len(batch_images)],
+            ),
             patch("scripts.probe_character_family_reranker.family_features", return_value=torch.zeros((6, 1))),
             patch(
                 "scripts.probe_character_family_reranker.train_family_probe",

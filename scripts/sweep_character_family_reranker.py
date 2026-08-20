@@ -102,8 +102,11 @@ def top_family_rows(rows: list[dict[str, object]], limit: int = 5) -> list[dict[
             "family": row.get("family"),
             "accepted": bool(row.get("accepted")),
             "selection_delta": row.get("selection_delta"),
+            "selection_changes": row.get("selection_changes"),
             "confirmation_delta": row.get("confirmation_delta"),
+            "confirmation_changes": row.get("confirmation_changes"),
             "delta": row.get("delta"),
+            "changes": row.get("changes"),
             "rejection_reason": row.get("rejection_reason"),
         }
         for row in _family_rows(rows)
