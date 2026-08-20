@@ -1855,3 +1855,10 @@ restored, so future improvement loops do not repeat known-bad blends.
   - Tooling: `scripts/summarize_character_specialist_probes.py` now includes compact `family_reports` and `family_validation_diagnostics`, making no-op specialist probes and fix/break balance visible without opening giant threshold grids.
   - Verification: `test_summarize_character_specialist_probes.py` passed (`2` tests), `scripts/summarize_character_specialist_probes.py` compiled, and `git diff --check` passed.
   - Takeaway: source narrowing to punctuation is too conservative for the `!/1Iil|` family; it avoids breakage but has no useful coverage. Future character work should not repeat punctuation-only specialist gating and should target better features/data for letter-side `1/I/l/i` confusions.
+
+- Rejected current-floor `I -> 1` pair-rule promotion:
+  - Trigger: revisited `tmp/character_pair_rules_dryrun_validation.json` after the reported `xOOh:1i` failure, because it showed a tiny character exact gain from one new `I -> 1` rule.
+  - Result: reran the `!/1Iil|` letter-to-digit pair-rule dry run with the current verified floors (`validation >= 94.1665`, ambiguity `>= 99.1112`, digit `>= 95.1090`, letter `>= 93.5907`, punctuation `>= 96.0618`). The rerun added `0` new steps and left character exact at `94.1666%`.
+  - Reason: the earlier tiny exact gain (`94.1666% -> 94.1760%`) depended on a looser letter floor (`93.5773%`) than the current benchmark (`93.5908%`), so promoting it would trade away current letter accuracy.
+  - Verification: `python3 scripts/calibrate_character_logits.py --pair-rules --dry-run --objective validation_accuracy --pair-families '1Ili|!/' --pair-source-groups letter --pair-target-groups digit --pair-thresholds=-0.5 --greedy-rounds 1 --min-improvement 0.0 --min-validation 94.1665 --min-ambiguity 99.1112 --min-digit 95.1090 --min-letter 93.5907 --min-punctuation 96.0618` wrote no artifact.
+  - Takeaway: do not promote the microscopic `I -> 1` calibration. The next useful character work still needs better signal for the whole `!/1Iil|` family, not a lower safety floor.
