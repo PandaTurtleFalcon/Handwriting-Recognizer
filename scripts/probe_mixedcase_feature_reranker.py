@@ -761,13 +761,7 @@ def _metrics(predictions: torch.Tensor, targets: torch.Tensor) -> dict[str, floa
     """Return mixed-case benchmark metrics for probe predictions."""
 
     exact = predictions == targets
-    case_or = torch.tensor(
-        [
-            mixedcase_labels_match_with_ambiguity(MIXEDCASE_LABELS[int(target)], MIXEDCASE_LABELS[int(prediction)])
-            for target, prediction in zip(targets.tolist(), predictions.tolist())
-        ],
-        dtype=torch.bool,
-    )
+    case_or = _case_or_ambiguity_matrix()[targets, predictions]
     is_digit = torch.tensor([label.isdigit() for label in MIXEDCASE_LABELS], dtype=torch.bool)
     is_upper = torch.tensor([label.isupper() for label in MIXEDCASE_LABELS], dtype=torch.bool)
     is_lower = torch.tensor([label.islower() for label in MIXEDCASE_LABELS], dtype=torch.bool)
@@ -784,6 +778,21 @@ def _metrics(predictions: torch.Tensor, targets: torch.Tensor) -> dict[str, floa
         "upper_test_accuracy": masked(is_upper[targets]),
         "lower_test_accuracy": masked(is_lower[targets]),
     }
+
+
+@lru_cache(maxsize=1)
+def _case_or_ambiguity_matrix() -> torch.Tensor:
+    """Return lookup[target, prediction] for mixed-case ambiguity-aware matches."""
+
+    size = len(MIXEDCASE_LABELS)
+    matrix = torch.zeros((size, size), dtype=torch.bool)
+    for target_index, target_label in enumerate(MIXEDCASE_LABELS):
+        for prediction_index, prediction_label in enumerate(MIXEDCASE_LABELS):
+            matrix[target_index, prediction_index] = mixedcase_labels_match_with_ambiguity(
+                target_label,
+                prediction_label,
+            )
+    return matrix
 
 
 def protected_balanced_score(metrics: dict[str, float]) -> float:

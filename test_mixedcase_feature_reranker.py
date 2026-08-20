@@ -9,6 +9,7 @@ from scripts.probe_mixedcase_feature_reranker import FamilyProbe
 from scripts.probe_mixedcase_feature_reranker import base_prediction_uncertainty_mask
 from scripts.probe_mixedcase_feature_reranker import _final_gate_rejection
 from scripts.probe_mixedcase_feature_reranker import _fit_tensors
+from scripts.probe_mixedcase_feature_reranker import _metrics
 from scripts.probe_mixedcase_feature_reranker import _is_promotable
 from scripts.probe_mixedcase_feature_reranker import _split_tensors
 from scripts.probe_mixedcase_feature_reranker import geometry_features
@@ -234,6 +235,20 @@ class MixedcaseFeatureRerankerTests(unittest.TestCase):
         )
 
         self.assertEqual(protected.tolist(), [0, 24])
+
+    def test_metrics_counts_exact_casefolded_and_visual_matches(self) -> None:
+        """Fast mixed-case metrics should preserve ambiguity-aware semantics."""
+
+        predictions = torch.tensor([0, 36, 50, 28], dtype=torch.long)
+        targets = torch.tensor([0, 10, 24, 28], dtype=torch.long)
+
+        metrics = _metrics(predictions, targets)
+
+        self.assertAlmostEqual(metrics["test_accuracy"], 50.0)
+        self.assertAlmostEqual(metrics["case_or_ambiguity_aware_test_accuracy"], 100.0)
+        self.assertAlmostEqual(metrics["digit_test_accuracy"], 100.0)
+        self.assertAlmostEqual(metrics["upper_test_accuracy"], 100.0 / 3.0, places=5)
+        self.assertAlmostEqual(metrics["lower_test_accuracy"], 0.0)
 
     def test_apply_family_probe_can_protect_confident_uppercase_predictions(self) -> None:
         """Confident current uppercase predictions should be protected when requested."""
