@@ -5,6 +5,8 @@ from unittest.mock import patch
 from PIL import Image, ImageFont
 
 from scripts.evaluate_hardcases import (
+    HardCaseResult,
+    combine_hardcase_reports,
     display_matches,
     evaluate_cases,
     evaluate_uploaded_fixtures,
@@ -228,6 +230,55 @@ class HardCaseEvaluationTests(unittest.TestCase):
         self.assertEqual(report["results"][0]["raw_label_prediction"], "lookbehindyou")
         self.assertEqual(report["results"][0]["raw_rows"], ["look behind", "you"])
         self.assertEqual(report["results"][0]["prediction_count"], 1)
+
+    def test_combine_hardcase_reports_keeps_generated_and_uploaded_sources(self) -> None:
+        """Combined CLI flags should not silently replace generated cases with uploads."""
+
+        generated = {
+            "per_font": {"font-a": {"total": 1}},
+            "results": [
+                HardCaseResult(
+                    target="Hi",
+                    prediction="Hi",
+                    exact=True,
+                    ambiguity_aware=True,
+                    font="font-a",
+                    raw_exact=True,
+                    raw_ambiguity_aware=True,
+                    raw_label_exact=True,
+                    raw_label_ambiguity_aware=True,
+                    raw_label_compact_exact=True,
+                    raw_label_compact_ambiguity_aware=True,
+                ).__dict__
+            ],
+        }
+        uploaded = {
+            "results": [
+                HardCaseResult(
+                    target="look behind you",
+                    prediction="look behind\nyou",
+                    exact=True,
+                    ambiguity_aware=True,
+                    font="uploaded",
+                    raw_exact=True,
+                    raw_ambiguity_aware=True,
+                    raw_label_exact=False,
+                    raw_label_ambiguity_aware=False,
+                    raw_label_compact_exact=True,
+                    raw_label_compact_ambiguity_aware=True,
+                    replay_used=True,
+                ).__dict__
+            ]
+        }
+
+        report = combine_hardcase_reports(generated, uploaded)
+
+        self.assertEqual(report["total"], 2)
+        self.assertEqual(report["exact_accuracy"], 100.0)
+        self.assertEqual(report["raw_label_exact_accuracy"], 50.0)
+        self.assertEqual(report["replay_used_count"], 1)
+        self.assertEqual([result["font"] for result in report["results"]], ["font-a", "uploaded"])
+        self.assertIn("font-a", report["per_font"])
 
     def test_evaluate_uploaded_fixtures_skips_missing_files(self) -> None:
         """Missing local fixture files should not crash the evaluator."""

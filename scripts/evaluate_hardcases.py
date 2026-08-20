@@ -679,6 +679,27 @@ def evaluate_uploaded_fixtures(fixtures: list[dict[str, object]] | None = None) 
     }
 
 
+def combine_hardcase_reports(*reports: dict[str, object]) -> dict[str, object]:
+    """Combine generated/script and uploaded hardcase reports without dropping sources."""
+
+    results = [
+        HardCaseResult(**result)
+        for report in reports
+        for result in report.get("results", [])
+        if isinstance(result, dict)
+    ]
+    per_font: dict[str, dict[str, object]] = {}
+    for report in reports:
+        report_fonts = report.get("per_font", {})
+        if isinstance(report_fonts, dict):
+            per_font.update(report_fonts)
+    return {
+        **summarize_hardcase_results(results),
+        "per_font": per_font,
+        "results": [result.__dict__ for result in results],
+    }
+
+
 def main_cli() -> None:
     """CLI entrypoint."""
 
@@ -689,11 +710,12 @@ def main_cli() -> None:
     parser.add_argument("--uploaded-fixtures", action="store_true", help="Evaluate saved real-upload fixture images.")
     parser.add_argument("--json", action="store_true", help="Print machine-readable JSON.")
     args = parser.parse_args()
-    report = (
-        evaluate_uploaded_fixtures()
-        if args.uploaded_fixtures
-        else evaluate_cases(args.case or None, all_fonts=args.all_fonts, script_cases=args.script_cases)
-    )
+    reports = []
+    if args.case or args.all_fonts or args.script_cases or not args.uploaded_fixtures:
+        reports.append(evaluate_cases(args.case or None, all_fonts=args.all_fonts, script_cases=args.script_cases))
+    if args.uploaded_fixtures:
+        reports.append(evaluate_uploaded_fixtures())
+    report = reports[0] if len(reports) == 1 else combine_hardcase_reports(*reports)
     if args.json:
         print(json.dumps(report, indent=2))
         return
