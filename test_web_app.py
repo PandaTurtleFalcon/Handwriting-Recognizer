@@ -369,6 +369,15 @@ class WebAppRenderingTests(unittest.TestCase):
         with patch.object(main.subprocess, "run", side_effect=OSError):
             self.assertEqual(main.app_revision(), "unknown")
 
+    def test_app_revision_marks_dirty_worktree(self) -> None:
+        """Health checks should show when local uncommitted fixes are being served."""
+
+        head = main.subprocess.CompletedProcess(["git"], 0, stdout="abc1234\n")
+        dirty = main.subprocess.CompletedProcess(["git"], 1, stdout="")
+
+        with patch.object(main.subprocess, "run", side_effect=[head, dirty]):
+            self.assertEqual(main.app_revision(), "abc1234-dirty")
+
     def test_character_stack_prefers_exact_case_alnum_model(self) -> None:
         """Serving should use the mixed-case helper before the folded helper."""
 

@@ -1741,6 +1741,29 @@ def _mixedcase_source_group_mask(predictions: torch.Tensor, groups: tuple[str, .
     return mask
 
 
+def _mixedcase_uncertainty_mask(
+    mixed_outputs: torch.Tensor,
+    predictions: torch.Tensor,
+    confidence_max: float | None = None,
+    margin_max: float | None = None,
+) -> torch.Tensor:
+    """Return samples whose mixed-case prediction is uncertain enough for reranking."""
+
+    if confidence_max is None and margin_max is None:
+        return torch.ones_like(predictions, dtype=torch.bool)
+    probabilities = mixed_outputs.softmax(dim=1)
+    top2 = probabilities.topk(2, dim=1).values
+    row_indices = torch.arange(predictions.numel(), device=predictions.device)
+    base_confidence = probabilities[row_indices, predictions]
+    base_margin = top2[:, 0] - top2[:, 1]
+    mask = torch.ones_like(predictions, dtype=torch.bool)
+    if confidence_max is not None:
+        mask &= base_confidence <= confidence_max
+    if margin_max is not None:
+        mask &= base_margin <= margin_max
+    return mask
+
+
 def _mixedcase_geometry_features(inputs: torch.Tensor) -> torch.Tensor:
     """Extract shape features from EMNIST-normalized mixed-case tensors."""
 
@@ -1907,6 +1930,20 @@ class FamilyRerankedMixedcaseModel(nn.Module):
                     "source_groups": tuple(str(group) for group in probe.get("source_groups", ("digit", "upper", "lower"))),
                     "probe_confidence": float(probe.get("probe_confidence", 0.0)),
                     "probe_margin": float(probe.get("probe_margin", 0.0)),
+                    "base_confidence_max": (
+                        None if probe.get("base_confidence_max") is None else float(probe.get("base_confidence_max", 0.0))
+                    ),
+                    "base_margin_max": None if probe.get("base_margin_max") is None else float(probe.get("base_margin_max", 0.0)),
+                    "digit_protect_confidence": (
+                        None
+                        if probe.get("digit_protect_confidence") is None
+                        else float(probe.get("digit_protect_confidence", 0.0))
+                    ),
+                    "upper_protect_confidence": (
+                        None
+                        if probe.get("upper_protect_confidence") is None
+                        else float(probe.get("upper_protect_confidence", 0.0))
+                    ),
                     "include_digit_features": bool(probe.get("include_digit_features", False)),
                     "include_pixel_features": bool(probe.get("include_pixel_features", False)),
                     "include_embedding_features": bool(probe.get("include_embedding_features", False)),
@@ -1914,7 +1951,9 @@ class FamilyRerankedMixedcaseModel(nn.Module):
             )
 
     def forward(self, inputs: torch.Tensor) -> torch.Tensor:
-        mixed_outputs = self.base_model(inputs)
+        hybrid_outputs = self.base_model(inputs)
+        raw_mixed_model = getattr(self.base_model, "mixedcase_model", None)
+        mixed_outputs = raw_mixed_model(inputs) if isinstance(raw_mixed_model, nn.Module) else hybrid_outputs
         folded_outputs = self.folded_model(inputs)
         digit_outputs = None
         if self.digit_model is not None:
@@ -1926,7 +1965,7 @@ class FamilyRerankedMixedcaseModel(nn.Module):
             if any(bool(config["include_embedding_features"]) for config in self.probe_configs)
             else None
         )
-        outputs = mixed_outputs.clone()
+        outputs = hybrid_outputs.clone()
         predictions = outputs.argmax(dim=1)
         row_max = outputs.max(dim=1).values + 1e-4
         for module, config in zip(self.probes, self.probe_configs):
@@ -1935,6 +1974,12 @@ class FamilyRerankedMixedcaseModel(nn.Module):
             for family_index in family_indices:
                 current_in_family |= predictions == family_index
             current_in_family &= _mixedcase_source_group_mask(predictions, config["source_groups"])
+            current_in_family &= _mixedcase_uncertainty_mask(
+                mixed_outputs,
+                predictions,
+                config["base_confidence_max"],
+                config["base_margin_max"],
+            )
             if not bool(current_in_family.any()):
                 continue
             features = _mixedcase_family_features(
@@ -1959,6 +2004,24 @@ class FamilyRerankedMixedcaseModel(nn.Module):
                 device=inputs.device,
             )
             candidate_indices = torch.where(current_in_family)[0]
+            if digit_outputs is not None and config["digit_protect_confidence"] is not None:
+                current_labels = predictions[candidate_indices]
+                current_digits = current_labels < 10
+                if bool(current_digits.any()):
+                    digit_probabilities = digit_outputs.softmax(dim=1)
+                    digit_confidence = digit_probabilities[candidate_indices[current_digits], current_labels[current_digits]]
+                    protected = digit_confidence >= config["digit_protect_confidence"]
+                    digit_positions = torch.where(current_digits)[0]
+                    replace_mask[digit_positions[protected]] = False
+            if config["upper_protect_confidence"] is not None:
+                current_labels = predictions[candidate_indices]
+                current_upper = (current_labels >= 10) & (current_labels < 36)
+                if bool(current_upper.any()):
+                    mixed_probabilities = mixed_outputs.softmax(dim=1)
+                    upper_confidence = mixed_probabilities[candidate_indices[current_upper], current_labels[current_upper]]
+                    protected = upper_confidence >= config["upper_protect_confidence"]
+                    upper_positions = torch.where(current_upper)[0]
+                    replace_mask[upper_positions[protected]] = False
             selected_indices = candidate_indices[replace_mask]
             selected_replacements = replacements[replace_mask]
             if not int(selected_indices.numel()):

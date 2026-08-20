@@ -109,6 +109,105 @@ class ExtraAlnumDatasetTests(unittest.TestCase):
 
         self.assertEqual(MIXEDCASE_LABELS[prediction], "Q")
 
+    def test_family_reranker_features_use_pre_hybrid_mixed_logits(self) -> None:
+        """Family probes should see the same calibrated mixed logits used by probe scripts."""
+
+        class FixedModel(nn.Module):
+            def __init__(self, outputs: torch.Tensor) -> None:
+                super().__init__()
+                self.outputs = outputs
+
+            def forward(self, inputs: torch.Tensor) -> torch.Tensor:
+                return self.outputs[: inputs.size(0)].clone()
+
+        class FixedHybrid(nn.Module):
+            def __init__(self, raw_outputs: torch.Tensor, hybrid_outputs: torch.Tensor) -> None:
+                super().__init__()
+                self.mixedcase_model = FixedModel(raw_outputs)
+                self.hybrid_outputs = hybrid_outputs
+
+            def forward(self, inputs: torch.Tensor) -> torch.Tensor:
+                return self.hybrid_outputs[: inputs.size(0)].clone()
+
+        raw_outputs = torch.zeros((1, len(MIXEDCASE_LABELS)), dtype=torch.float32)
+        raw_outputs[0, MIXEDCASE_LABELS.index("1")] = 7.0
+        hybrid_outputs = torch.zeros((1, len(MIXEDCASE_LABELS)), dtype=torch.float32)
+        hybrid_outputs[0, MIXEDCASE_LABELS.index("1")] = 3.0
+        folded_outputs = torch.zeros((1, len(LABELS)), dtype=torch.float32)
+        folded_outputs[0, LABELS.index("I")] = 1.0
+        probe = torch.nn.Linear(28, 2)
+        with torch.no_grad():
+            probe.weight.zero_()
+            probe.bias[:] = torch.tensor([9.0, -9.0])
+        captured = {}
+        original_features = alnum_model._mixedcase_family_features
+
+        def capture_features(inputs, mixed_outputs, folded_outputs, family_indices, *args, **kwargs):
+            captured["mixed_outputs"] = mixed_outputs.detach().clone()
+            return original_features(inputs, mixed_outputs, folded_outputs, family_indices, *args, **kwargs)
+
+        model = alnum_model.FamilyRerankedMixedcaseModel(
+            FixedHybrid(raw_outputs, hybrid_outputs),
+            FixedModel(folded_outputs),
+            [
+                {
+                    "family_indices": [MIXEDCASE_LABELS.index("1"), MIXEDCASE_LABELS.index("I")],
+                    "input_dim": 28,
+                    "state_dict": probe.state_dict(),
+                    "source_groups": ["digit"],
+                    "probe_confidence": 0.0,
+                    "probe_margin": 0.0,
+                }
+            ],
+        )
+        with patch("alnum_model._mixedcase_family_features", side_effect=capture_features):
+            model(torch.zeros((1, 1, 28, 28), dtype=torch.float32))
+
+        self.assertEqual(captured["mixed_outputs"][0, MIXEDCASE_LABELS.index("1")].item(), 7.0)
+
+    def test_family_reranker_applies_digit_protection_gate(self) -> None:
+        """Digit-specialist protection saved in a probe artifact should be honored in serving."""
+
+        class FixedModel(nn.Module):
+            def __init__(self, outputs: torch.Tensor) -> None:
+                super().__init__()
+                self.outputs = outputs
+
+            def forward(self, inputs: torch.Tensor) -> torch.Tensor:
+                return self.outputs[: inputs.size(0)].clone()
+
+        mixed_outputs = torch.zeros((1, len(MIXEDCASE_LABELS)), dtype=torch.float32)
+        mixed_outputs[0, MIXEDCASE_LABELS.index("1")] = 5.0
+        folded_outputs = torch.zeros((1, len(LABELS)), dtype=torch.float32)
+        folded_outputs[0, LABELS.index("I")] = 1.0
+        digit_outputs = torch.zeros((1, 10), dtype=torch.float32)
+        digit_outputs[0, 1] = 9.0
+        probe = torch.nn.Linear(50, 2)
+        with torch.no_grad():
+            probe.weight.zero_()
+            probe.bias[:] = torch.tensor([-9.0, 9.0])
+        model = alnum_model.FamilyRerankedMixedcaseModel(
+            FixedModel(mixed_outputs),
+            FixedModel(folded_outputs),
+            [
+                {
+                    "family_indices": [MIXEDCASE_LABELS.index("1"), MIXEDCASE_LABELS.index("I")],
+                    "input_dim": 50,
+                    "state_dict": probe.state_dict(),
+                    "source_groups": ["digit"],
+                    "probe_confidence": 0.0,
+                    "probe_margin": 0.0,
+                    "digit_protect_confidence": 0.95,
+                    "include_digit_features": True,
+                }
+            ],
+            digit_model=FixedModel(digit_outputs),
+        )
+
+        prediction = model(torch.zeros((1, 1, 28, 28), dtype=torch.float32)).argmax(dim=1).item()
+
+        self.assertEqual(MIXEDCASE_LABELS[prediction], "1")
+
     def test_hybrid_mixedcase_uses_per_letter_case_thresholds(self) -> None:
         class FixedModel(nn.Module):
             def __init__(self, outputs: torch.Tensor) -> None:

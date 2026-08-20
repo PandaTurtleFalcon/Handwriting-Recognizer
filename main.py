@@ -1374,7 +1374,20 @@ def app_revision() -> str:
     except (OSError, subprocess.TimeoutExpired):
         return "unknown"
     revision = completed.stdout.strip()
-    return revision if completed.returncode == 0 and revision else "unknown"
+    if completed.returncode != 0 or not revision:
+        return "unknown"
+    try:
+        dirty = subprocess.run(
+            ["git", "diff", "--quiet"],
+            cwd=Path(__file__).resolve().parent,
+            capture_output=True,
+            check=False,
+            text=True,
+            timeout=2,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return revision
+    return f"{revision}-dirty" if dirty.returncode == 1 else revision
 
 
 def compact_correction_text(value: object) -> str:
