@@ -279,11 +279,23 @@ def sweep_factorized_gates(
     folded_margins: Iterable[float],
     type_confidences: Iterable[float],
     type_margins: Iterable[float],
+    calibration_ratio: float | None = None,
+    confirmation_ratio: float = 0.5,
+    seed: int = 20260845,
 ) -> dict[str, object]:
     """Sweep confidence gates for replacing base predictions with factorized ones."""
 
     factorized, features = factorized_predictions(mixed_outputs, folded_outputs, base_predictions)
     baseline = hybrid_metrics(base_predictions, targets, labels)
+    selection_indices: torch.Tensor | None = None
+    confirmation_indices: torch.Tensor | None = None
+    if calibration_ratio is not None and calibration_ratio > 0:
+        _fit_indices, selection_indices, confirmation_indices = split_indices(
+            int(targets.numel()),
+            calibration_ratio=calibration_ratio,
+            confirmation_ratio=confirmation_ratio,
+            seed=seed,
+        )
     rows: list[dict[str, object]] = []
     for folded_confidence in folded_confidences:
         for folded_margin in folded_margins:
@@ -301,6 +313,17 @@ def sweep_factorized_gates(
                     candidate = base_predictions.clone()
                     candidate[replace_mask] = factorized[replace_mask]
                     metrics = hybrid_metrics(candidate, targets, labels)
+                    selection_promotable = None
+                    confirmation_promotable = None
+                    if selection_indices is not None and confirmation_indices is not None:
+                        selection_promotable = protected_promotable(
+                            subset_metrics(candidate, targets, labels, selection_indices),
+                            subset_metrics(base_predictions, targets, labels, selection_indices),
+                        )
+                        confirmation_promotable = protected_promotable(
+                            subset_metrics(candidate, targets, labels, confirmation_indices),
+                            subset_metrics(base_predictions, targets, labels, confirmation_indices),
+                        )
                     rows.append(
                         {
                             "folded_confidence": folded_confidence,
@@ -312,12 +335,20 @@ def sweep_factorized_gates(
                             "broken": int(((candidate != targets) & (base_predictions == targets)).sum().item()),
                             "metrics": metrics,
                             "promotable": protected_promotable(metrics, baseline),
+                            "selection_promotable": selection_promotable,
+                            "confirmation_promotable": confirmation_promotable,
+                            "confirmed_promotable": (
+                                selection_promotable is True
+                                and confirmation_promotable is True
+                                and protected_promotable(metrics, baseline)
+                            ),
                             "test_delta": metrics["test_accuracy"] - baseline["test_accuracy"],
                             "balanced_delta": metrics["balanced_group_accuracy"] - baseline["balanced_group_accuracy"],
                         }
                     )
     rows.sort(
         key=lambda row: (
+            bool(row["confirmed_promotable"]),
             bool(row["promotable"]),
             float(row["balanced_delta"]),
             float(row["test_delta"]),
@@ -345,6 +376,7 @@ def sweep_factorized_gates(
         * float((identity_ok & (features["type_prediction"] == type_targets(targets))).float().mean().item()),
         "rows": rows,
         "promotable_count": sum(1 for row in rows if bool(row["promotable"])),
+        "confirmed_promotable_count": sum(1 for row in rows if bool(row["confirmed_promotable"])),
         "best": rows[0] if rows else None,
     }
 
@@ -388,6 +420,9 @@ def main() -> None:
         folded_margins=parse_float_values(args.folded_margins),
         type_confidences=parse_float_values(args.type_confidences),
         type_margins=parse_float_values(args.type_margins),
+        calibration_ratio=args.calibration_ratio,
+        confirmation_ratio=args.confirmation_ratio,
+        seed=args.seed,
     )
     if args.learned_gate:
         report["learned_gate"] = evaluate_learned_replacement_gate(

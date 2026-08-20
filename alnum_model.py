@@ -1606,6 +1606,11 @@ class HybridMixedcaseModel(nn.Module):
         letter_case_thresholds: dict[str, float] | None = None,
         folded_confidence_thresholds: dict[str, float] | None = None,
         folded_margin_thresholds: dict[str, float] | None = None,
+        factorized_gate_enabled: bool = False,
+        factorized_folded_confidence_threshold: float = 0.0,
+        factorized_folded_margin_threshold: float = 0.0,
+        factorized_type_confidence_threshold: float = 1.0,
+        factorized_type_margin_threshold: float = 0.0,
     ) -> None:
         super().__init__()
         self.mixedcase_model = mixedcase_model
@@ -1616,6 +1621,11 @@ class HybridMixedcaseModel(nn.Module):
         self.letter_case_thresholds = _float_threshold_map(letter_case_thresholds)
         self.folded_confidence_thresholds = _float_threshold_map(folded_confidence_thresholds)
         self.folded_margin_thresholds = _float_threshold_map(folded_margin_thresholds)
+        self.factorized_gate_enabled = bool(factorized_gate_enabled)
+        self.factorized_folded_confidence_threshold = float(factorized_folded_confidence_threshold)
+        self.factorized_folded_margin_threshold = float(factorized_folded_margin_threshold)
+        self.factorized_type_confidence_threshold = float(factorized_type_confidence_threshold)
+        self.factorized_type_margin_threshold = float(factorized_type_margin_threshold)
 
     def forward(self, inputs: torch.Tensor) -> torch.Tensor:
         mixed_outputs = self.mixedcase_model(inputs)
@@ -1649,7 +1659,54 @@ class HybridMixedcaseModel(nn.Module):
             upper_mask = identity_mask & ~lower_mask
             outputs[upper_mask, upper_index] = row_max[upper_mask]
             outputs[lower_mask, lower_index] = row_max[lower_mask]
+        if self.factorized_gate_enabled:
+            outputs = self._apply_factorized_gate(outputs, mixed_outputs, folded_outputs, folded_predictions, row_max)
         return outputs
+
+    def _apply_factorized_gate(
+        self,
+        outputs: torch.Tensor,
+        mixed_outputs: torch.Tensor,
+        folded_outputs: torch.Tensor,
+        folded_predictions: torch.Tensor,
+        row_max: torch.Tensor,
+    ) -> torch.Tensor:
+        """Apply a conservative folded-identity/type replacement gate."""
+
+        folded_probabilities = folded_outputs.softmax(dim=1)
+        folded_top2 = folded_probabilities.topk(2, dim=1).values
+        folded_confidence = folded_top2[:, 0]
+        folded_margin = folded_top2[:, 0] - folded_top2[:, 1]
+        type_probabilities = mixedcase_type_logits(mixed_outputs).softmax(dim=1)
+        type_top2 = type_probabilities.topk(2, dim=1).values
+        type_confidence = type_top2[:, 0]
+        type_margin = type_top2[:, 0] - type_top2[:, 1]
+        type_predictions = type_probabilities.argmax(dim=1)
+        mixed_digit_predictions = mixed_outputs[:, :10].argmax(dim=1)
+        current_predictions = outputs.argmax(dim=1)
+        factorized_predictions = current_predictions.clone()
+
+        digit_type_mask = type_predictions == 0
+        folded_digit_mask = (folded_predictions < 10) & ~digit_type_mask
+        upper_mask = (folded_predictions >= 10) & (type_predictions == 1)
+        lower_mask = (folded_predictions >= 10) & (type_predictions == 2)
+        factorized_predictions[digit_type_mask] = mixed_digit_predictions[digit_type_mask]
+        factorized_predictions[folded_digit_mask] = folded_predictions[folded_digit_mask]
+        factorized_predictions[upper_mask] = folded_predictions[upper_mask]
+        factorized_predictions[lower_mask] = folded_predictions[lower_mask] + 26
+
+        replace_mask = (
+            (factorized_predictions != current_predictions)
+            & (folded_confidence >= self.factorized_folded_confidence_threshold)
+            & (folded_margin >= self.factorized_folded_margin_threshold)
+            & (type_confidence >= self.factorized_type_confidence_threshold)
+            & (type_margin >= self.factorized_type_margin_threshold)
+        )
+        if not bool(replace_mask.any()):
+            return outputs
+        next_outputs = outputs.clone()
+        next_outputs[replace_mask, factorized_predictions[replace_mask]] = row_max[replace_mask] + 1e-4
+        return next_outputs
 
 
 def _float_threshold_map(value: object) -> dict[str, float]:
@@ -2003,6 +2060,11 @@ def attach_mixedcase_hybrid(
         letter_case_thresholds=artifact.get("letter_case_thresholds"),
         folded_confidence_thresholds=artifact.get("folded_confidence_thresholds"),
         folded_margin_thresholds=artifact.get("folded_margin_thresholds"),
+        factorized_gate_enabled=bool(artifact.get("factorized_gate_enabled", False)),
+        factorized_folded_confidence_threshold=float(artifact.get("factorized_folded_confidence_threshold", 0.0)),
+        factorized_folded_margin_threshold=float(artifact.get("factorized_folded_margin_threshold", 0.0)),
+        factorized_type_confidence_threshold=float(artifact.get("factorized_type_confidence_threshold", 1.0)),
+        factorized_type_margin_threshold=float(artifact.get("factorized_type_margin_threshold", 0.0)),
     )
     wrapped.eval()
     wrapped.mixedcase_hybrid = artifact  # type: ignore[attr-defined]

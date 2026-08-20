@@ -138,6 +138,62 @@ class ExtraAlnumDatasetTests(unittest.TestCase):
         self.assertEqual(MIXEDCASE_LABELS[predictions[0]], "A")
         self.assertEqual(MIXEDCASE_LABELS[predictions[1]], "b")
 
+    def test_hybrid_mixedcase_can_apply_factorized_gate(self) -> None:
+        class FixedModel(nn.Module):
+            def __init__(self, outputs: torch.Tensor) -> None:
+                super().__init__()
+                self.outputs = outputs
+
+            def forward(self, inputs: torch.Tensor) -> torch.Tensor:
+                return self.outputs[: inputs.size(0)].clone()
+
+        mixed_outputs = torch.full((1, len(MIXEDCASE_LABELS)), -10.0)
+        mixed_outputs[0, MIXEDCASE_LABELS.index("A")] = 8.0
+        mixed_outputs[0, MIXEDCASE_LABELS.index("a")] = 7.5
+        mixed_outputs[0, MIXEDCASE_LABELS.index("b")] = 7.5
+        mixed_outputs[0, MIXEDCASE_LABELS.index("c")] = 7.5
+        folded_outputs = torch.full((1, len(LABELS)), -10.0)
+        folded_outputs[0, LABELS.index("A")] = 9.0
+        model = HybridMixedcaseModel(
+            FixedModel(mixed_outputs),
+            FixedModel(folded_outputs),
+            factorized_gate_enabled=True,
+            factorized_folded_confidence_threshold=0.5,
+            factorized_type_confidence_threshold=0.4,
+        )
+
+        prediction = model(torch.zeros(1, 1, 28, 28)).argmax(dim=1).item()
+
+        self.assertEqual(MIXEDCASE_LABELS[prediction], "a")
+
+    def test_hybrid_mixedcase_factorized_gate_respects_type_confidence(self) -> None:
+        class FixedModel(nn.Module):
+            def __init__(self, outputs: torch.Tensor) -> None:
+                super().__init__()
+                self.outputs = outputs
+
+            def forward(self, inputs: torch.Tensor) -> torch.Tensor:
+                return self.outputs[: inputs.size(0)].clone()
+
+        mixed_outputs = torch.full((1, len(MIXEDCASE_LABELS)), -10.0)
+        mixed_outputs[0, MIXEDCASE_LABELS.index("A")] = 8.0
+        mixed_outputs[0, MIXEDCASE_LABELS.index("a")] = 7.5
+        mixed_outputs[0, MIXEDCASE_LABELS.index("b")] = 7.5
+        mixed_outputs[0, MIXEDCASE_LABELS.index("c")] = 7.5
+        folded_outputs = torch.full((1, len(LABELS)), -10.0)
+        folded_outputs[0, LABELS.index("A")] = 9.0
+        model = HybridMixedcaseModel(
+            FixedModel(mixed_outputs),
+            FixedModel(folded_outputs),
+            factorized_gate_enabled=True,
+            factorized_folded_confidence_threshold=0.5,
+            factorized_type_confidence_threshold=0.99,
+        )
+
+        prediction = model(torch.zeros(1, 1, 28, 28)).argmax(dim=1).item()
+
+        self.assertEqual(MIXEDCASE_LABELS[prediction], "A")
+
     def test_attach_mixedcase_hybrid_rejects_stale_checkpoint_hashes(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)

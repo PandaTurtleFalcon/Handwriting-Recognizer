@@ -31,6 +31,7 @@ from alnum_model import (  # noqa: E402
     load_alnum_model,
     load_mixedcase_model,
     mixedcase_labels_match_with_ambiguity,
+    mixedcase_type_logits,
 )
 from mnist_model import get_device  # noqa: E402
 
@@ -88,6 +89,11 @@ def _load_hybrid_artifact(path: Path = MIXEDCASE_HYBRID_PATH) -> dict[str, objec
         "letter_case_thresholds": {},
         "folded_confidence_thresholds": {},
         "folded_margin_thresholds": {},
+        "factorized_gate_enabled": False,
+        "factorized_folded_confidence_threshold": 0.0,
+        "factorized_folded_margin_threshold": 0.0,
+        "factorized_type_confidence_threshold": 1.0,
+        "factorized_type_margin_threshold": 0.0,
     }
     if not path.exists():
         return default
@@ -175,6 +181,34 @@ def hybrid_predictions(
         lower_mask = identity_mask & (lower_margin >= case_thresholds.get(letter, default_case_threshold))
         predictions[identity_mask & ~lower_mask] = upper_index
         predictions[lower_mask] = lower_index
+    if bool(artifact.get("factorized_gate_enabled", False)):
+        folded_probabilities = folded_outputs.softmax(dim=1)
+        folded_top2_for_gate = folded_probabilities.topk(2, dim=1).values
+        folded_gate_confidence = folded_top2_for_gate[:, 0]
+        folded_gate_margin = folded_top2_for_gate[:, 0] - folded_top2_for_gate[:, 1]
+        type_probabilities = mixedcase_type_logits(mixed_outputs).softmax(dim=1)
+        type_top2 = type_probabilities.topk(2, dim=1).values
+        type_confidence = type_top2[:, 0]
+        type_margin = type_top2[:, 0] - type_top2[:, 1]
+        type_predictions = type_probabilities.argmax(dim=1)
+        mixed_digit_predictions = mixed_outputs[:, :10].argmax(dim=1)
+        factorized = predictions.clone()
+        digit_type_mask = type_predictions == 0
+        folded_digit_mask = (folded_predictions < 10) & ~digit_type_mask
+        upper_mask = (folded_predictions >= 10) & (type_predictions == 1)
+        lower_mask = (folded_predictions >= 10) & (type_predictions == 2)
+        factorized[digit_type_mask] = mixed_digit_predictions[digit_type_mask]
+        factorized[folded_digit_mask] = folded_predictions[folded_digit_mask]
+        factorized[upper_mask] = folded_predictions[upper_mask]
+        factorized[lower_mask] = folded_predictions[lower_mask] + 26
+        replace_mask = (
+            (factorized != predictions)
+            & (folded_gate_confidence >= float(artifact.get("factorized_folded_confidence_threshold", 0.0)))
+            & (folded_gate_margin >= float(artifact.get("factorized_folded_margin_threshold", 0.0)))
+            & (type_confidence >= float(artifact.get("factorized_type_confidence_threshold", 1.0)))
+            & (type_margin >= float(artifact.get("factorized_type_margin_threshold", 0.0)))
+        )
+        predictions[replace_mask] = factorized[replace_mask]
     return predictions
 
 

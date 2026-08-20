@@ -91,6 +91,35 @@ class MixedcaseFactorizationTests(unittest.TestCase):
         self.assertEqual(report["promotable_count"], 1)
         self.assertTrue(report["best"]["promotable"])
 
+    def test_sweep_factorized_gates_reports_confirmed_promotable_rows(self) -> None:
+        labels = ["0", "A", "a"]
+        targets = torch.tensor([1, 1, 1, 1, 1, 1])
+        base_predictions = torch.tensor([0, 0, 0, 0, 0, 0])
+        mixed_outputs = torch.zeros((6, 3))
+        folded_outputs = torch.zeros((6, 2))
+        mixed_outputs[:, 1] = 4.0
+        folded_outputs[:, 1] = 4.0
+
+        report = sweep_factorized_gates(
+            mixed_outputs=mixed_outputs,
+            folded_outputs=folded_outputs,
+            targets=targets,
+            labels=labels,
+            base_predictions=base_predictions,
+            folded_confidences=[0.0],
+            folded_margins=[0.0],
+            type_confidences=[0.0],
+            type_margins=[0.0],
+            calibration_ratio=0.5,
+            confirmation_ratio=0.5,
+            seed=123,
+        )
+
+        self.assertEqual(report["confirmed_promotable_count"], 1)
+        self.assertTrue(report["best"]["selection_promotable"])
+        self.assertTrue(report["best"]["confirmation_promotable"])
+        self.assertTrue(report["best"]["confirmed_promotable"])
+
     def test_split_indices_partitions_all_samples(self) -> None:
         fit, selection, confirmation = split_indices(20, calibration_ratio=0.4, confirmation_ratio=0.5, seed=123)
 

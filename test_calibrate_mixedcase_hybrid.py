@@ -43,6 +43,31 @@ class MixedcaseHybridCalibrationTests(unittest.TestCase):
         self.assertEqual(MIXEDCASE_LABELS[int(predictions[1])], "A")
         self.assertEqual(MIXEDCASE_LABELS[int(predictions[2])], "B")
 
+    def test_hybrid_predictions_apply_factorized_gate_when_enabled(self) -> None:
+        """Optional factorized gate should match serving wrapper behavior."""
+
+        mixed_outputs = torch.full((1, len(MIXEDCASE_LABELS)), -10.0)
+        mixed_outputs[0, MIXEDCASE_LABELS.index("A")] = 8.0
+        mixed_outputs[0, MIXEDCASE_LABELS.index("a")] = 7.5
+        mixed_outputs[0, MIXEDCASE_LABELS.index("b")] = 7.5
+        mixed_outputs[0, MIXEDCASE_LABELS.index("c")] = 7.5
+        folded_outputs = torch.full((1, len(LABELS)), -10.0)
+        folded_outputs[0, LABELS.index("A")] = 9.0
+        artifact = {
+            "letter_case_threshold": 0.0,
+            "folded_confidence_threshold": 0.25,
+            "folded_margin_threshold": 0.5,
+            "factorized_gate_enabled": True,
+            "factorized_folded_confidence_threshold": 0.5,
+            "factorized_folded_margin_threshold": 0.0,
+            "factorized_type_confidence_threshold": 0.4,
+            "factorized_type_margin_threshold": 0.0,
+        }
+
+        predictions = hybrid_predictions(mixed_outputs, folded_outputs, artifact)
+
+        self.assertEqual(MIXEDCASE_LABELS[int(predictions[0])], "a")
+
     def test_hybrid_metrics_include_balanced_group_accuracy(self) -> None:
         """The calibration objective should expose weakest digit/upper/lower split."""
 
