@@ -13,6 +13,7 @@ class SummarizeMixedcaseProbeTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             sweep = root / "sweep.json"
+            feature = root / "feature.json"
             residual = root / "residual.json"
             ensemble = root / "ensemble.json"
             sweep.write_text(
@@ -77,6 +78,32 @@ class SummarizeMixedcaseProbeTests(unittest.TestCase):
                 ),
                 encoding="utf-8",
             )
+            feature.write_text(
+                json.dumps(
+                    {
+                        "promotable": False,
+                        "test_delta": 0.05,
+                        "balanced_delta": -0.1,
+                        "balanced_score": 73.0,
+                        "base": {"test_accuracy": 87.0},
+                        "reranked": {"test_accuracy": 87.05},
+                        "family_names": ["0Oo"],
+                        "source_groups": ["digit", "upper"],
+                        "probe_thresholds": {"confidence": 0.0},
+                        "minimum_gates": {"digit_test_accuracy": 95.0},
+                        "families": [
+                            {
+                                "family": "0Oo",
+                                "accepted": False,
+                                "delta": 0.05,
+                                "rejection_reason": "final_lower_test_accuracy_regressed",
+                            },
+                            {"family": "9gq", "accepted": True, "delta": 0.01},
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
             residual.write_text(
                 json.dumps(
                     {
@@ -116,11 +143,11 @@ class SummarizeMixedcaseProbeTests(unittest.TestCase):
                 encoding="utf-8",
             )
 
-            summary = summarize_probes([sweep, residual, ensemble])
+            summary = summarize_probes([sweep, feature, residual, ensemble])
 
-        self.assertEqual(summary["probe_count"], 3)
+        self.assertEqual(summary["probe_count"], 4)
         self.assertEqual(summary["promotable_count"], 2)
-        self.assertEqual(summary["accepted_count"], 2)
+        self.assertEqual(summary["accepted_count"], 3)
         self.assertEqual(summary["summaries"][0]["kind"], "sweep")
         self.assertEqual(summary["summaries"][0]["best_parameters"], {"epochs": 80})
         self.assertEqual(summary["summaries"][0]["top_family_rows"][0]["family"], "near")
@@ -134,8 +161,16 @@ class SummarizeMixedcaseProbeTests(unittest.TestCase):
             {"final_digit_test_accuracy_regressed": 1, "selection_delta_below_floor": 1},
         )
         self.assertEqual(summary["summaries"][0]["accepted_family_counts"], {"kept": 1})
-        self.assertEqual(summary["summaries"][1]["accepted_clusters"], ["9gq"])
-        self.assertAlmostEqual(summary["summaries"][2]["best_test_delta"], 0.3)
+        self.assertEqual(summary["summaries"][1]["kind"], "feature_probe")
+        self.assertFalse(summary["summaries"][1]["promotable"])
+        self.assertEqual(summary["summaries"][1]["accepted_family_counts"], {"9gq": 1})
+        self.assertEqual(
+            summary["summaries"][1]["rejection_reason_counts"],
+            {"final_lower_test_accuracy_regressed": 1},
+        )
+        self.assertEqual(summary["summaries"][1]["top_family_rows"][0]["family"], "0Oo")
+        self.assertEqual(summary["summaries"][2]["accepted_clusters"], ["9gq"])
+        self.assertAlmostEqual(summary["summaries"][3]["best_test_delta"], 0.3)
 
 
 if __name__ == "__main__":

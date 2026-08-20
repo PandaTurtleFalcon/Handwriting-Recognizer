@@ -113,6 +113,30 @@ def summarize_sweep(report: dict[str, Any]) -> dict[str, object]:
     }
 
 
+def summarize_feature_probe(report: dict[str, Any]) -> dict[str, object]:
+    """Return compact fields for one direct mixed-case family-reranker probe."""
+
+    families = [_as_dict(row) for row in _as_list(report.get("families"))]
+    accepted = [row for row in families if bool(row.get("accepted"))]
+    return {
+        "kind": "feature_probe",
+        "promotable": bool(report.get("promotable")),
+        "test_delta": float(report.get("test_delta", 0.0)),
+        "balanced_delta": float(report.get("balanced_delta", 0.0)),
+        "balanced_score": float(report.get("balanced_score", 0.0)),
+        "accepted_count": len(accepted),
+        "accepted_family_counts": _accepted_family_counts(families),
+        "rejection_reason_counts": _rejection_reason_counts(families),
+        "base": report.get("base"),
+        "reranked": report.get("reranked"),
+        "top_family_rows": top_family_rows(families),
+        "family_names": report.get("family_names"),
+        "source_groups": report.get("source_groups"),
+        "probe_thresholds": report.get("probe_thresholds"),
+        "minimum_gates": report.get("minimum_gates"),
+    }
+
+
 def summarize_residual(report: dict[str, Any]) -> dict[str, object]:
     """Return the compact fields for a residual-cluster probe report."""
 
@@ -167,6 +191,8 @@ def summarize_probe(path: Path) -> dict[str, object]:
         raise RuntimeError(f"{path} does not contain a JSON object.")
     if "rows" in report:
         summary = summarize_sweep(report)
+    elif "families" in report and "base" in report and "reranked" in report:
+        summary = summarize_feature_probe(report)
     elif "clusters" in report:
         summary = summarize_residual(report)
     elif "candidates" in report:
