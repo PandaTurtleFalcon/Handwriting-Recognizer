@@ -52,12 +52,16 @@ def compact_probe_report(report: dict[str, object], parameters: dict[str, object
     final_delta = 0.0
     final_safe = False
     final_floor_failures: list[str] = []
+    final_changes = None
     if isinstance(final_candidate, dict):
         final_delta = float(final_candidate.get("test_delta", 0.0))
         final_safe = bool(final_candidate.get("safe"))
         floor_failures = final_candidate.get("floor_failures", [])
         if isinstance(floor_failures, list):
             final_floor_failures = [str(item) for item in floor_failures]
+        final_changes = final_candidate.get("changes")
+    confirmation = report.get("confirmation")
+    confirmation_changes = confirmation.get("changes") if isinstance(confirmation, dict) else None
     selection_rows = report.get("selection_sweep_rows", [])
     best_selection_row = None
     if isinstance(selection_rows, list):
@@ -73,12 +77,17 @@ def compact_probe_report(report: dict[str, object], parameters: dict[str, object
         "final_selected_delta": final_delta,
         "final_selected_safe": final_safe,
         "final_floor_failures": final_floor_failures,
+        "final_selected_changes": final_changes,
         "base": report.get("base"),
         "resolved": report.get("resolved"),
         "selected_thresholds": report.get("selected_thresholds"),
-        "confirmation": report.get("confirmation"),
+        "confirmation": confirmation,
+        "confirmation_changes": confirmation_changes,
         "final_selected_candidate": final_candidate,
         "best_selection_row": best_selection_row,
+        "best_selection_changes": (
+            best_selection_row.get("changes") if isinstance(best_selection_row, dict) else None
+        ),
         "selection_safe_sweep_count": report.get("selection_safe_sweep_count"),
         "safe_sweep_count": report.get("safe_sweep_count"),
     }

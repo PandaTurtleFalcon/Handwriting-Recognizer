@@ -32,7 +32,18 @@ class SweepMixedcaseCaseResolverTests(unittest.TestCase):
         report = {
             "promotable": False,
             "test_delta": 0.0,
-            "final_selected_candidate": {"safe": False, "test_delta": -0.5},
+            "confirmation": {"changes": {"changed": 3, "fixed": 0, "broken": 2, "still_wrong_changed": 1}},
+            "final_selected_candidate": {
+                "safe": False,
+                "test_delta": -0.5,
+                "changes": {"changed": 4, "fixed": 1, "broken": 2, "still_wrong_changed": 1},
+            },
+            "selection_sweep_rows": [
+                {
+                    "test_delta": 0.1,
+                    "changes": {"changed": 2, "fixed": 2, "broken": 0, "still_wrong_changed": 0},
+                }
+            ],
         }
 
         compact = compact_probe_report(report, {"seed": 1})
@@ -40,6 +51,9 @@ class SweepMixedcaseCaseResolverTests(unittest.TestCase):
         self.assertFalse(compact["promotable"])
         self.assertFalse(compact["final_selected_safe"])
         self.assertEqual(compact["final_selected_delta"], -0.5)
+        self.assertEqual(compact["confirmation_changes"]["broken"], 2)
+        self.assertEqual(compact["final_selected_changes"]["fixed"], 1)
+        self.assertEqual(compact["best_selection_changes"]["fixed"], 2)
 
     def test_best_sweep_row_prefers_promotable_then_final_safe(self) -> None:
         """Ranking should prefer deployable rows before exploratory deltas."""

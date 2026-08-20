@@ -7,6 +7,7 @@ import torch
 from scripts.probe_mixedcase_case_resolver import (
     _case_target_counts,
     _letter_identity_index,
+    _prediction_change_summary,
     _resolver_floor_failures,
     _resolver_metric_deltas,
     _resolver_objective,
@@ -145,6 +146,7 @@ class MixedcaseCaseResolverTests(unittest.TestCase):
         self.assertGreater(metrics["test_accuracy"], rows[1]["metrics"]["test_accuracy"])
         self.assertTrue(rows[0]["safe"])
         self.assertFalse(rows[1]["safe"])
+        self.assertEqual(rows[0]["changes"], {"changed": 1, "fixed": 1, "broken": 0, "still_wrong_changed": 0})
 
     def test_resolver_objective_can_score_balanced_group_floor(self) -> None:
         """Balanced selection should prefer the weakest protected metric."""
@@ -187,6 +189,23 @@ class MixedcaseCaseResolverTests(unittest.TestCase):
         self.assertEqual(
             _resolver_floor_failures(base, candidate),
             ["digit_test_accuracy", "lower_test_accuracy"],
+        )
+
+    def test_prediction_change_summary_counts_fix_break_balance(self) -> None:
+        """Resolver diagnostics should expose whether changes help or hurt."""
+
+        before = torch.tensor([10, 10, 36, 37, 11], dtype=torch.long)
+        after = torch.tensor([10, 36, 10, 36, 12], dtype=torch.long)
+        targets = torch.tensor([10, 36, 36, 37, 13], dtype=torch.long)
+
+        self.assertEqual(
+            _prediction_change_summary(before, after, targets),
+            {
+                "changed": 4,
+                "fixed": 1,
+                "broken": 2,
+                "still_wrong_changed": 1,
+            },
         )
 
     def test_train_case_resolver_returns_none_without_matching_identity_samples(self) -> None:

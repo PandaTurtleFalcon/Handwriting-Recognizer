@@ -260,6 +260,25 @@ def _resolver_floor_failures(
     ]
 
 
+def _prediction_change_summary(
+    before: torch.Tensor,
+    after: torch.Tensor,
+    targets: torch.Tensor,
+) -> dict[str, int]:
+    """Count how many resolver replacements fixed or broke exact predictions."""
+
+    changed = before != after
+    fixed = changed & (before != targets) & (after == targets)
+    broken = changed & (before == targets) & (after != targets)
+    still_wrong_changed = changed & (before != targets) & (after != targets)
+    return {
+        "changed": int(changed.sum().item()),
+        "fixed": int(fixed.sum().item()),
+        "broken": int(broken.sum().item()),
+        "still_wrong_changed": int(still_wrong_changed.sum().item()),
+    }
+
+
 def _resolver_objective(metrics: dict[str, float], objective: str) -> float:
     """Score safe resolver rows for threshold selection."""
 
@@ -313,6 +332,7 @@ def sweep_case_resolver_thresholds(
                     "metrics": candidate_metrics,
                     "metric_deltas": _resolver_metric_deltas(base_metrics, candidate_metrics),
                     "floor_failures": _resolver_floor_failures(base_metrics, candidate_metrics),
+                    "changes": _prediction_change_summary(base_predictions, candidate_predictions, targets),
                     "test_delta": candidate_metrics["test_accuracy"] - base_metrics["test_accuracy"],
                 }
             )
@@ -581,6 +601,11 @@ def select_confirm_case_resolver_thresholds(
             "metrics": confirmation_metrics,
             "metric_deltas": _resolver_metric_deltas(base_confirmation, confirmation_metrics),
             "floor_failures": _resolver_floor_failures(base_confirmation, confirmation_metrics),
+            "changes": _prediction_change_summary(
+                confirmation_predictions,
+                candidate_predictions,
+                confirmation_targets,
+            ),
             "test_delta": confirmation_metrics["test_accuracy"] - base_confirmation["test_accuracy"],
         }
         if bool(confirmation["safe"]):
@@ -669,6 +694,7 @@ def run_probe_from_data(
             "metrics": candidate_metrics,
             "metric_deltas": _resolver_metric_deltas(base_metrics, candidate_metrics),
             "floor_failures": _resolver_floor_failures(base_metrics, candidate_metrics),
+            "changes": _prediction_change_summary(data.base_predictions, candidate_predictions, data.test_targets),
             "test_delta": candidate_metrics["test_accuracy"] - base_metrics["test_accuracy"],
         }
         resolved_predictions, resolved_metrics, sweep_rows = sweep_case_resolver_thresholds(
